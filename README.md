@@ -1,2 +1,2 @@
 # scala-nes
-NES emulator in Scala
+NES emulator in Scala. Work in progress...

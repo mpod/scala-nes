@@ -1,0 +1,40 @@
+name := "scala-nes"
+
+version := "0.1"
+
+scalaVersion := "2.12.8"
+
+resolvers += Resolver.sonatypeRepo("releases")
+
+scalacOptions += "-Ypartial-unification"
+
+addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
+
+val monocleVersion = "2.0.0"
+
+libraryDependencies ++= Seq(
+  "org.typelevel"              %% "cats-core"       % "2.0.0",
+  "eu.timepit"                 %% "refined"         % "0.9.10",
+  "ch.qos.logback"              % "logback-classic" % "1.2.3",
+  "com.typesafe.scala-logging" %% "scala-logging"   % "3.9.2",
+  "com.github.julien-truffaut" %%  "monocle-core"   % monocleVersion,
+  "com.github.julien-truffaut" %%  "monocle-macro"  % monocleVersion,
+  "com.github.julien-truffaut" %%  "monocle-law"    % monocleVersion % "test",
+  "org.scalafx"                %% "scalafx"         % "12.0.2-R18"
+)
+scalacOptions ++= Seq("-unchecked", "-deprecation", "-Xcheckinit", "-encoding", "utf8", "-feature")
+
+// Fork a new JVM for 'run' and 'test:run', to avoid JavaFX double initialization problems
+fork := true
+
+lazy val osName = System.getProperty("os.name") match {
+  case n if n.startsWith("Linux")   => "linux"
+  case n if n.startsWith("Mac")     => "mac"
+  case n if n.startsWith("Windows") => "win"
+  case _ => throw new Exception("Unknown platform!")
+}
+
+lazy val javaFXModules = Seq("base", "controls", "fxml", "graphics", "media", "swing", "web")
+libraryDependencies ++= javaFXModules.map( m =>
+  "org.openjfx" % s"javafx-$m" % "12.0.2" classifier osName
+)
