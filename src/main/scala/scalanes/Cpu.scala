@@ -339,19 +339,21 @@ object Cpu extends LazyLogging {
     _ <- setPc(absAddress)
   } yield Unit
 
+  def continue: Op = incPc.map(_ => Unit)
+
   def BCC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
-    ifTrue = NOP(),
+    ifTrue = continue,
     ifFalse = branch
   )
 
   def BCS: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.C))(
     ifTrue = branch,
-    ifFalse = NOP()
+    ifFalse = continue
   )
 
   def BEQ: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
     ifTrue = branch,
-    ifFalse = NOP()
+    ifFalse = continue
   )
 
   def BIT(addressMode: AddressMode): Op = for {
@@ -366,16 +368,16 @@ object Cpu extends LazyLogging {
 
   def BMI: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.N))(
     ifTrue = branch,
-    ifFalse = NOP()
+    ifFalse = continue
   )
 
   def BNE: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
-    ifTrue = NOP(),
+    ifTrue = continue,
     ifFalse = branch
   )
 
   def BPL: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.N))(
-    ifTrue = NOP(),
+    ifTrue = continue,
     ifFalse = branch
   )
 
@@ -395,13 +397,13 @@ object Cpu extends LazyLogging {
   } yield Unit
 
   def BVC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.V))(
-    ifTrue = NOP(),
+    ifTrue = continue,
     ifFalse = branch
   )
 
   def BVS: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.V))(
     ifTrue = branch,
-    ifFalse = NOP()
+    ifFalse = continue
   )
 
   def CLC: Op = setFlag(CpuFlags.C, value = false)
@@ -851,7 +853,7 @@ object Cpu extends LazyLogging {
           (acc :+ cmd, Queue.empty)
         } else if (addressMode == "REL" && cmdParts.size == 2) {
           val a = cmdParts(1)
-          val cmd = (address - 1) -> s"$opcode $$${hex(a, 2)} [$$${hex(address + 1 + a, 4)}] {REL}"
+          val cmd = (address - 1) -> s"$opcode $$${hex(a, 2)} [$$${hex(address + 1 + a.toByte, 4)}] {REL}"
           (acc :+ cmd, Queue.empty)
         } else
           (acc, cmdParts)
