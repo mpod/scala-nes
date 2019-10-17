@@ -18,7 +18,11 @@ object Console extends JFXApp {
       val rowAddress = address + i * columns
       (0 until columns).foldLeft(s"$$${hex(rowAddress, 4)}:") { case (acc, j) =>
         val cellAddress = rowAddress + j
-        val cell = s.ram(cellAddress)
+        val cell = if (cellAddress >= 0x8000) {
+          val mapped = s.cartridge.mapper.mapCpuAddress(cellAddress)
+          s.cartridge.prgMem(mapped)
+        } else
+          s.ram(cellAddress)
         acc + " " + hex(cell, 2)
       }
     }.mkString("\n")

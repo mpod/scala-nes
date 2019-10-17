@@ -3,7 +3,7 @@ package scalanes
 import monocle.Lens
 import monocle.macros.GenLens
 
-case class NesState(ram: Vector[UInt8], cpuRegisters: CpuState)
+case class NesState(ram: Vector[UInt8], cpuRegisters: CpuState, ppuState: PpuState, cartridge: Cartridge)
 
 object NesState {
   val ram: Lens[NesState, Vector[UInt8]] = GenLens[NesState](_.ram)
@@ -15,34 +15,29 @@ object NesState {
   val pc: Lens[NesState, UInt16] = cpuRegisters composeLens GenLens[CpuState](_.pc)
   val status: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.status)
   val cycles: Lens[NesState, Int] = cpuRegisters composeLens GenLens[CpuState](_.cycles)
+  val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
 
   val initial: NesState = {
-    val zero: UInt8 = 0
-    val ram = Vector.fill(64 * 1024)(zero)
+    val ram = Vector.fill(2 * 1024)(0)
     val stkp = 0xFD
     val pc = 0
-    val status = (0x00 | CpuFlags.U.bit)
-    val cpuState = CpuState(zero, zero, zero, stkp, pc, status, 0)
-    NesState(ram, cpuState)
+    val status = 0x00 | CpuFlags.U.bit
+    val cpuState = CpuState(0, 0, 0, stkp, pc, status, 0)
+    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty)
+    NesState(ram, cpuState, ppuState, Cartridge.empty)
   }
 
   def fromString(program: String): NesState = {
     val s = initial
     val offset = 0x8000
-    val updated = program
-      .sliding(2, 2)
-      .map(Integer.parseInt(_, 16))
-      .zipWithIndex
-      .foldLeft(s.ram) { case (acc, (d, i)) =>
-        acc.updated(offset + i, d)
-      }
-      .updated(0xFFFC, 0x00)
-      .updated(0xFFFD, 0x80)
-    (pc.set(offset) andThen ram.set(updated))(s)
+    val updated = Cartridge.fromString(program, offset)
+    (pc.set(offset) andThen cartridge.set(updated))(s)
   }
 }
 
 case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int)
+
+case class PpuState(patterns: Vector[Vector[UInt8]], names: Vector[Vector[UInt8]], palettes: Vector[Vector[UInt8]])
 
 object CpuFlags extends Enumeration {
   protected case class Val(bit: Int) extends super.Val

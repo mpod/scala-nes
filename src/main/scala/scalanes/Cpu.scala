@@ -102,13 +102,29 @@ object Cpu extends LazyLogging {
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
-    State.inspect(_.ram(address))
+    if (address >= 0x0000 && address <= 0x1FFF)
+      State.inspect(_.ram(address))
+    else if (address >= 0x4020 && address <= 0xFFFF)
+      Cartridge.cpuRead(address).transformS(
+        NesState.cartridge.get,
+        (nesState, cartridge) => NesState.cartridge.set(cartridge)(nesState)
+      )
+    else
+      State.pure(0x00)
   }
 
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require((address & 0xFFFF) == address)
     require((d & 0xFF) == d)
-    State.modify(NesState.ram.modify(_.updated(address, d)))
+    if (address >= 0x0000 && address <= 0x1FFF)
+      State.modify(NesState.ram.modify(_.updated(address, d)))
+    else if (address >= 0x4020 && address <= 0xFFFF)
+      Cartridge.cpuWrite(address, d).transformS(
+        NesState.cartridge.get,
+        (nesState, cartridge) => NesState.cartridge.set(cartridge)(nesState)
+      )
+    else
+      State.pure(Unit)
   }
 
   def getStatus: State[NesState, UInt8] = State.inspect(_.cpuRegisters.status)
@@ -810,7 +826,12 @@ object Cpu extends LazyLogging {
     val (res, _) = Stream
       .range(start, end)
       .foldLeft((Queue.empty[(UInt16, String)], Queue.empty[UInt8])) { case ((acc, parts), address) =>
-        val cmdParts = parts :+ nesState.ram(address)
+        val cell = if (address >= 0x8000) {
+          val mappedAddress = nesState.cartridge.mapper.mapCpuAddress(address)
+          nesState.cartridge.prgMem(mappedAddress)
+        } else
+          0x00
+        val cmdParts = parts :+ cell
         val infoParts = lookup(cmdParts.head).info.split('/')
         val opcode = infoParts.head
         val addressMode = infoParts.last
