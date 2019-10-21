@@ -1,20 +1,57 @@
 package scalanes
 
-trait Mapper {
-  def prgBanks: Int
-  def chrBanks: Int
-  def mapCpuAddress(address: UInt16): UInt16
-  def mapPpuAddress(address: UInt16): UInt16
+case class BankMap(offset: Int, sizeInKB: Int) {
+  def endOffset: UInt16 = offset + sizeInKB * 1024
 }
 
-case class Mapper000(prgBanks: Int, chrBanks: Int) extends Mapper {
-  override def mapCpuAddress(address: UInt16): UInt16 = {
-    require(address >= 0x8000 && address <= 0xFFFF)
-    address & (if (prgBanks > 1) 0x7FFF else 0x3FFF)
+object BankMap {
+
+  def map32(bank: Int): BankMap =
+    BankMap(bank * 32 * 1024, 32)
+
+  def map16(bank: Int): BankMap =
+    BankMap(bank * 16 * 1024, 16)
+
+  def map8(bank: Int): BankMap =
+    BankMap(bank * 8 * 1024, 8)
+
+  def map4(bank: Int): BankMap =
+    BankMap(bank * 4 * 1024, 4)
+
+}
+
+trait Mapper {
+  type SpecificMapper <: Mapper
+
+  def prgRom: Vector[UInt8]
+  def chrRom: Vector[UInt8]
+  def prgRam: Vector[UInt8]
+  def prgBankMaps: List[BankMap]
+  def chrBankMaps: List[BankMap]
+
+  protected def mapAddress(address: UInt16, bankMaps: List[BankMap]): UInt16 = {
+    val (_, result) = prgBankMaps.foldLeft((address, Option.empty[UInt8])) {
+      case ((addr, res), bankMap) if res.isEmpty =>
+        if (addr >= (bankMap.offset + bankMap.sizeInKB * 1024))
+          (addr - bankMap.sizeInKB * 1024, None)
+        else
+          (addr, Option(prgRom(bankMap.offset + addr)))
+      case (acc, _) => acc
+    }
+    require(result.nonEmpty)
+    result.get
   }
 
-  override def mapPpuAddress(address: UInt16): UInt16 = {
-    require(address >= 0x0000 && address <= 0x1FFF)
-    address
-  }
+  def prgRead(address: UInt16): UInt8 =
+    if (address >= 0x8000)
+      prgRom(mapAddress(address - 0x8000, prgBankMaps))
+    else
+      prgRam(address - 0x6000)
+
+  def chrRead(address: UInt16): UInt8 =
+    chrRom(mapAddress(address, chrBankMaps))
+
+  def prgWrite(address: UInt16, d: UInt8): SpecificMapper
+
+  def chrWrite(address: UInt16, d: UInt8): SpecificMapper
 }

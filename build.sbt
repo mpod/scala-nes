@@ -10,17 +10,21 @@ scalacOptions += "-Ypartial-unification"
 
 addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
 
-val monocleVersion = "2.0.0"
-
 libraryDependencies ++= Seq(
   "org.typelevel"              %% "cats-core"       % "2.0.0",
+  "org.typelevel"              %% "cats-effect"     % "2.0.0",
   "eu.timepit"                 %% "refined"         % "0.9.10",
   "ch.qos.logback"              % "logback-classic" % "1.2.3",
   "com.typesafe.scala-logging" %% "scala-logging"   % "3.9.2",
-  "com.github.julien-truffaut" %%  "monocle-core"   % monocleVersion,
-  "com.github.julien-truffaut" %%  "monocle-macro"  % monocleVersion,
-  "com.github.julien-truffaut" %%  "monocle-law"    % monocleVersion % "test",
-  "org.scalafx"                %% "scalafx"         % "12.0.2-R18"
+  "com.github.julien-truffaut" %% "monocle-core"    % "2.0.0",
+  "com.github.julien-truffaut" %% "monocle-macro"   % "2.0.0",
+  "com.github.julien-truffaut" %% "monocle-law"     % "2.0.0" % "test",
+  "org.scalafx"                %% "scalafx"         % "12.0.2-R18",
+  "com.chuusai"                %% "shapeless"       % "2.3.3",
+  "org.scodec"                 %% "scodec-core"     % "1.11.4",
+  "org.scodec"                 %% "scodec-stream"   % "2.0.0",
+  "co.fs2"                     %% "fs2-core"        % "2.0.1",
+  "co.fs2"                     %% "fs2-io"          % "2.0.1"
 )
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-Xcheckinit", "-encoding", "utf8", "-feature")
 

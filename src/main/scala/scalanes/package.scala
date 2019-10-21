@@ -10,6 +10,8 @@ package object scalanes {
   type UInt8 = Int
   type UInt16 = Int
 
+  type Cartridge = Mapper
+
   // TODO: Explore later...
   type RAM = Vector[UInt8] Refined Size[Equal[W.`65536`.T]]
 

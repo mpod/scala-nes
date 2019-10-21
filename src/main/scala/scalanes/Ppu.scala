@@ -1,0 +1,5 @@
+package scalanes
+
+object Ppu {
+
+}

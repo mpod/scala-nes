@@ -3,56 +3,62 @@ package scalanes
 import java.nio.file.Path
 
 import cats.data.State
-import monocle.Lens
-import monocle.macros.GenLens
+import cats.effect.{Blocker, ContextShift, _}
+import cats.implicits._
+import fs2.{Stream, io}
+import scalanes.mappers.Mapper000
+import scodec.codecs._
+import scodec.stream.StreamDecoder
+import scodec.{Attempt, Decoder, Err}
+import shapeless._
 
-case class Cartridge(prgMem: Vector[UInt8], chrMem: Vector[UInt8], mapper: Mapper)
+import scala.language.higherKinds
 
 object Cartridge {
-  val prgMem: Lens[Cartridge, Vector[UInt8]] = GenLens[Cartridge](_.prgMem)
-  val chrMem: Lens[Cartridge, Vector[UInt8]] = GenLens[Cartridge](_.chrMem)
-  val mapper: Lens[Cartridge, Mapper] = GenLens[Cartridge](_.mapper)
 
-  def empty: Cartridge = Cartridge(Vector.fill(32 * 1024)(0x00), Vector.fill(8 * 1024)(0x00), Mapper000(2, 1))
+  def empty: Cartridge = Mapper000(Vector.fill(32 * 1024)(0x00), Vector.fill(8 * 1024)(0x00), 0)
 
   def cpuRead(address: UInt16): State[Cartridge, UInt8] =
-    State.inspect { cartridge =>
-      val mapped = cartridge.mapper.mapCpuAddress(address)
-      cartridge.prgMem(mapped)
-    }
+    State.inspect(_.prgRead(address))
 
   def cpuWrite(address: UInt16, d: UInt8): State[Cartridge, Unit] =
-    State.modify { cartridge =>
-      val mapped = cartridge.mapper.mapCpuAddress(address)
-      prgMem.modify(_.updated(mapped, d))(cartridge)
-    }
+    State.modify(_.prgWrite(address, d))
 
-  def chrRead(address: UInt16): State[Cartridge, UInt8] =
-    State.inspect { cartridge =>
-      val mapped = cartridge.mapper.mapPpuAddress(address)
-      cartridge.chrMem(mapped)
-    }
+  def ppuRead(address: UInt16): State[Cartridge, UInt8] =
+    State.inspect(_.chrRead(address))
 
   def chrWrite(address: UInt16, d: UInt8): State[Cartridge, Unit] =
-    State.modify { cartridge =>
-      val mapped = cartridge.mapper.mapPpuAddress(address)
-      chrMem.modify(_.updated(mapped, d))(cartridge)
-    }
+    State.modify(_.chrWrite(address, d))
 
-  def fromString(program: String, offset: UInt16): Cartridge = {
-    val s = empty
-    val mapper = s.mapper.mapCpuAddress _
-    val updated = program
+  def fromString(program: String, offset: UInt16): Cartridge =
+    program
       .sliding(2, 2)
       .map(Integer.parseInt(_, 16))
       .zipWithIndex
-      .foldLeft(s.prgMem) { case (acc, (d, i)) =>
-        acc.updated(mapper(offset + i), d)
+      .foldLeft(empty) { case (acc, (d, i)) =>
+        acc.prgWrite(offset + i, d)
       }
-      .updated(mapper(0xFFFC), offset & 0xFF)
-      .updated(mapper(0xFFFD), (offset >> 8) & 0xFF)
-    prgMem.set(updated)(s)
-  }
+      .prgWrite(0xFFFC, offset & 0xFF)
+      .prgWrite(0xFFFD, (offset >> 8) & 0xFF)
 
-  def fromFile(file: Path): Cartridge = ???
+  def nesFileDecoder: Decoder[Cartridge] = for {
+    header <- ignore(4) :: uint8 :: uint8 :: uint8 :: uint8 :: uint8 :: ignore(7)
+    _ :: prgRomBanks :: chrRomBanks :: mapper1 :: mapper2 :: prgRamBanks :: _ :: HNil = header
+    prgRamSize = if (prgRamBanks) prgRamBanks * 8 * 1024 else 8 * 1024
+    mapperId = (mapper2 & 0x0F) | (mapper1 >> 4)
+    rom <- conditional(mapper1 & 0x04, ignore(512)) ::
+      fixedSizeBytes(prgRomBanks * 0x4000, vector(uint8)) ::
+      fixedSizeBytes(chrRomBanks * 0x2000, vector(uint8))
+    _ :: prgRom :: chrRom :: HNil = rom
+    cartridge <- if (mapperId == 0)
+        Decoder.point(Mapper000(prgRom, chrRom, prgRamSize))
+      else
+        Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
+  } yield cartridge
+
+  def fromFile[F[_] : Sync : ContextShift](file: Path): F[Cartridge] = {
+    Stream.resource(Blocker[F]).flatMap { blocker =>
+      io.file.readAll[F](file, blocker, 4096).through(StreamDecoder.once(nesFileDecoder).toPipeByte)
+    }.compile.toList.map(_.head)
+  }
 }

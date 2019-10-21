@@ -826,11 +826,7 @@ object Cpu extends LazyLogging {
     val (res, _) = Stream
       .range(start, end)
       .foldLeft((Queue.empty[(UInt16, String)], Queue.empty[UInt8])) { case ((acc, parts), address) =>
-        val cell = if (address >= 0x8000) {
-          val mappedAddress = nesState.cartridge.mapper.mapCpuAddress(address)
-          nesState.cartridge.prgMem(mappedAddress)
-        } else
-          0x00
+        val cell = if (address >= 0x8000) nesState.cartridge.prgRead(address) else 0x00
         val cmdParts = parts :+ cell
         val infoParts = lookup(cmdParts.head).info.split('/')
         val opcode = infoParts.head

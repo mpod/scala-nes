@@ -1,4 +1,7 @@
 package scalanes
+import java.nio.file.Paths
+
+import cats.effect.{ContextShift, IO}
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
 import scalafx.application.JFXApp.PrimaryStage
@@ -9,19 +12,24 @@ import scalafx.scene.layout.{HBox, VBox}
 import scalafx.scene.paint.Color
 import scalafx.scene.text.Text
 
+import scala.concurrent.ExecutionContext
+
 object Console extends JFXApp {
 
   val program = "A20A8E0000A2038E0100AC0000A900186D010088D0FA8D0200EAEAEA"
+
+  implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+
+  Cartridge.fromFile[IO](Paths.get(""))
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>
       val rowAddress = address + i * columns
       (0 until columns).foldLeft(s"$$${hex(rowAddress, 4)}:") { case (acc, j) =>
         val cellAddress = rowAddress + j
-        val cell = if (cellAddress >= 0x8000) {
-          val mapped = s.cartridge.mapper.mapCpuAddress(cellAddress)
-          s.cartridge.prgMem(mapped)
-        } else
+        val cell = if (cellAddress >= 0x8000)
+          s.cartridge.prgRead(cellAddress)
+        else
           s.ram(cellAddress)
         acc + " " + hex(cell, 2)
       }
