@@ -52,3 +52,7 @@ object CpuFlags extends Enumeration {
   val N: CpuFlags = Val(1 << 7)
 }
 
+object Mirroring extends Enumeration {
+  type Mirroring = Value
+  val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
+}
