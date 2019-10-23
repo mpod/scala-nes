@@ -7,7 +7,12 @@ import scala.language.implicitConversions
 
 package object scalanes {
 
+  type UInt1 = Int
+  type UInt2 = Int
+  type UInt3 = Int
+  type UInt5 = Int
   type UInt8 = Int
+  type UInt15 = Int
   type UInt16 = Int
 
   type Cartridge = Mapper

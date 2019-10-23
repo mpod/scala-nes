@@ -23,7 +23,7 @@ object NesState {
     val pc = 0
     val status = 0x00 | CpuFlags.U.bit
     val cpuState = CpuState(0, 0, 0, stkp, pc, status, 0)
-    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty)
+    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty, Vector.empty, PpuRegisters.empty)
     NesState(ram, cpuState, ppuState, Cartridge.empty)
   }
 
@@ -36,8 +36,6 @@ object NesState {
 }
 
 case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int)
-
-case class PpuState(patterns: Vector[Vector[UInt8]], names: Vector[Vector[UInt8]], palettes: Vector[Vector[UInt8]])
 
 object CpuFlags extends Enumeration {
   protected case class Val(bit: Int) extends super.Val
@@ -52,7 +50,3 @@ object CpuFlags extends Enumeration {
   val N: CpuFlags = Val(1 << 7)
 }
 
-object Mirroring extends Enumeration {
-  type Mirroring = Value
-  val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
-}
