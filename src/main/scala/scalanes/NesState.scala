@@ -16,6 +16,7 @@ object NesState {
   val status: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.status)
   val cycles: Lens[NesState, Int] = cpuRegisters composeLens GenLens[CpuState](_.cycles)
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
+  val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
 
   val initial: NesState = {
     val ram = Vector.fill(2 * 1024)(0)

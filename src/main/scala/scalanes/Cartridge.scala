@@ -6,6 +6,7 @@ import cats.data.State
 import cats.effect.{Blocker, ContextShift, _}
 import cats.implicits._
 import fs2.{Stream, io}
+import scalanes.Mirroring.Mirroring
 import scalanes.mappers.{Mapper000, Mapper001}
 import scodec.codecs._
 import scodec.stream.StreamDecoder
@@ -23,17 +24,20 @@ object Cartridge {
     Mirroring.Horizontal
   )
 
-  def cpuRead(address: UInt16): State[Cartridge, UInt8] =
-    State.inspect(_.prgRead(address))
+  def cpuRead(address: UInt16): State[NesState, UInt8] =
+    State.inspect(_.cartridge.prgRead(address))
 
-  def cpuWrite(address: UInt16, d: UInt8): State[Cartridge, Unit] =
-    State.modify(_.prgWrite(address, d))
+  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
+    State.modify(_.cartridge.prgWrite(address, d))
 
-  def ppuRead(address: UInt16): State[Cartridge, UInt8] =
-    State.inspect(_.chrRead(address))
+  def ppuRead(address: UInt16): State[NesState, UInt8] =
+    State.inspect(_.cartridge.chrRead(address))
 
-  def chrWrite(address: UInt16, d: UInt8): State[Cartridge, Unit] =
-    State.modify(_.chrWrite(address, d))
+  def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
+    State.modify(_.cartridge.chrWrite(address, d))
+
+  def getMirroring: State[NesState, Mirroring] =
+    State.inspect(_.cartridge.mirroring)
 
   def fromString(program: String, offset: UInt16): Cartridge =
     program

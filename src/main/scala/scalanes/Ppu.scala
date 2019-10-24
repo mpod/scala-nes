@@ -7,6 +7,7 @@ import monocle.macros.GenLens
 import scalanes.AddressIncrementMode.AddressIncrementMode
 import scalanes.BackgroundTableAddress.BackgroundTableAddress
 import scalanes.MasterSlaveMode.MasterSlaveMode
+import scalanes.Mirroring.Mirroring
 import scalanes.NametableAddress.NametableAddress
 import scalanes.NmiMode.NmiMode
 import scalanes.SpriteSize.SpriteSize
@@ -15,12 +16,16 @@ import scalanes.SpriteTableAddress.SpriteTableAddress
 import scala.language.implicitConversions
 
 case class PpuState(patterns: Vector[Vector[UInt8]],
-                    nametables: Vector[Vector[UInt8]],
-                    palettes: Vector[Vector[UInt8]],
+                    nametables: Vector[UInt8],
+                    palettes: Vector[UInt8],
                     pixels: Vector[Int],
-                    registers: PpuRegisters)
+                    registers: PpuRegisters,
+                    dot: Dot,
+                    bgRenderingState: BgRenderingState)
 
 object PpuState {
+  val nametables: Lens[PpuState, Vector[UInt8]] = GenLens[PpuState](_.nametables)
+  val palettes: Lens[PpuState, Vector[UInt8]] = GenLens[PpuState](_.palettes)
   val registers: Lens[PpuState, PpuRegisters] = GenLens[PpuState](_.registers)
 }
 
@@ -36,7 +41,6 @@ object PpuRegisters {
   def empty: PpuRegisters = ???
 }
 
-// http://wiki.nesdev.com/w/index.php/PPU_registers#PPUCTRL
 case class PpuCtrl(nametable: NametableAddress,
                    incrementMode: AddressIncrementMode,
                    spriteTableAddress: SpriteTableAddress,
@@ -115,8 +119,7 @@ object NmiMode extends Enumeration {
   val Off, On = Value
 }
 
-// http://wiki.nesdev.com/w/index.php/PPU_registers#PPUMASK
-case class PpuMask(grayscale: Boolean,
+case class PpuMask(greyscale: Boolean,
                    renderBackgroundLeft: Boolean,
                    renderSpritesLeft: Boolean,
                    renderBackground: Boolean,
@@ -124,8 +127,9 @@ case class PpuMask(grayscale: Boolean,
                    enhanceRed: Boolean,
                    enhanceGreen: Boolean,
                    enhanceBlue: Boolean) {
+
   def asUInt8: UInt8 =
-    (if (grayscale)            0x01 << 0 else 0x00) |
+    (if (greyscale)            0x01 << 0 else 0x00) |
     (if (renderBackgroundLeft) 0x01 << 1 else 0x00) |
     (if (renderSpritesLeft)    0x01 << 2 else 0x00) |
     (if (renderBackground)     0x01 << 3 else 0x00) |
@@ -133,6 +137,7 @@ case class PpuMask(grayscale: Boolean,
     (if (enhanceRed)           0x01 << 5 else 0x00) |
     (if (enhanceGreen)         0x01 << 6 else 0x00) |
     (if (enhanceBlue)          0x01 << 7 else 0x00)
+
 }
 
 object PpuMask {
@@ -143,7 +148,6 @@ object PpuMask {
   }
 }
 
-// http://wiki.nesdev.com/w/index.php/PPU_registers#PPUSTATUS
 case class PpuStatus(spriteOverflow: Boolean, spriteZeroHit: Boolean, verticalBlank: Boolean) {
   def asUInt8: UInt8 = ???
 }
@@ -156,7 +160,6 @@ object PpuStatus {
   def apply(a: UInt8): PpuStatus = new PpuStatus(a & 0x20, a & 0x40, a & 0x80)
 }
 
-// http://wiki.nesdev.com/w/index.php/PPU_scrolling#PPU_internal_registers
 case class LoopyRegisters(v: LoopyAddress, t: LoopyAddress, x: UInt3, w: Boolean) {
   require((x & 0x7) == x)
 }
@@ -168,24 +171,31 @@ object LoopyRegisters {
   val w: Lens[LoopyRegisters, Boolean] = GenLens[LoopyRegisters](_.w)
 }
 
-case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametable: UInt2, fineY: UInt3) {
+case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametables: UInt2, fineY: UInt3) {
   require((coarseX & 0x1F) == coarseX)
   require((coarseY & 0x1F) == coarseY)
-  require((nametable & 0x3) == nametable)
+  require((nametables & 0x3) == nametables)
   require((fineY & 0x7) == fineY)
 
   def setCoarseX(d: UInt5): LoopyAddress = LoopyAddress.coarseX.set(d)(this)
+  def incCoarseX(): LoopyAddress = setCoarseX(coarseX + 1)
   def setCoarseY(d: UInt5): LoopyAddress = LoopyAddress.coarseY.set(d)(this)
   def setNametable(d: UInt2): LoopyAddress = LoopyAddress.nametable.set(d)(this)
   def setFineY(d: UInt3): LoopyAddress = LoopyAddress.fineY.set(d)(this)
+  def setNametableX(d: UInt1): LoopyAddress = LoopyAddress.nametable.modify(_ | (d & 0x1))(this)
+  def setNametableY(d: UInt1): LoopyAddress = LoopyAddress.nametable.modify(_ | ((d & 0x1) << 1))(this)
+  def flipNametableX(): LoopyAddress = setNametable(nametables ^ 0x1)
+  def flipNametableY(): LoopyAddress = setNametable(nametables ^ 0x2)
+  def nametableX: UInt1 = nametables & 0x1
+  def nametableY: UInt1 = (nametables & 0x2) >> 1
 
-  def asUInt16: UInt16 = ((fineY & 0x7) << 12) | ((nametable & 0x3) << 10) | ((coarseY & 0x1F) << 5) | (coarseX & 0x1F)
+  def asUInt16: UInt16 = ((fineY & 0x7) << 12) | ((nametables & 0x3) << 10) | ((coarseY & 0x1F) << 5) | (coarseX & 0x1F)
 }
 
 object LoopyAddress {
   val coarseX: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseX)
   val coarseY: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseY)
-  val nametable: Lens[LoopyAddress, UInt2] = GenLens[LoopyAddress](_.nametable)
+  val nametable: Lens[LoopyAddress, UInt2] = GenLens[LoopyAddress](_.nametables)
   val fineY: Lens[LoopyAddress, UInt3] = GenLens[LoopyAddress](_.fineY)
 
   def apply(address: UInt16): LoopyAddress = new LoopyAddress(
@@ -194,6 +204,23 @@ object LoopyAddress {
     (address >> 10) & 0x3,
     (address >> 12) & 0x7
   )
+}
+
+case class Dot(scanline: Int, cycle: Int)
+
+case class BgRenderingState(patternShiftLo: UInt16,
+                            patternShiftHi: UInt16,
+                            attributeShiftLo: UInt8,
+                            attributeShiftHi: UInt8) {
+
+  def updateShifters(): BgRenderingState =
+    BgRenderingState(
+      patternShiftLo << 1,
+      patternShiftHi << 1,
+      attributeShiftLo << 1,
+      attributeShiftHi << 1
+    )
+
 }
 
 object Mirroring extends Enumeration {
@@ -207,6 +234,13 @@ object Ppu {
   private val statusRegister = PpuState.registers composeLens PpuRegisters.status
   private val maskRegister = PpuState.registers composeLens PpuRegisters.mask
   private val loopyRegisters = PpuState.registers composeLens PpuRegisters.loopy
+
+  implicit class PpuStateOps[A](val a: State[PpuState, A]) extends AnyVal {
+    def toNesState: State[NesState, A] = a.transformS(
+      NesState.ppuState.get,
+      (nesState, ppuState) => NesState.ppuState.set(ppuState)(nesState)
+    )
+  }
 
   def setVerticalBlank(d: Boolean): State[PpuState, Unit] =
     State.modify((statusRegister composeLens PpuStatus.verticalBlank).set(d))
@@ -222,6 +256,9 @@ object Ppu {
 
   def setCtrl(d: UInt8): State[PpuState, Unit] =
     State.modify(ctrlRegister.set(PpuCtrl(d)))
+
+  def getMask: State[PpuState, PpuMask] =
+    State.inspect(maskRegister.get)
 
   def setMask(d: UInt8): State[PpuState, Unit] =
     State.modify(maskRegister.set(PpuMask(d)))
@@ -259,102 +296,213 @@ object Ppu {
   def setLoopyW(d: Boolean): State[PpuState, Unit] =
     State.modify((loopyRegisters composeLens LoopyRegisters.w).set(d))
 
-  def cpuRead(address: UInt16): State[PpuState, UInt8] = {
+  def isRendering: State[PpuState, Boolean] =
+    getMask.map(m => m.renderBackground || m.renderSprites)
+
+  def incScrollX: State[PpuState, Unit] =
+    Monad[State[PpuState, *]].ifM(isRendering)(
+      ifTrue = getLoopyV.flatMap { v =>
+        if (v.coarseX == 31) setLoopyV(v.setCoarseX(0).flipNametableX())
+        else setLoopyV(v)
+      },
+      ifFalse = State.pure()
+    )
+
+  def incScrollY: State[PpuState, Unit] =
+    Monad[State[PpuState, *]].ifM(isRendering)(
+      ifTrue = getLoopyV.flatMap { v =>
+        val updated = if (v.fineY < 7) v.setFineY(v.fineY + 1)
+        else if (v.coarseY == 29) v.setFineY(0).setCoarseY(0).flipNametableY()
+        else if (v.coarseY == 31) v.setFineY(0).setCoarseY(0)
+        else v.setCoarseY(v.coarseY + 1)
+        setLoopyV(updated)
+      },
+      ifFalse = State.pure()
+    )
+
+  def transferAddressX: State[PpuState, Unit] =
+    Monad[State[PpuState, *]].ifM(isRendering)(
+      ifTrue = for {
+        v <- getLoopyV
+        t <- getLoopyT
+        updatedV = v.setCoarseX(t.coarseX).setNametableX(t.nametableX)
+        _ <- setLoopyV(updatedV)
+      } yield (),
+      ifFalse = State.pure()
+    )
+
+  def transferAddressY: State[PpuState, Unit] =
+    Monad[State[PpuState, *]].ifM(isRendering)(
+      ifTrue = for {
+        v <- getLoopyV
+        t <- getLoopyT
+        updatedV = v.setFineY(t.fineY).setNametableY(t.nametableY).setCoarseY(t.coarseY)
+        _ <- setLoopyV(updatedV)
+      } yield (),
+      ifFalse = State.pure()
+    )
+
+  def loadBgShifters: State[PpuState, Unit] = ???
+
+  private def mapToNametableAddress(address: UInt16, mirroring: Mirroring): UInt16 = {
+    val addr = address & 0x0FFF
+    if (mirroring == Mirroring.Vertical) addr & 0x07FF
+    else if (mirroring == Mirroring.Horizontal) ((addr & 0x800) >> 1) | (addr & 0x3FF)
+    else addr
+  }
+
+  def getFromNametables(address: UInt16, mirroring: Mirroring): State[PpuState, UInt8] = {
+    val addr = mapToNametableAddress(address, mirroring)
+    State.inspect(PpuState.nametables.get).map(_.apply(addr))
+  }
+
+  def putToNametables(address: UInt16, mirroring: Mirroring, d: UInt8): State[PpuState, Unit] = {
+    val addr = mapToNametableAddress(address, mirroring)
+    State.modify(PpuState.nametables.modify(_.updated(addr, d)))
+  }
+
+  private def mapToPalettesIndex(address: UInt16): UInt16 = {
+    val addr = address & 0x1F
+    // Mirror $3F10, $3F14, $3F18, $3F1C to $3F00, $3F04, $3F08, $3F0C
+    if ((addr & 0x13) == 0x10) addr & ~0x10 else addr
+  }
+
+  def getColor(address: UInt16): State[PpuState, UInt8] =
+    State.inspect(PpuState.palettes.get).map(_.apply(mapToPalettesIndex(address)))
+
+  def setColor(address: UInt16, d: UInt8): State[PpuState, Unit] =
+    State.modify(PpuState.palettes.modify(_.updated(mapToPalettesIndex(address), d)))
+
+  def cpuRead(address: UInt16): State[NesState, UInt8] = {
     // The PPU exposes eight memory-mapped registers to the CPU, which are mapped to the
     // address range $2000-$2007. Addresses between $2008 and $3FFF are mirrored.
     require(address >= 0x2000 && address <= 0x3FFF)
     val address0 = address & 0x7
-    if (address0 == 0x0000)      State.pure(0x00) // PPUCTRL
-    else if (address0 == 0x0001) State.pure(0x00) // PPUMASK
-    else if (address0 == 0x0002)                  // PPUSTATUS
+    val zero = State.pure[NesState, UInt8](0x00)
+    if (address0 == 0x0000)      zero // PPUCTRL
+    else if (address0 == 0x0001) zero // PPUMASK
+    else if (address0 == 0x0002)      // PPUSTATUS
+      (
+        for {
+          data   <- getData
+          status <- getStatus.map(_.asUInt8)
+          _      <- clearLoopyW
+          _      <- setVerticalBlank(false)
+        } yield (status & 0xE0) | (data & 0x1F)
+      ).toNesState
+    else if (address0 == 0x0003) zero // OAMADDR
+    else if (address0 == 0x0004) zero // OAMDATA
+    else if (address0 == 0x0005) zero // PPUSCROLL
+    else if (address0 == 0x0006) zero // PPUADDR
+    else                              // PPUDATA
       for {
-        data <- getData
-        status <- getStatus.map(_.asUInt8)
-        _ <- clearLoopyW
-        _ <- setVerticalBlank(false)
-      } yield (status & 0xE0) | (data & 0x1F)
-    else if (address0 == 0x0003) State.pure(0x00) // OAMADDR
-    else if (address0 == 0x0004) State.pure(0x00) // OAMDATA
-    else if (address0 == 0x0005) State.pure(0x00) // PPUSCROLL
-    else if (address0 == 0x0006) State.pure(0x00) // PPUADDR
-    else if (address0 == 0x0007)                  // PPUDATA
-      for {
-        d1 <- getData
-        vramAddress <- getLoopyV
-        d2 <- ppuRead(vramAddress.asUInt16)
-        _ <- setData(d2)
-        ctrl <- getCtrl
-        _ <- incLoopyV(ctrl.incrementMode.delta)
+        d1          <- getData.toNesState
+        vramAddress <- getLoopyV.toNesState
+        d2          <- ppuRead(vramAddress.asUInt16)
+        _           <- setData(d2).toNesState
+        ctrl        <- getCtrl.toNesState
+        _           <- incLoopyV(ctrl.incrementMode.delta).toNesState
       } yield if (vramAddress.asUInt16 >= 0x3F00) d2 else d1
-    else State.pure(0x00)
   }
 
-  def cpuWrite(address: UInt16, d: UInt8): State[PpuState, Unit] = {
+  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require(address >= 0x2000 && address <= 0x3FFF)
     require((d & 0xFF) == d)
+    val default = State.pure[NesState, Unit]()
     val address0 = address & 0x7
     if (address0 == 0x0000)
-      for {
-        _ <- setCtrl(d)
-        ctrl <- getCtrl
-        t1 <- getLoopyT
-        t2 = t1.setNametable(ctrl.nametable.id)
-        _ <- setLoopyT(t2)
-      } yield Unit
+      (
+        for {
+          _    <- setCtrl(d)
+          ctrl <- getCtrl
+          t1   <- getLoopyT
+          t2   =  t1.setNametable(ctrl.nametable.id)
+          _    <- setLoopyT(t2)
+        } yield ()
+      ).toNesState
     else if (address0 == 0x0001)
-      State.modify(maskRegister.set(PpuMask(d)))
+      State.modify(maskRegister.set(PpuMask(d))).toNesState
     else if (address0 == 0x0002)
-      State.pure(Unit)
+      default
     else if (address0 == 0x0003)
-      State.pure(Unit)
+      default
     else if (address0 == 0x0004)
-      State.pure(Unit)
+      default
     else if (address0 == 0x0005)
       Monad[State[PpuState, *]].ifM(getLoopyW)(
         ifTrue = for {
-          _ <- setLoopyX(d & 0x07)
+          _  <- setLoopyX(d & 0x07)
           t1 <- getLoopyT
-          t2 = t1.setCoarseX((d >> 3) & 0x1F)
-          _ <- setLoopyT(t2)
-          _ <- setLoopyW(false)
-        } yield Unit,
+          t2 =  t1.setCoarseX((d >> 3) & 0x1F)
+          _  <- setLoopyT(t2)
+          _  <- setLoopyW(false)
+        } yield (),
         ifFalse = for {
           t1 <- getLoopyT
-          t2 = t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
-          _ <- setLoopyT(t2)
-          _ <- setLoopyW(true)
-        } yield Unit
-      )
+          t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
+          _  <- setLoopyT(t2)
+          _  <- setLoopyW(true)
+        } yield ()
+      ).toNesState
     else if (address0 == 0x0006)
       Monad[State[PpuState, *]].ifM(getLoopyW)(
         ifTrue = for {
           t1 <- getLoopyT
-          t2 = LoopyAddress((t1.asUInt16 & 0xFF00) | d)
-          _ <- setLoopyT(t2)
-          _ <- setLoopyV(t2)
-          _ <- setLoopyW(false)
-        } yield Unit,
+          t2 =  LoopyAddress((t1.asUInt16 & 0xFF00) | d)
+          _  <- setLoopyT(t2)
+          _  <- setLoopyV(t2)
+          _  <- setLoopyW(false)
+        } yield (),
         ifFalse = for {
           t1 <- getLoopyT
-          t2 = LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF))
-          _ <- setLoopyT(t2)
-          _ <- setLoopyW(true)
-        } yield Unit
-      )
-    else if (address0 == 0x0007)
-      for {
-        ctrl <- getCtrl
-        vram1 <- getLoopyV
-        vram2 = LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
-        _ <- setLoopyV(vram2)
-      } yield Unit
+          t2 =  LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF))
+          _  <- setLoopyT(t2)
+          _  <- setLoopyW(true)
+        } yield ()
+      ).toNesState
     else
-      State.pure(Unit)
+      (
+        for {
+          ctrl  <- getCtrl
+          vram1 <- getLoopyV
+          vram2 =  LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
+          _     <- setLoopyV(vram2)
+        } yield ()
+      ).toNesState
   }
 
-  def ppuRead(address: UInt16): State[PpuState, UInt8] = ???
+  def ppuRead(address: UInt16): State[NesState, UInt8] = {
+    require((address & 0xFFFF) == address)
+    val addr = address & 0x3FFF
 
-  def ppuWrite(address: UInt16, d: UInt8): State[PpuState, Unit] = ???
+    if (addr >= 0x0000 && addr <= 0x1FFF)
+      Cartridge.ppuRead(addr)
+    else if (addr >= 0x2000 && addr <= 0x3EFF)
+      Cartridge.getMirroring.flatMap(getFromNametables(addr, _).toNesState)
+    else if (addr >= 0x3F00 && addr <= 0x3FFF)
+      (
+        for {
+          color <- getColor(addr)
+          mask <- getMask
+        } yield color & (if (mask.greyscale) 0x30 else 0xFF)
+      ).toNesState
+    else
+      throw new RuntimeException("Invalid address!")
+  }
+
+  def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
+    require((address & 0xFFFF) == address)
+    val addr = address & 0x3FFF
+
+    if (addr >= 0x0000 && addr <= 0x1FFF)
+      Cartridge.ppuWrite(addr, d)
+    else if (addr >= 0x2000 && addr <= 0x3EFF)
+      Cartridge.getMirroring.flatMap(putToNametables(addr, _, d).toNesState)
+    else if (addr >= 0x3F00 && addr <= 0x3FFF)
+      setColor(address, d).toNesState
+    else
+      throw new RuntimeException("Invalid address!")
+  }
 
   def clock: State[PpuState, Unit] = ???
 

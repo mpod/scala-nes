@@ -105,10 +105,7 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1FFF)
       State.inspect(_.ram(address))
     else if (address >= 0x4020 && address <= 0xFFFF)
-      Cartridge.cpuRead(address).transformS(
-        NesState.cartridge.get,
-        (nesState, cartridge) => NesState.cartridge.set(cartridge)(nesState)
-      )
+      Cartridge.cpuRead(address)
     else
       State.pure(0x00)
   }
