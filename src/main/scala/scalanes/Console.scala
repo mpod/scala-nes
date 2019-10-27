@@ -21,7 +21,7 @@ object Console extends JFXApp {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  Cartridge.fromFile[IO](Paths.get(""))
+  NesState.fromFile[IO](Paths.get(""))
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>

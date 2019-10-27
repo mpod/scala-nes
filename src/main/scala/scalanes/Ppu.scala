@@ -36,6 +36,17 @@ object PpuState {
   val cycle: Lens[PpuState, Int] = GenLens[PpuState](_.cycle)
   val bgRenderingState: Lens[PpuState, BgRenderingState] = GenLens[PpuState](_.bgRenderingState)
   val pixels: Lens[PpuState, Vector[Vector[Rgb]]] = GenLens[PpuState](_.pixels)
+
+  def initial(mirroring: Mirroring): PpuState = PpuState(
+    Vector.fill(2 * 1024)(0x00),
+    Vector.fill(32)(0x00),
+    PpuRegisters.initial,
+    mirroring,
+    0,
+    0,
+    BgRenderingState.initial,
+    Vector.fill(256, 240)(Rgb.initial)
+  )
 }
 
 case class PpuRegisters(ctrl: PpuCtrl, mask: PpuMask, status: PpuStatus, data: UInt8, loopy: LoopyRegisters) {
@@ -295,6 +306,8 @@ object Rgb {
     Rgb(204, 210, 120), Rgb(180, 222, 120), Rgb(168, 226, 144), Rgb(152, 226, 180),
     Rgb(160, 214, 228), Rgb(160, 162, 160), Rgb(0, 0, 0),       Rgb(0, 0, 0)
   )
+
+  val initial: Rgb = Rgb(0, 0, 0)
 }
 
 object Ppu {

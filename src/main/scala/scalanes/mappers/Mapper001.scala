@@ -11,7 +11,6 @@ case class Mapper001(prgRom: Vector[UInt8],
                      prgRam: Vector[UInt8],
                      prgBankMaps: List[BankMap],
                      chrBankMaps: List[BankMap],
-                     mirroring: Mirroring,
                      registers: Vector[UInt8],
                      shiftReg: UInt8,
                      writeCounter: Int
@@ -30,7 +29,7 @@ case class Mapper001(prgRom: Vector[UInt8],
       if (d & 0x80) {
         val registers2 = registers.updated(0, registers(0) | 0x0C)
         Mapper001(prgRom, chrRom, prgRam, createPrgBankMaps(registers2),
-          createChrBankMaps(registers2), extractMirroring(registers2), registers2, 0x0, 0)
+          createChrBankMaps(registers2),  registers2, 0x0, 0)
       } else {
         // Write a bit into shift register
         val shiftReg2 = ((d & 1) << 4) | (shiftReg >> 1)
@@ -40,7 +39,7 @@ case class Mapper001(prgRom: Vector[UInt8],
           val regIndex = (address >> 13) & 0x03
           val registers2 = registers.updated(regIndex, shiftReg2)
           Mapper001(prgRom, chrRom, prgRam, createPrgBankMaps(registers2),
-            createChrBankMaps(registers2), extractMirroring(registers2), registers2, 0x0, 0)
+            createChrBankMaps(registers2), registers2, 0x0, 0)
         // Continue with writing to shift register
         } else
           copy(shiftReg = shiftReg2, writeCounter = writeCounter2)
@@ -62,7 +61,6 @@ object Mapper001 {
       Vector.fill(prgRamSize)(0x00),
       createPrgBankMaps(registers),
       createChrBankMaps(registers),
-      extractMirroring(registers),
       registers,
       0x00,
       0

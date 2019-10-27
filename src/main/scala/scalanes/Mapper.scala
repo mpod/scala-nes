@@ -1,7 +1,5 @@
 package scalanes
 
-import scalanes.Mirroring.Mirroring
-
 case class BankMap(offset: Int, sizeInKB: Int) {
   def endOffset: UInt16 = offset + sizeInKB * 1024
 }
@@ -30,7 +28,6 @@ trait Mapper {
   def prgRam: Vector[UInt8]
   def prgBankMaps: List[BankMap]
   def chrBankMaps: List[BankMap]
-  def mirroring: Mirroring
 
   protected def mapAddress(address: UInt16, bankMaps: List[BankMap]): UInt16 = {
     val (_, result) = prgBankMaps.foldLeft((address, Option.empty[UInt8])) {
