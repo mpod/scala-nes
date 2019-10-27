@@ -15,15 +15,14 @@ import scalanes.SpriteTableAddress.SpriteTableAddress
 
 import scala.language.implicitConversions
 
-case class PpuState(patterns: Vector[Vector[UInt8]],
-                    nametables: Vector[UInt8],
+case class PpuState(nametables: Vector[UInt8],
                     palettes: Vector[UInt8],
                     registers: PpuRegisters,
                     mirroring: Mirroring,
                     scanline: Int,
                     cycle: Int,
                     bgRenderingState: BgRenderingState,
-                    pixels: Vector[Rgb]) {
+                    pixels: Vector[Vector[Rgb]]) {
   def reset: PpuState =
     copy(registers = registers.reset, scanline = 0, cycle = 0, bgRenderingState = bgRenderingState.reset)
 }
@@ -36,7 +35,7 @@ object PpuState {
   val scanline: Lens[PpuState, Int] = GenLens[PpuState](_.scanline)
   val cycle: Lens[PpuState, Int] = GenLens[PpuState](_.cycle)
   val bgRenderingState: Lens[PpuState, BgRenderingState] = GenLens[PpuState](_.bgRenderingState)
-  val pixels: Lens[PpuState, Vector[Rgb]] = GenLens[PpuState](_.pixels)
+  val pixels: Lens[PpuState, Vector[Vector[Rgb]]] = GenLens[PpuState](_.pixels)
 }
 
 case class PpuRegisters(ctrl: PpuCtrl, mask: PpuMask, status: PpuStatus, data: UInt8, loopy: LoopyRegisters) {
@@ -395,6 +394,9 @@ object Ppu {
   def setBgRenderingState(d: BgRenderingState): State[PpuState, Unit] =
     State.modify(PpuState.bgRenderingState.set(d))
 
+  def setPixel(i: Int, j: Int, color: Rgb): State[PpuState, Unit] =
+    State.modify(PpuState.pixels.modify(p => p.updated(i, p(i).updated(j, color))))
+
   def incScrollX: State[PpuState, Unit] =
     Monad[State[PpuState, *]].ifM(isRendering)(
       ifTrue = getLoopyV.flatMap { v =>
@@ -496,6 +498,11 @@ object Ppu {
     _ <- if (scanline >= 261) resetScanline else dummy
   } yield ()
 
+  def getColor(palette: UInt2, pixel: UInt2): State[PpuState, Rgb] = {
+    val address = (0x3F00 + (palette << 2) + pixel) & 0x3F
+    readPalettes(address).map(Rgb.palette)
+  }
+
   def pixel: State[PpuState, Unit] = for {
     x <- getLoopyX
     bitMux = 0x8000 >> x
@@ -506,13 +513,10 @@ object Ppu {
     pal0 = if (bg.attributeShiftLo & bitMux) 0x01 else 0x00
     pal1 = if (bg.attributeShiftHi & bitMux) 0x02 else 0x00
     bgPalette = pal1 | pal0
-    address = (0x3F00 + (bgPalette << 2) + bgPixel) & 0x3F
-    i <- readPalettes(address)
-    color = Rgb.palette(i)
+    color <- getColor(bgPalette, bgPixel)
     scanline <- getScanline
     cycle <- getCycle
-    pixel = scanline * 32 * 8 + cycle - 1
-    _ <- State.modify(PpuState.pixels.modify(_.updated(pixel, color)))
+    _ <- setPixel(scanline, cycle - 1, color)
   } yield ()
 
 

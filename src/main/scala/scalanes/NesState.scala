@@ -3,7 +3,9 @@ package scalanes
 import monocle.Lens
 import monocle.macros.GenLens
 
-case class NesState(ram: Vector[UInt8], cpuRegisters: CpuState, ppuState: PpuState, cartridge: Cartridge)
+case class NesState(ram: Vector[UInt8], cpuRegisters: CpuState, ppuState: PpuState, cartridge: Cartridge) {
+  def isFrameComplete: Boolean = ppuState.scanline == -1 && ppuState.cycle == 0
+}
 
 object NesState {
   val ram: Lens[NesState, Vector[UInt8]] = GenLens[NesState](_.ram)
@@ -24,7 +26,7 @@ object NesState {
     val pc = 0
     val status = 0x00 | CpuFlags.U.bit
     val cpuState = CpuState(0, 0, 0, stkp, pc, status, 0)
-    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty, PpuRegisters.initial, Mirroring.Horizontal,
+    val ppuState = PpuState(Vector.empty, Vector.empty, PpuRegisters.initial, Mirroring.Horizontal,
       0, 0, BgRenderingState.initial, Vector.empty)
     NesState(ram, cpuState, ppuState, Cartridge.empty)
   }

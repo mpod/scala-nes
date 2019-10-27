@@ -8,7 +8,8 @@ import scalafx.application.JFXApp.PrimaryStage
 import scalafx.beans.binding.{Bindings, ObjectBinding, StringBinding}
 import scalafx.beans.property.ObjectProperty
 import scalafx.scene.Scene
-import scalafx.scene.layout.{HBox, VBox}
+import scalafx.scene.canvas.{Canvas, GraphicsContext}
+import scalafx.scene.layout.{HBox, Pane, VBox}
 import scalafx.scene.paint.Color
 import scalafx.scene.text.Text
 
@@ -117,6 +118,62 @@ object Console extends JFXApp {
     asm, nesState
   )
 
+  def extractPatterns(nesState: NesState, patternTableIndex: Int, palette: Int): Iterable[Iterable[Color]] = {
+    val colors = for {
+      i <- 0 until 16
+      j <- 0 until 16
+      offset = i * 256 + j * 16
+      row <- 0 until 8
+      tileLsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0000).runA(nesState).value
+      tileMsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0008).runA(nesState).value
+      col <- 0 until 8
+      shiftedTileLsb = tileLsb >> col
+      shiftedTileMsb = tileMsb >> col
+      pixel = ((shiftedTileMsb & 0x01) << 1) | (shiftedTileLsb & 0x01)
+      color = Ppu.getColor(palette, pixel).runA(nesState.ppuState).value
+    } yield Color.rgb(color.r, color.g, color.b)
+    colors.grouped(16 * 8).toIterable
+  }
+
+  val patternsLeft: ObjectBinding[Iterable[Iterable[Color]]] = Bindings.createObjectBinding(
+    () => {
+      Option(nesState.value).map(extractPatterns(_, 0, 0)).getOrElse(Vector.empty)
+    },
+    nesState
+  )
+  val patternsLeftCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
+  patternsLeft.onChange((_, _, patterns: Iterable[Iterable[Color]]) => {
+    for {
+      (row, i) <- patterns.zipWithIndex
+      (color, j) <- row.zipWithIndex
+    } yield patternsLeftCanvas.graphicsContext2D.pixelWriter.setColor(i, j, color)
+  })
+
+  val patternsRight: ObjectBinding[Iterable[Iterable[Color]]] = Bindings.createObjectBinding(
+    () => {
+      Option(nesState.value).map(extractPatterns(_, 1, 0)).getOrElse(Vector.empty)
+    },
+    nesState
+  )
+  val patternsRightCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
+  patternsRight.onChange((_, _, patterns: Iterable[Iterable[Color]]) => {
+    for {
+      (row, i) <- patterns.zipWithIndex
+      (color, j) <- row.zipWithIndex
+    } yield patternsRightCanvas.graphicsContext2D.pixelWriter.setColor(i, j, color)
+  })
+
+  val screen: ObjectBinding[Vector[Vector[Color]]] = Bindings.createObjectBinding(
+    () => {
+      Option(nesState.value)
+        .map(_.ppuState.pixels).map(_.map(_.map(c => Color.rgb(c.r, c.g, c.b))))
+        .getOrElse(Vector.empty)
+    },
+    nesState
+  )
+
+  val screenCanvas = new Canvas(256 * 2, 240 * 2)
+
   stage = new PrimaryStage {
     title = "ScalaNES console"
     scene = new Scene(600, 400) {
@@ -136,12 +193,12 @@ object Console extends JFXApp {
         children = Seq(
           new VBox {
             children = Seq(
-              new Text {
-                text <== ram1
-              },
-              new Text("------------------------------------------------------"),
-              new Text {
-                text <== ram2
+              new Pane {
+                style =
+                  """
+                    |-fx-border-color: red;
+                    |""".stripMargin
+                children = Seq(screenCanvas)
               },
               new Text {
                 text = "\nSPACE - next instruction, R - reset"
