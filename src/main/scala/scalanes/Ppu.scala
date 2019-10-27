@@ -312,7 +312,7 @@ object Ppu {
     )
   }
 
-  def dummy: State[PpuState, Unit] = State.pure()
+  def dummy: State[PpuState, Unit] = State.pure(())
 
   def setVerticalBlank(d: Boolean): State[PpuState, Unit] =
     State.modify((statusRegister composeLens PpuStatus.verticalBlank).set(d))
@@ -325,7 +325,7 @@ object Ppu {
   def getStatus: State[PpuState, PpuStatus] = State.inspect(statusRegister.get)
 
   def setStatus(d: PpuStatus): State[PpuState, Unit] =
-    State.set(statusRegister.set(d))
+    State.modify(statusRegister.set(d))
 
   def getCtrl: State[PpuState, PpuCtrl] = State.inspect(ctrlRegister.get)
 
@@ -372,7 +372,7 @@ object Ppu {
     State.modify(PpuState.scanline.modify(_ + 1)).get.map(PpuState.scanline.get)
 
   def resetScanline: State[PpuState, Unit] =
-    State.set(PpuState.scanline.set(-1))
+    State.modify(PpuState.scanline.set(-1))
 
   def getScanline: State[PpuState, Int] =
     State.inspect(PpuState.scanline.get)
@@ -381,7 +381,7 @@ object Ppu {
     State.modify(PpuState.cycle.modify(_ + 1)).get.map(PpuState.cycle.get)
 
   def resetCycle: State[PpuState, Unit] =
-    State.set(PpuState.cycle.set(0))
+    State.modify(PpuState.cycle.set(0))
 
   def getCycle: State[PpuState, Int] =
     State.inspect(PpuState.cycle.get)
@@ -393,7 +393,7 @@ object Ppu {
     State.inspect(PpuState.bgRenderingState.get)
 
   def setBgRenderingState(d: BgRenderingState): State[PpuState, Unit] =
-    State.modify(PpuState.bgRenderingState.set)
+    State.modify(PpuState.bgRenderingState.set(d))
 
   def incScrollX: State[PpuState, Unit] =
     Monad[State[PpuState, *]].ifM(isRendering)(
@@ -401,7 +401,7 @@ object Ppu {
         if (v.coarseX == 31) setLoopyV(v.setCoarseX(0).flipNametableX())
         else setLoopyV(v)
       },
-      ifFalse = State.pure()
+      ifFalse = dummy
     )
 
   def incScrollY: State[PpuState, Unit] =
@@ -413,7 +413,7 @@ object Ppu {
         else v.setCoarseY(v.coarseY + 1)
         setLoopyV(updated)
       },
-      ifFalse = State.pure()
+      ifFalse = dummy
     )
 
   def transferAddressX: State[PpuState, Unit] =
@@ -424,7 +424,7 @@ object Ppu {
         updatedV = v.setCoarseX(t.coarseX).setNametableX(t.nametableX)
         _ <- setLoopyV(updatedV)
       } yield (),
-      ifFalse = State.pure()
+      ifFalse = dummy
     )
 
   def transferAddressY: State[PpuState, Unit] =
@@ -435,7 +435,7 @@ object Ppu {
         updatedV = v.setFineY(t.fineY).setNametableY(t.nametableY).setCoarseY(t.coarseY)
         _ <- setLoopyV(updatedV)
       } yield (),
-      ifFalse = State.pure()
+      ifFalse = dummy
     )
 
   def loadBgRegisters: State[PpuState, Unit] = for {
@@ -552,7 +552,7 @@ object Ppu {
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require(address >= 0x2000 && address <= 0x3FFF)
     require((d & 0xFF) == d)
-    val default = State.pure[NesState, Unit]()
+    val default = State.pure[NesState, Unit](())
     val address0 = address & 0x7
     if (address0 == 0x0000)
       (
@@ -721,12 +721,12 @@ object Ppu {
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
         transferAddressY
       case (240, _) =>
-        State.pure()
+        dummy
       case (241, 1) =>
         setVerticalBlank(true)
         // TODO: set NMI
       case _ =>
-        State.pure()
+        dummy
     }
   }.flatMap(_ => pixel).flatMap(_ => advanceRenderer)
 

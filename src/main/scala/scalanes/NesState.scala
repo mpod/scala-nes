@@ -24,7 +24,8 @@ object NesState {
     val pc = 0
     val status = 0x00 | CpuFlags.U.bit
     val cpuState = CpuState(0, 0, 0, stkp, pc, status, 0)
-    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty, Vector.empty, PpuRegisters.empty)
+    val ppuState = PpuState(Vector.empty, Vector.empty, Vector.empty, PpuRegisters.initial, Mirroring.Horizontal,
+      0, 0, BgRenderingState.initial, Vector.empty)
     NesState(ram, cpuState, ppuState, Cartridge.empty)
   }
 
