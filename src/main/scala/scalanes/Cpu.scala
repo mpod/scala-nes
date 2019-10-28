@@ -7,6 +7,25 @@ import scalanes.CpuFlags.CpuFlags
 
 import scala.collection.immutable.Queue
 
+case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int)
+
+object CpuState {
+  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit, 0)
+}
+
+object CpuFlags extends Enumeration {
+  protected case class Val(bit: Int) extends super.Val
+  type CpuFlags = Val
+  val C: CpuFlags = Val(1 << 0)
+  val Z: CpuFlags = Val(1 << 1)
+  val I: CpuFlags = Val(1 << 2)
+  val D: CpuFlags = Val(1 << 3)
+  val B: CpuFlags = Val(1 << 4)
+  val U: CpuFlags = Val(1 << 5)
+  val V: CpuFlags = Val(1 << 6)
+  val N: CpuFlags = Val(1 << 7)
+}
+
 object Cpu extends LazyLogging {
 
   sealed trait Address {
@@ -90,15 +109,9 @@ object Cpu extends LazyLogging {
 
   def setCycles(d: Int): State[NesState, Unit] = State.modify(NesState.cycles.set(d))
 
-  def incCycles(n: Int): State[NesState, Int] = State { s =>
-    val updated = NesState.cycles.modify(cycles => cycles + 1)(s)
-    (updated, NesState.cycles.get(updated))
-  }
+  def incCycles(n: Int): State[NesState, Int] = State.modify(NesState.cycles.modify(_ + 1)).get.map(NesState.cycles.get)
 
-  def decCycles(n: Int): State[NesState, Int] = State { s =>
-    val updated = NesState.cycles.modify(cycles => cycles - 1)(s)
-    (updated, NesState.cycles.get(updated))
-  }
+  def decCycles(n: Int): State[NesState, Int] = State.modify(NesState.cycles.modify(_ - 1)).get.map(NesState.cycles.get)
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
@@ -118,10 +131,10 @@ object Cpu extends LazyLogging {
     else if (address >= 0x4020 && address <= 0xFFFF)
       Cartridge.cpuWrite(address, d)
     else
-      State.pure(Unit)
+      State.pure(())
   }
 
-  def getStatus: State[NesState, UInt8] = State.inspect(_.cpuRegisters.status)
+  def getStatus: State[NesState, UInt8] = State.inspect(_.cpuState.status)
 
   def setStatus(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
@@ -132,7 +145,7 @@ object Cpu extends LazyLogging {
     NesState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit)
   )
 
-  def getFlag(flag: CpuFlags): State[NesState, Boolean] = State.inspect(flag.bit & _.cpuRegisters.status)
+  def getFlag(flag: CpuFlags): State[NesState, Boolean] = State.inspect(flag.bit & _.cpuState.status)
 
   def pop: State[NesState, UInt8] = for {
     stkp <- incStkp
@@ -143,7 +156,7 @@ object Cpu extends LazyLogging {
     stkp <- getStkp
     _ <- cpuWrite((0x0100 + stkp) & 0xFFFF, d)
     _ <- decStkp
-  } yield Unit
+  } yield ()
 
   def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xFF00) != (a & 0xFF00)
 
@@ -155,7 +168,7 @@ object Cpu extends LazyLogging {
 
   def reset: State[NesState, Unit] = for {
     lo <- cpuRead(0xFFFC)
-    hi <- cpuRead(0xFFFC + 1)
+    hi <- cpuRead(0xFFFD)
     _ <- setPc(asUInt16(hi, lo))
     _ <- setA(0)
     _ <- setX(0)
@@ -163,7 +176,7 @@ object Cpu extends LazyLogging {
     _ <- setStkp(0xFD)
     _ <- setStatus(0x00 | CpuFlags.U.bit)
     _ <- setCycles(0)
-  } yield Unit
+  } yield ()
 
   def irq: State[NesState, Unit] = for {
     pc <- getPc
@@ -180,7 +193,7 @@ object Cpu extends LazyLogging {
     hi <- cpuRead(0xFFFE+ 1)
     _ <- setPc(asUInt16(hi, lo))
     _ <- setCycles(7)
-  } yield Unit
+  } yield ()
 
   def nmi: State[NesState, Unit] = for {
     pc <- getPc
@@ -197,7 +210,7 @@ object Cpu extends LazyLogging {
     hi <- cpuRead(0xFFFA + 1)
     _ <- setPc(asUInt16(hi, lo))
     _ <- setCycles(8)
-  } yield Unit
+  } yield ()
 
   def clock: State[NesState, Unit] = Monad[State[NesState, *]]
     .ifM(getCycles.map(_ == 0))(
@@ -209,8 +222,8 @@ object Cpu extends LazyLogging {
           _ <- setCycles(instr.cycles)
           _ <- instr.op
           _ <- setFlag(CpuFlags.U, value = true)
-        } yield Unit,
-      ifFalse = State.pure(Unit)
+        } yield (),
+      ifFalse = State.pure(())
     )
     .flatMap(_ => decCycles(1))
     .map(_ => Unit)
@@ -218,7 +231,7 @@ object Cpu extends LazyLogging {
   def executeNextInstr: State[NesState, Unit] = for {
     _ <- clock
     _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
-  } yield Unit
+  } yield ()
 
   val IMP: AccAddressMode = State.pure(AccAddress)
 
@@ -318,7 +331,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.V, (~(a ^ d) & (a ^ temp)) & 0x0080)
     _ <- setFlag(CpuFlags.N, temp & 0x00800)
     _ <- setA(temp & 0xFF)
-  } yield Unit
+  } yield ()
 
   def AND(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -328,7 +341,7 @@ object Cpu extends LazyLogging {
     _ <- setA(r)
     _ <- setFlag(CpuFlags.Z, r == 0x00)
     _ <- setFlag(CpuFlags.N, r & 0x80)
-  } yield Unit
+  } yield ()
 
   def ASL(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -338,7 +351,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- address.write(temp & 0x00FF)
-  } yield Unit
+  } yield ()
 
   def branch: Op = for {
     relAddress <- REL
@@ -347,7 +360,7 @@ object Cpu extends LazyLogging {
     absAddress = (pc + relAddress) & 0xFFFF
     _ <- incCycles(if (isPageChange(pc, relAddress)) 1 else 0)
     _ <- setPc(absAddress)
-  } yield Unit
+  } yield ()
 
   def continue: Op = incPc.map(_ => Unit)
 
@@ -374,7 +387,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
     _ <- setFlag(CpuFlags.N, d & (1 << 7))
     _ <- setFlag(CpuFlags.V, d & (1 << 6))
-  } yield Unit
+  } yield ()
 
   def BMI: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.N))(
     ifTrue = branch,
@@ -404,7 +417,7 @@ object Cpu extends LazyLogging {
     d2 <- cpuRead(0xFFFF)
     pc2 = asUInt16(d2, d1)
     _ <- setPc(pc2)
-  } yield Unit
+  } yield ()
 
   def BVC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.V))(
     ifTrue = continue,
@@ -431,7 +444,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.C, d2 >= d1)
     _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
     _ <- setFlag(CpuFlags.N, temp & 0x0080)
-  } yield Unit
+  } yield ()
 
   def CMP(addressMode: AddressMode): Op = compare(addressMode.flatMap(_.read()), getA)
 
@@ -446,7 +459,7 @@ object Cpu extends LazyLogging {
     _ <- address.write(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
-  } yield Unit
+  } yield ()
 
   def DEX: Op = for {
     x <- getX
@@ -454,7 +467,7 @@ object Cpu extends LazyLogging {
     _ <- setX(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x800)
-  } yield Unit
+  } yield ()
 
   def DEY: Op = for {
     y <- getY
@@ -462,7 +475,7 @@ object Cpu extends LazyLogging {
     _ <- setY(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x800)
-  } yield Unit
+  } yield ()
 
   def EOR(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -472,7 +485,7 @@ object Cpu extends LazyLogging {
     _ <- setA(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
-  } yield Unit
+  } yield ()
 
   def INC(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -481,7 +494,7 @@ object Cpu extends LazyLogging {
     _ <- address.write(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x000)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
-  } yield Unit
+  } yield ()
 
   def INX: Op = for {
     x <- getX
@@ -489,7 +502,7 @@ object Cpu extends LazyLogging {
     _ <- setX(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x000)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
-  } yield Unit
+  } yield ()
 
   def INY: Op = for {
     y <- getY
@@ -497,12 +510,12 @@ object Cpu extends LazyLogging {
     _ <- setY(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
-  } yield Unit
+  } yield ()
 
   def JMP(addressMode: AbsAddressMode): Op = for {
     address <- addressMode
     _ <- setPc(address.address)
-  } yield Unit
+  } yield ()
 
   def JSR(addressMode: AbsAddressMode): Op = for {
     pc <- decPc
@@ -510,7 +523,7 @@ object Cpu extends LazyLogging {
     _ <- push(pc & 0xFF)
     address <- addressMode
     _ <- setPc(address.address)
-  } yield Unit
+  } yield ()
 
   def LDA(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -518,7 +531,7 @@ object Cpu extends LazyLogging {
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def LDX(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -526,7 +539,7 @@ object Cpu extends LazyLogging {
     _ <- setX(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def LDY(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -534,7 +547,7 @@ object Cpu extends LazyLogging {
     _ <- setY(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def LSR(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -544,11 +557,11 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.Z, (temp & 0xFF) == 0x00)
     _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- address.write(temp)
-  } yield Unit
+  } yield ()
 
   def NOP(extraCycle: Boolean = false): Op =
     if (extraCycle) incCycles(1).map(_ => Unit)
-    else State.pure(Unit)
+    else State.pure(())
 
   def ORA(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -558,32 +571,32 @@ object Cpu extends LazyLogging {
     _ <- setA(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
     _ <- setFlag(CpuFlags.N, a & 0x80)
-  } yield Unit
+  } yield ()
 
   def PHA: Op = for {
     a <- getA
     _ <- push(a)
-  } yield Unit
+  } yield ()
 
   def PHP: Op = for {
     status <- getStatus
     _ <- push(status | CpuFlags.B.bit | CpuFlags.U.bit)
     _ <- setFlag(CpuFlags.B, value = false)
     _ <- setFlag(CpuFlags.U, value = false)
-  } yield Unit
+  } yield ()
 
   def PLA: Op = for {
     d <- pop
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def PLP: Op = for {
     status <- pop
     _ <- setStatus(status)
     _ <- setFlag(CpuFlags.U, value = true)
-  } yield Unit
+  } yield ()
 
   def ROL(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -595,7 +608,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
     _ <- setFlag(CpuFlags.N, temp & 0x0080)
     _ <- address.write(temp & 0xFF)
-  } yield Unit
+  } yield ()
 
   def ROR(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -607,7 +620,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
     _ <- setFlag(CpuFlags.N, temp & 0x0080)
     _ <- address.write(temp & 0xFF)
-  } yield Unit
+  } yield ()
 
   def RTI: Op = for {
     status1 <- pop
@@ -617,7 +630,7 @@ object Cpu extends LazyLogging {
     pc2 <- pop
     pc = asUInt16(pc2, pc1)
     _ <- setPc(pc)
-  } yield Unit
+  } yield ()
 
   def RTS: Op = for {
     pc1 <- pop
@@ -625,7 +638,7 @@ object Cpu extends LazyLogging {
     pc = asUInt16(pc2, pc1)
     _ <- setPc(pc)
     _ <- incPc
-  } yield Unit
+  } yield ()
 
   def SBC(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -640,7 +653,7 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.V, (temp ^ a) & (temp ^ value) & 0x0080)
     _ <- setFlag(CpuFlags.N, temp & 0x00800)
     _ <- setA(temp & 0xFF)
-  } yield Unit
+  } yield ()
 
   def SEC: Op = setFlag(CpuFlags.C, value = true)
 
@@ -652,61 +665,61 @@ object Cpu extends LazyLogging {
     address <- addressMode
     d <- getA
     _ <- address.write(d)
-  } yield Unit
+  } yield ()
 
   def STX(addressMode: AddressMode): Op = for {
     address <- addressMode
     d <- getX
     _ <- address.write(d)
-  } yield Unit
+  } yield ()
 
   def STY(addressMode: AddressMode): Op = for {
     address <- addressMode
     y <- getY
     _ <- address.write(y)
-  } yield Unit
+  } yield ()
 
   def TAX: Op = for {
     d <- getA
     _ <- setX(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def TAY: Op = for {
     d <- getA
     _ <- setY(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def TSX: Op = for {
     d <- getStkp
     _ <- setX(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def TXA: Op = for {
     d <- getX
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
   def TXS: Op = for {
     d <- getX
     _ <- setStkp(d)
-  } yield Unit
+  } yield ()
 
   def TYA: Op = for {
     d <- getY
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield Unit
+  } yield ()
 
-  def XXX: Op = State.pure(Unit)
+  def XXX: Op = State.pure(())
 
   case class Instr(info: String, op: Op, cycles: Int)
 

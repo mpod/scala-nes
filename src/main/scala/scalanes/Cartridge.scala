@@ -14,7 +14,8 @@ object Cartridge {
     )
   }
 
-  def initial: Cartridge = Mapper000(Vector.fill(32 * 1024)(0x00), Vector.fill(8 * 1024)(0x00), 0)
+  def initial: Cartridge =
+    Mapper000(Vector.fill(32 * 1024)(0x00), Vector.fill(8 * 1024)(0x00), 0)
 
   def cpuRead(address: UInt16): State[NesState, UInt8] =
     State.inspect(_.cartridge.prgRead(address))
@@ -27,6 +28,9 @@ object Cartridge {
 
   def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
     State.modify[Cartridge](_.chrWrite(address, d)).toNesState
+
+  def reset: State[NesState, Unit] =
+    State.modify[Cartridge](_.reset).toNesState
 
   def fromString(program: String, offset: UInt16): Cartridge =
     program

@@ -49,6 +49,8 @@ case class Mapper001(prgRom: Vector[UInt8],
 
   override def chrWrite(address: UInt16, d: UInt8): Mapper001 = this
 
+  // TODO: Implement it
+  override def reset: Mapper001 = this
 }
 
 object Mapper001 {
@@ -83,20 +85,20 @@ object Mapper001 {
     val prgMode = (registers(0) >> 2) & 0x03
     // PRG mode 2 (16KB): fix first bank at $8000 and switch 16 KB bank at $C000
     if (prgMode == 2)
-      List(BankMap.map16(0), BankMap.map16(registers(3) & 0xF))
+      List(BankMap.map16kB(0), BankMap.map16kB(registers(3) & 0xF))
     // PRG mode 3 (16KB): fix last bank at $C000 and switch 16 KB bank at $8000
     else if (prgMode == 3)
-      List(BankMap.map16(registers(3) & 0xF), BankMap.map16(0xF))
+      List(BankMap.map16kB(registers(3) & 0xF), BankMap.map16kB(0xF))
     // PRG mode 0 or 1 (32KB): switch 32 KB at $8000, ignoring low bit of bank number
     else
-      List(BankMap.map32((registers(3) & 0xF) >> 1))
+      List(BankMap.map32kB((registers(3) & 0xF) >> 1))
   }
 
   private def createChrBankMaps(registers: Vector[UInt8]): List[BankMap] =
     // 0: switch 8 KB at a time; 1: switch two separate 4 KB banks
     if (registers(0) & 0x10)
-      List(BankMap.map4(registers(1) & 0x1F), BankMap.map4(registers(2) & 0x1F))
+      List(BankMap.map4kB(registers(1) & 0x1F), BankMap.map4kB(registers(2) & 0x1F))
     else
-      List(BankMap.map8((registers(1) >> 1) & 0xF))
+      List(BankMap.map8kB((registers(1) >> 1) & 0xF))
 
 }

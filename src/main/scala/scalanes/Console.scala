@@ -17,11 +17,11 @@ import scala.concurrent.ExecutionContext
 
 object Console extends JFXApp {
 
-  val program = "A20A8E0000A2038E0100AC0000A900186D010088D0FA8D0200EAEAEA"
-
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  NesState.fromFile[IO](Paths.get(""))
+  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("screen.nes")).unsafeRunSync()
+  require(loaded.size == 1)
+  val nesState: ObjectProperty[NesState] = ObjectProperty(loaded.head)
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>
@@ -37,7 +37,7 @@ object Console extends JFXApp {
     }.mkString("\n")
 
   def cpuStateInfo(s: NesState): String = {
-    val status = s.cpuRegisters.status
+    val status = s.cpuState.status
     val flagN = if (CpuFlags.N.bit & status) "N" else "n"
     val flagV = if (CpuFlags.V.bit & status) "V" else "v"
     val flagU = "-"
@@ -47,16 +47,16 @@ object Console extends JFXApp {
     val flagZ = if (CpuFlags.Z.bit & status) "Z" else "z"
     val flagC = if (CpuFlags.C.bit & status) "C" else "c"
     s"""STATUS:  $flagN $flagV $flagU $flagB $flagD $flagI $flagZ $flagC
-       |PC:      $$${hex(s.cpuRegisters.pc, 4)}
-       |A:       $$${hex(s.cpuRegisters.a, 2)}
-       |X:       $$${hex(s.cpuRegisters.x, 2)}
-       |Y:       $$${hex(s.cpuRegisters.y, 2)}
-       |Stack P: $$${hex(s.cpuRegisters.stkp, 2)}
+       |PC:      $$${hex(s.cpuState.pc, 4)}
+       |A:       $$${hex(s.cpuState.a, 2)}
+       |X:       $$${hex(s.cpuState.x, 2)}
+       |Y:       $$${hex(s.cpuState.y, 2)}
+       |Stack P: $$${hex(s.cpuState.stkp, 2)}
        |""".stripMargin
   }
 
   def codeInfo(s: NesState, lines: Int): Seq[(Int, String)] = {
-    val pc = s.cpuRegisters.pc
+    val pc = s.cpuState.pc
     val i = asmMap.indexWhere(_._1 == pc)
 
     ((i - lines / 2) until (i + lines / 2))
@@ -66,8 +66,6 @@ object Console extends JFXApp {
   }
 
   val asmLines: Int = 26
-
-  val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.fromString(program))
 
   val asmMap: Vector[(UInt16, String)] = Cpu.disassemble(0x0000, 0xFFFF, nesState.value)
 
@@ -90,7 +88,7 @@ object Console extends JFXApp {
   val asmBefore: StringBinding = Bindings.createStringBinding(
     () => {
       val s = for {
-        pc <- Option(nesState.value).map(_.cpuRegisters.pc)
+        pc <- Option(nesState.value).map(_.cpuState.pc)
         lines <- Option(asm.value).map(_.takeWhile { case (address, _) => address < pc }.map(_._2).mkString("\n"))
       } yield lines
       s.getOrElse("")
@@ -100,7 +98,7 @@ object Console extends JFXApp {
   val asmAt: StringBinding = Bindings.createStringBinding(
     () => {
       val s = for {
-        pc <- Option(nesState.value).map(_.cpuRegisters.pc)
+        pc <- Option(nesState.value).map(_.cpuState.pc)
         line <- Option(asm.value).flatMap(_.find { case (address, _) => address == pc }).map(_._2)
       } yield line
       s.getOrElse("")
@@ -110,7 +108,7 @@ object Console extends JFXApp {
   val asmAfter: StringBinding = Bindings.createStringBinding(
     () => {
       val s = for {
-        pc <- Option(nesState.value).map(_.cpuRegisters.pc)
+        pc <- Option(nesState.value).map(_.cpuState.pc)
         lines <- Option(asm.value).map(_.dropWhile { case (address, _) => address <= pc }.map(_._2).mkString("\n"))
       } yield lines
       s.getOrElse("")
@@ -132,7 +130,18 @@ object Console extends JFXApp {
       pixel = ((shiftedTileMsb & 0x01) << 1) | (shiftedTileLsb & 0x01)
       color = Ppu.getColor(palette, pixel).runA(nesState.ppuState).value
     } yield Color.rgb(color.r, color.g, color.b)
-    colors.grouped(16 * 8).toIterable
+    colors.grouped(16 * 8).toList
+  }
+
+  def drawPatterns(patterns: Iterable[Iterable[Color]], canvas: Canvas): Unit = {
+    val gc = canvas.graphicsContext2D
+    for {
+      (row, i) <- patterns.zipWithIndex
+      (color, j) <- row.zipWithIndex
+    } yield {
+      gc.fill = color
+      gc.fillRect(i * 2, j * 2, 2, 2)
+    }
   }
 
   val patternsLeft: ObjectBinding[Iterable[Iterable[Color]]] = Bindings.createObjectBinding(
@@ -143,11 +152,11 @@ object Console extends JFXApp {
   )
   val patternsLeftCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
   patternsLeft.onChange((_, _, patterns: Iterable[Iterable[Color]]) => {
-    for {
-      (row, i) <- patterns.zipWithIndex
-      (color, j) <- row.zipWithIndex
-    } yield patternsLeftCanvas.graphicsContext2D.pixelWriter.setColor(i, j, color)
+    drawPatterns(patterns, patternsLeftCanvas)
   })
+  patternsLeftCanvas.graphicsContext2D.fill = Color.Red
+  patternsLeftCanvas.graphicsContext2D.fillRect(0, 0, patternsLeftCanvas.width.get, patternsLeftCanvas.height.get)
+  drawPatterns(patternsLeft.value, patternsLeftCanvas)
 
   val patternsRight: ObjectBinding[Iterable[Iterable[Color]]] = Bindings.createObjectBinding(
     () => {
@@ -156,6 +165,10 @@ object Console extends JFXApp {
     nesState
   )
   val patternsRightCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
+  patternsRightCanvas.graphicsContext2D.fill = Color.Blue
+  patternsRightCanvas.graphicsContext2D.fillRect(0, 0, patternsRightCanvas.width.get, patternsRightCanvas.height.get)
+  drawPatterns(patternsRight.value, patternsRightCanvas)
+
   patternsRight.onChange((_, _, patterns: Iterable[Iterable[Color]]) => {
     for {
       (row, i) <- patterns.zipWithIndex
@@ -173,6 +186,14 @@ object Console extends JFXApp {
   )
 
   val screenCanvas = new Canvas(256 * 2, 240 * 2)
+
+  def boxedCanvas(canvas: Canvas): Pane = new Pane {
+    style =
+      """
+        |-fx-border-color: red;
+        |""".stripMargin
+    children = Seq(canvas)
+  }
 
   stage = new PrimaryStage {
     title = "ScalaNES console"
@@ -193,12 +214,9 @@ object Console extends JFXApp {
         children = Seq(
           new VBox {
             children = Seq(
-              new Pane {
-                style =
-                  """
-                    |-fx-border-color: red;
-                    |""".stripMargin
-                children = Seq(screenCanvas)
+              boxedCanvas(screenCanvas),
+              new HBox {
+                children = Seq(boxedCanvas(patternsLeftCanvas), boxedCanvas(patternsRightCanvas))
               },
               new Text {
                 text = "\nSPACE - next instruction, R - reset"

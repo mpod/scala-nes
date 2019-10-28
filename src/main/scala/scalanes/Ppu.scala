@@ -245,7 +245,7 @@ case class BgRenderingState(patternShiftLo: UInt16,
                             patternShiftHi: UInt16,
                             attributeShiftLo: UInt8,
                             attributeShiftHi: UInt8,
-                            nextTileId: UInt16,
+                            nextTileId: UInt8,
                             nextTileAttribute: UInt8,
                             nextTileLsb: UInt8,
                             nextTileMsb: UInt8) {
@@ -665,7 +665,7 @@ object Ppu {
       throw new RuntimeException("Invalid address!")
   }
 
-  def clock: State[PpuState, Unit] = State.get[PpuState].flatMap { s =>
+  def clock: State[NesState, Unit] = State.get[PpuState].flatMap { s =>
     def isVisiblePart(scanline: Int): Boolean =
       scanline >= -1 && scanline < 240
 
@@ -741,12 +741,14 @@ object Ppu {
         dummy
       case (241, 1) =>
         setVerticalBlank(true)
-        // TODO: set NMI
       case _ =>
         dummy
     }
-  }.flatMap(_ => pixel).flatMap(_ => advanceRenderer)
+  }.flatMap(_ => pixel).flatMap(_ => advanceRenderer).toNesState
 
-  def reset: State[PpuState, Unit] = State.get.map(_.reset)
+  def isVerticalBlankStarted: State[NesState, Boolean] =
+    State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2).toNesState
+
+  def reset: State[NesState, Unit] = State.modify[PpuState](_.reset).toNesState
 
 }

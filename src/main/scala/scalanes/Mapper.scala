@@ -1,21 +1,19 @@
 package scalanes
 
-case class BankMap(offset: Int, sizeInKB: Int) {
-  def endOffset: UInt16 = offset + sizeInKB * 1024
-}
+case class BankMap(offset: Int, sizeInKB: Int)
 
 object BankMap {
 
-  def map32(bank: Int): BankMap =
+  def map32kB(bank: Int): BankMap =
     BankMap(bank * 32 * 1024, 32)
 
-  def map16(bank: Int): BankMap =
+  def map16kB(bank: Int): BankMap =
     BankMap(bank * 16 * 1024, 16)
 
-  def map8(bank: Int): BankMap =
+  def map8kB(bank: Int): BankMap =
     BankMap(bank * 8 * 1024, 8)
 
-  def map4(bank: Int): BankMap =
+  def map4kB(bank: Int): BankMap =
     BankMap(bank * 4 * 1024, 4)
 
 }
@@ -38,7 +36,7 @@ trait Mapper {
           (addr, Option(prgRom(bankMap.offset + addr)))
       case (acc, _) => acc
     }
-    require(result.nonEmpty)
+    require(result.nonEmpty, s"$address")
     result.get
   }
 
@@ -54,4 +52,6 @@ trait Mapper {
   def prgWrite(address: UInt16, d: UInt8): SpecificMapper
 
   def chrWrite(address: UInt16, d: UInt8): SpecificMapper
+
+  def reset: SpecificMapper
 }
