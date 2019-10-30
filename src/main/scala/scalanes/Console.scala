@@ -1,6 +1,8 @@
 package scalanes
 import java.nio.file.Paths
 
+import cats.Monad
+import cats.data.State
 import cats.effect.{ContextShift, IO}
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
@@ -8,27 +10,32 @@ import scalafx.application.JFXApp.PrimaryStage
 import scalafx.beans.binding.{Bindings, ObjectBinding, StringBinding}
 import scalafx.beans.property.ObjectProperty
 import scalafx.scene.Scene
-import scalafx.scene.canvas.{Canvas, GraphicsContext}
+import scalafx.scene.canvas.Canvas
 import scalafx.scene.layout.{HBox, Pane, VBox}
 import scalafx.scene.paint.Color
 import scalafx.scene.text.Text
 
 import scala.concurrent.ExecutionContext
+import scala.io.{BufferedSource, Source}
 
 object Console extends JFXApp {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("screen.nes")).unsafeRunSync()
+  val source: BufferedSource = Source.fromFile("nestest.log")
+  val log: ObjectProperty[List[String]] = ObjectProperty(source.getLines.toList)
+  source.close()
+
+  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("nestest2.nes")).unsafeRunSync()
   require(loaded.size == 1)
-  val nesState: ObjectProperty[NesState] = ObjectProperty(loaded.head)
+  val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).value)
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>
       val rowAddress = address + i * columns
       (0 until columns).foldLeft(s"$$${hex(rowAddress, 4)}:") { case (acc, j) =>
         val cellAddress = rowAddress + j
-        val cell = if (cellAddress >= 0x8000)
+        val cell = if (cellAddress >= 0x6000)
           s.cartridge.prgRead(cellAddress)
         else
           s.ram(cellAddress)
@@ -55,65 +62,30 @@ object Console extends JFXApp {
        |""".stripMargin
   }
 
-  def codeInfo(s: NesState, lines: Int): Seq[(Int, String)] = {
-    val pc = s.cpuState.pc
-    val i = asmMap.indexWhere(_._1 == pc)
-
-    ((i - lines / 2) until (i + lines / 2))
-      .filter(i => i >= 0 && i < asmMap.length)
-      .map(asmMap)
-      .map { case (address, instr) => address -> s"$$${hex(address, 4)}: $instr"}
-  }
-
-  val asmLines: Int = 26
-
-  val asmMap: Vector[(UInt16, String)] = Cpu.disassemble(0x0000, 0xFFFF, nesState.value)
-
   val cpuState: StringBinding = Bindings.createStringBinding(
     () => Option(nesState.value).map(cpuStateInfo).getOrElse(""),
     nesState
   )
-  val ram1: StringBinding = Bindings.createStringBinding(
-    () => Option(nesState.value).map(ramInfo(_, 0x0000, 16, 16)).getOrElse(""),
+  val ram: StringBinding = Bindings.createStringBinding(
+    () => Option(nesState.value).map(ramInfo(_, 0x6000, 16, 16)).getOrElse(""),
     nesState
-  )
-  val ram2: StringBinding = Bindings.createStringBinding(
-    () => Option(nesState.value).map(ramInfo(_, 0x8000, 16, 16)).getOrElse(""),
-    nesState
-  )
-  val asm: ObjectBinding[Seq[(Int, String)]] = Bindings.createObjectBinding[Seq[(Int, String)]](
-    () => Option(nesState.value).map(codeInfo(_, asmLines)).getOrElse(Seq.empty),
-    nesState
-  )
-  val asmBefore: StringBinding = Bindings.createStringBinding(
-    () => {
-      val s = for {
-        pc <- Option(nesState.value).map(_.cpuState.pc)
-        lines <- Option(asm.value).map(_.takeWhile { case (address, _) => address < pc }.map(_._2).mkString("\n"))
-      } yield lines
-      s.getOrElse("")
-    },
-    asm, nesState
   )
   val asmAt: StringBinding = Bindings.createStringBinding(
     () => {
-      val s = for {
-        pc <- Option(nesState.value).map(_.cpuState.pc)
-        line <- Option(asm.value).flatMap(_.find { case (address, _) => address == pc }).map(_._2)
-      } yield line
-      s.getOrElse("")
+      Option(nesState.value)
+        .map(s => Cpu.disassemble.runA(s).value)
+        .map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }
+        .getOrElse("")
     },
-    asm, nesState
+    nesState
   )
   val asmAfter: StringBinding = Bindings.createStringBinding(
     () => {
-      val s = for {
-        pc <- Option(nesState.value).map(_.cpuState.pc)
-        lines <- Option(asm.value).map(_.dropWhile { case (address, _) => address <= pc }.map(_._2).mkString("\n"))
-      } yield lines
-      s.getOrElse("")
+      Option(nesState.value).map(s =>
+        Cpu.disassemble(20).runA(s).value.drop(1).map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }.mkString("\n")
+      ).getOrElse("")
     },
-    asm, nesState
+    nesState
   )
 
   def extractPatterns(nesState: NesState, patternTableIndex: Int, palette: Int): Iterable[Iterable[Color]] = {
@@ -195,15 +167,45 @@ object Console extends JFXApp {
     children = Seq(canvas)
   }
 
+  def compare(logLine: String, s: NesState): Boolean = {
+    val op = Cpu.getPc.flatMap(pc => Cpu.cpuRead(pc)).runA(s).value
+    logLine.contains(s"${hex(s.cpuState.pc, 4)}  ${hex(op, 2)} ") &&
+    logLine.contains(s" A:${hex(s.cpuState.a, 2)}") &&
+    logLine.contains(s" X:${hex(s.cpuState.x, 2)}") &&
+    logLine.contains(s" Y:${hex(s.cpuState.y, 2)}") &&
+    (logLine.contains(s" P:${hex(s.cpuState.status, 2)}") || logLine.contains(s" P:${hex(s.cpuState.status & 0xEF, 2)}")) &&
+    logLine.contains(s" SP:${hex(s.cpuState.stkp, 2)}")
+  }
+
   stage = new PrimaryStage {
     title = "ScalaNES console"
     scene = new Scene(600, 400) {
       onKeyPressed = { event =>
-        val s = nesState.value
-        if (event.getCode == KeyCode.SPACE)
-          nesState.value = Cpu.executeNextInstr.runS(s).value
-        else if (event.getCode == KeyCode.R)
-          nesState.value = Cpu.reset.runS(s).value
+        if (event.getCode == KeyCode.SPACE) {
+//          nesState.value = Monad[State[NesState, *]].whileM_(Cpu.getPc.map(_ != 0xC660))(Cpu.executeNextInstr).runS(s).value
+//          nesState.value = (0 to 10000).foldLeft(s)((s, _) => Cpu.executeNextInstr.runS(s).value)
+          var i = 0
+          val logVector = log.value.toVector
+          nesState.value = Monad[State[NesState, *]]
+            .whileM_(
+              State.get.map {s =>
+                val logLine = logVector(i)
+                i += 1
+                compare(logLine, s)
+              }
+            )(Cpu.executeNextInstr).runS(nesState.value).value
+          val s = nesState.value
+          val op = Cpu.getPc.flatMap(pc => Cpu.cpuRead(pc)).runA(s).value
+          println("Failed!")
+          println(s"Line: $i, ${logVector(i)}")
+          println(s"${hex(s.cpuState.pc, 4)}  ${hex(op, 2)} ")
+          println(s" A:${hex(s.cpuState.a, 2)}")
+          println(s" X:${hex(s.cpuState.x, 2)}")
+          println(s" Y:${hex(s.cpuState.y, 2)}")
+          println(s" P:${hex(s.cpuState.status, 2)}")
+          println(s" SP:${hex(s.cpuState.stkp, 2)}")
+        } else if (event.getCode == KeyCode.R)
+          nesState.value = Cpu.reset.runS(nesState.value).value
       }
       root = new HBox {
         style =
@@ -214,7 +216,9 @@ object Console extends JFXApp {
         children = Seq(
           new VBox {
             children = Seq(
-              boxedCanvas(screenCanvas),
+              new Text {
+                text <== ram
+              },
               new HBox {
                 children = Seq(boxedCanvas(patternsLeftCanvas), boxedCanvas(patternsRightCanvas))
               },
@@ -228,9 +232,6 @@ object Console extends JFXApp {
             children = Seq(
               new Text {
                 text <== cpuState
-              },
-              new Text {
-                text <== asmBefore
               },
               new Text {
                 fill = Color.Blue

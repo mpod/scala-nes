@@ -10,7 +10,7 @@ import scala.collection.immutable.Queue
 case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int)
 
 object CpuState {
-  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit, 0)
+  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0)
 }
 
 object CpuFlags extends Enumeration {
@@ -116,8 +116,10 @@ object Cpu extends LazyLogging {
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
     if (address >= 0x0000 && address <= 0x1FFF)
-      State.inspect(_.ram(address))
-    else if (address >= 0x4020 && address <= 0xFFFF)
+      State.inspect(_.ram(address % 0x800))
+    else if (address >= 0x2000 && address <= 0x3FFF)
+      Ppu.cpuRead(address)
+    else if (address >= 0x6000 && address <= 0xFFFF)
       Cartridge.cpuRead(address)
     else
       State.pure(0x00)
@@ -126,9 +128,12 @@ object Cpu extends LazyLogging {
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require((address & 0xFFFF) == address)
     require((d & 0xFF) == d)
+    println(s"cpuWrite ${hex(address, 4)}, ${hex(d, 2)}")
     if (address >= 0x0000 && address <= 0x1FFF)
       State.modify(NesState.ram.modify(_.updated(address, d)))
-    else if (address >= 0x4020 && address <= 0xFFFF)
+    else if (address >= 0x2000 && address <= 0x3FFF)
+      Ppu.cpuWrite(address, d)
+    else if (address >= 0x6000 && address <= 0xFFFF)
       Cartridge.cpuWrite(address, d)
     else
       State.pure(())
@@ -174,7 +179,7 @@ object Cpu extends LazyLogging {
     _ <- setX(0)
     _ <- setY(0)
     _ <- setStkp(0xFD)
-    _ <- setStatus(0x00 | CpuFlags.U.bit)
+    _ <- setStatus(0x00 | CpuFlags.U.bit | CpuFlags.I.bit)
     _ <- setCycles(0)
   } yield ()
 
@@ -274,7 +279,7 @@ object Cpu extends LazyLogging {
 
   val ABX: AbsAddressMode = for {
     abs <- ABS
-    address <- abs.read()
+    address = abs.address
     x <- getX
     c = if (isPageChange(address, x)) 1 else 0
     _ <- incCycles(c)
@@ -282,11 +287,11 @@ object Cpu extends LazyLogging {
 
   val ABY: AbsAddressMode = for {
     abs <- ABS
-    address <- abs.read()
+    address = abs.address
     y <- getY
     c = if (isPageChange(address, y)) 1 else 0
     _ <- incCycles(c)
-  } yield AbsAddress((address + y) & 0xFFFFFF)
+  } yield AbsAddress((address + y) & 0xFFFF)
 
   val IND: AbsAddressMode = for {
     abs <- ABS
@@ -317,7 +322,7 @@ object Cpu extends LazyLogging {
     address = asUInt16(hi, lo)
     c = if (isPageChange(address, y)) 1 else 0
     _ <- incCycles(c)
-  } yield AbsAddress(address + y)
+  } yield AbsAddress((address + y) & 0xFFFF)
 
   def ADC(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -327,9 +332,9 @@ object Cpu extends LazyLogging {
     lsb = if (c) 1 else 0
     temp = a + d + lsb
     _ <- setFlag(CpuFlags.C, temp & 0xFF00)
-    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
-    _ <- setFlag(CpuFlags.V, (~(a ^ d) & (a ^ temp)) & 0x0080)
-    _ <- setFlag(CpuFlags.N, temp & 0x00800)
+    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.V, (~(a ^ d) & (a ^ temp)) & 0x80)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- setA(temp & 0xFF)
   } yield ()
 
@@ -364,7 +369,7 @@ object Cpu extends LazyLogging {
 
   def continue: Op = incPc.map(_ => Unit)
 
-  def BCC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
+  def BCC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.C))(
     ifTrue = continue,
     ifFalse = branch
   )
@@ -466,7 +471,7 @@ object Cpu extends LazyLogging {
     temp = (x - 1) & 0xFF
     _ <- setX(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
-    _ <- setFlag(CpuFlags.N, temp & 0x800)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
   } yield ()
 
   def DEY: Op = for {
@@ -474,7 +479,7 @@ object Cpu extends LazyLogging {
     temp = (y - 1) & 0xFF
     _ <- setY(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
-    _ <- setFlag(CpuFlags.N, temp & 0x800)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
   } yield ()
 
   def EOR(addressMode: AddressMode): Op = for {
@@ -518,10 +523,10 @@ object Cpu extends LazyLogging {
   } yield ()
 
   def JSR(addressMode: AbsAddressMode): Op = for {
+    address <- addressMode
     pc <- decPc
     _ <- push((pc >> 8) & 0xFF)
     _ <- push(pc & 0xFF)
-    address <- addressMode
     _ <- setPc(address.address)
   } yield ()
 
@@ -559,9 +564,10 @@ object Cpu extends LazyLogging {
     _ <- address.write(temp)
   } yield ()
 
-  def NOP(extraCycle: Boolean = false): Op =
-    if (extraCycle) incCycles(1).map(_ => Unit)
-    else State.pure(())
+  def NOP(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    _ <- address.read()
+  } yield ()
 
   def ORA(addressMode: AddressMode): Op = for {
     address <- addressMode
@@ -570,7 +576,7 @@ object Cpu extends LazyLogging {
     temp = (a | d) & 0xFF
     _ <- setA(temp)
     _ <- setFlag(CpuFlags.Z, temp == 0x00)
-    _ <- setFlag(CpuFlags.N, a & 0x80)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
   } yield ()
 
   def PHA: Op = for {
@@ -605,8 +611,8 @@ object Cpu extends LazyLogging {
     lsb = if (c) 1 else 0
     temp = (d << 1) | lsb
     _ <- setFlag(CpuFlags.C, temp & 0xFF00)
-    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
-    _ <- setFlag(CpuFlags.N, temp & 0x0080)
+    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- address.write(temp & 0xFF)
   } yield ()
 
@@ -616,9 +622,9 @@ object Cpu extends LazyLogging {
     c <- getFlag(CpuFlags.C)
     msb = if (c) 1 << 7 else 0
     temp = (d >> 1) | msb
-    _ <- setFlag(CpuFlags.C, temp & 0x01)
-    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
-    _ <- setFlag(CpuFlags.N, temp & 0x0080)
+    _ <- setFlag(CpuFlags.C, d & 0x01)
+    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- address.write(temp & 0xFF)
   } yield ()
 
@@ -649,9 +655,9 @@ object Cpu extends LazyLogging {
     lsb = if (c) 1 else 0
     temp = a + value + lsb
     _ <- setFlag(CpuFlags.C, temp & 0xFF00)
-    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
-    _ <- setFlag(CpuFlags.V, (temp ^ a) & (temp ^ value) & 0x0080)
-    _ <- setFlag(CpuFlags.N, temp & 0x00800)
+    _ <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.V, (temp ^ a) & (temp ^ value) & 0x80)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
     _ <- setA(temp & 0xFF)
   } yield ()
 
@@ -717,6 +723,19 @@ object Cpu extends LazyLogging {
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
     _ <- setFlag(CpuFlags.N, d & 0x80)
+  } yield ()
+
+  def LAX(addressMode: AddressMode): Op = for {
+    _ <- LDA(addressMode)
+    _ <- TAX
+  } yield ()
+
+  def SAX(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    a <- getA
+    x <- getX
+    d = a & x
+    _ <- address.write(d)
   } yield ()
 
   def XXX: Op = State.pure(())
@@ -793,31 +812,40 @@ object Cpu extends LazyLogging {
     0xE0 -> Instr("CPX/IMM", CPX(IMM), 2),     0xE1 -> Instr("SBC/IZX", SBC(IZX), 6),
     0xE4 -> Instr("CPX/ZP0", CPX(ZP0), 3),     0xE5 -> Instr("SBC/ZP0", SBC(ZP0), 3),
     0xE6 -> Instr("INC/ZP0", INC(ZP0), 5),     0xE8 -> Instr("INX/IMP", INX,      2),
-    0xE9 -> Instr("SBC/IMM", SBC(IMM), 2),     0xEA -> Instr("NOP/IMP", NOP(),    2),
+    0xE9 -> Instr("SBC/IMM", SBC(IMM), 2),     0xEA -> Instr("NOP/IMP", NOP(IMP), 2),
     0xEC -> Instr("CPX/ABS", CPX(ABS), 4),     0xED -> Instr("SBC/ABS", SBC(ABS), 4),
     0xEE -> Instr("INC/ABS", INC(ABS), 6),     0xF0 -> Instr("BEQ/REL", BEQ,      2),
     0xF1 -> Instr("SBC/IZY", SBC(IZY), 5),     0xF5 -> Instr("SBC/ZPX", SBC(ZPX), 4),
     0xF6 -> Instr("INC/ZPX", INC(ZPX), 6),     0xF8 -> Instr("SED/IMP", SED,      2),
     0xF9 -> Instr("SBC/ABY", SBC(ABY), 4),     0xFD -> Instr("SBC/ABX", SBC(ABX), 4),
-    0xFE -> Instr("INC/ABX", INC(ABX), 7)
+    0xFE -> Instr("INC/ABX", INC(ABX), 7),
+
+    0xA3 -> Instr("LAX/IZX", LAX(IZX), 6),     0xA7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
+    0xAB -> Instr("LAX/IMM", LAX(IMM), 2),     0xAF -> Instr("LAX/ABS", LAX(ABS), 4),
+    0xB3 -> Instr("LAX/IZY", LAX(IZY), 5),     0xB7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
+    0xBF -> Instr("LAX/ABY", LAX(ABY), 4),     0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
+    0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),     0x8F -> Instr("SAX/ABS", SAX(ABS), 4),
+    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),     0xEB -> Instr("SBC/IMM", SBC(IMM), 2)
   ).withDefault { d =>
-    if (Set(0x1A, 0x3A, 0x5A, 0x7A, 0x80, 0x82, 0x89, 0xC2, 0xDA, 0xE2, 0xEA, 0xFA).contains(d))
-      Instr("NOP/IMP", NOP(), 2)
+    if (Set(0x80, 0x82, 0xC2, 0xE2, 0x89).contains(d))
+      Instr("NOP/IMM", NOP(IMM), 2)
+    else if (Set(0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA).contains(d))
+      Instr("NOP/IMP", NOP(IMP), 2)
+    else if (Set(0x0C).contains(d))
+      Instr("NOP/ABS", NOP(ABS), 4)
+    else if (Set(0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4).contains(d))
+      Instr("NOP/ZPX", NOP(ZPX), 4)
+    else if (Set(0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC).contains(d))
+      Instr("NOP/ABX", NOP(ABX), 4)
     else if (Set(0x04, 0x44, 0x64).contains(d))
-      Instr("NOP/IMP", NOP(), 3)
-    else if (Set(0x0C, 0x14, 0x1C, 0x34, 0x3C, 0x54, 0x5C, 0x74, 0x7C, 0xD4, 0xDC, 0xF4, 0xFC).contains(d))
-      Instr("NOP/IMP", NOP(), 4)
-    else if (d == 0x8C)
-      Instr("NOP/IMP", NOP(), 5)
-    else if (Set(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2, 0x0B, 0x2B, 0x4B, 0x6B, 0x8B, 0xAB, 0xCB).contains(d))
+      Instr("NOP/ZP0", NOP(ZP0), 3)
+    else if (Set(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2, 0x0B, 0x2B, 0x4B, 0x6B, 0x8B, 0xCB).contains(d))
       Instr("XXX/IMP", XXX, 2)
-    else if (Set(0x87, 0xA7).contains(d))
-      Instr("XXX/IMP", XXX, 3)
-    else if (Set(0x97, 0xBB, 0xB7, 0x8F, 0xAF, 0xBF).contains(d))
+    else if (Set(0xBB).contains(d))
       Instr("XXX/IMP", XXX, 4)
-    else if (Set(0xB3, 0x07, 0x27, 0x47, 0x67, 0xC7, 0xE7, 0x9B, 0x9E, 0x9F).contains(d))
+    else if (Set(0x07, 0x27, 0x47, 0x67, 0xC7, 0xE7, 0x9B, 0x9E, 0x9F).contains(d))
       Instr("XXX/IMP", XXX, 5)
-    else if (Set(0x83, 0x93, 0xA3, 0x17, 0x37, 0x57, 0x77, 0xD7, 0xF7, 0x0F, 0x2F, 0x4F, 0x6F, 0xCF, 0xEF).contains(d))
+    else if (Set(0x93, 0x17, 0x37, 0x57, 0x77, 0xD7, 0xF7, 0x0F, 0x2F, 0x4F, 0x6F, 0xCF, 0xEF).contains(d))
       Instr("XXX/IMP", XXX, 6)
     else if (Set(0x1B, 0x1F, 0x3B, 0x3F, 0x5B, 0x5F, 0x7B, 0x7F, 0xDB, 0xDF, 0xFB, 0xFF).contains(d))
       Instr("XXX/IMP", XXX, 7)
@@ -828,6 +856,63 @@ object Cpu extends LazyLogging {
       Instr("XXX/IMP", XXX, 8)
     }
   }
+
+  def disassemble: State[NesState, (UInt16, String)] = {
+    def getNext: State[NesState, (UInt16, UInt8)] = for {
+      pc <- getPc
+      d <- cpuRead(pc)
+      _ <- incPc
+    } yield (pc, d)
+
+    def getNextN(n: Int): State[NesState, List[UInt8]] =
+      Monad[State[NesState, *]].replicateA(n, getNext).map(_.map(_._2))
+
+    for {
+      next <- getNext
+      (addr, d) = next
+      infoParts = lookup(d).info.split('/')
+      opcode = infoParts.head
+      addressMode = infoParts.last
+      cmdParts <- if (addressMode == "IMP") getNextN(0)
+        else if (Set("IMM", "ZP0", "ZPX", "ZPY", "IZX", "IZY", "REL").contains(addressMode)) getNextN(1)
+        else if (Set("ABS", "ABX", "ABY", "IND").contains(addressMode)) getNextN(2)
+        else throw new RuntimeException(s"Unexpected address mode: $addressMode")
+      res = if (addressMode == "IMP")
+          s"$opcode {IMP}"
+        else if (addressMode == "IMM")
+          s"$opcode #$$${hex(cmdParts.head, 2)} {IMM}"
+        else if (addressMode == "ZP0")
+          s"$opcode $$${hex(cmdParts.head, 2)} {ZP0}"
+        else if (addressMode == "ZPX")
+          s"$opcode $$${hex(cmdParts.head, 2)}, X {ZPX}"
+        else if (addressMode == "ZPY")
+          s"$opcode $$${hex(cmdParts.head, 2)}, Y {ZPY}"
+        else if (addressMode == "IZX")
+          s"$opcode ($$${hex(cmdParts.head, 2)}, X) {IZX}"
+        else if (addressMode == "IZY")
+          s"$opcode ($$${hex(cmdParts.head, 2)}, Y) {IZY}"
+        else if (addressMode == "ABS") {
+          val a = asUInt16(cmdParts(1), cmdParts.head)
+          s"$opcode $$${hex(a, 4)} {ABS}"
+        } else if (addressMode == "ABX") {
+          val a = asUInt16(cmdParts(1), cmdParts.head)
+          s"$opcode $$${hex(a, 4)}, X {ABX}"
+        } else if (addressMode == "ABY") {
+          val a = asUInt16(cmdParts(1), cmdParts.head)
+          s"$opcode $$${hex(a, 4)}, Y {ABY}"
+        } else if (addressMode == "IND") {
+          val a = asUInt16(cmdParts(1), cmdParts.head)
+          s"$opcode ($$${hex(a, 4)}) {IND}"
+        } else if (addressMode == "REL") {
+          val a = cmdParts.head
+          s"$opcode $$${hex(a, 2)} [$$${hex(addr + 2 + a.toByte, 4)}] {REL}"
+        } else
+          throw new RuntimeException(s"Unexpected address mode: $addressMode")
+    } yield addr -> res
+  }
+
+  def disassemble(n: Int): State[NesState, List[(UInt16, String)]] =
+    Monad[State[NesState, *]].replicateA(n, disassemble)
 
   def disassemble(start: UInt16, end: UInt16, nesState: NesState): Vector[(UInt16, String)] = {
     val (res, _) = Stream

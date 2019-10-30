@@ -69,9 +69,14 @@ object NesState {
       )
   } yield ()
 
+  def executeFrame: State[NesState, Unit] = for {
+    _ <- clock
+    _ <- Monad[State[NesState, *]].whileM_(Ppu.isVerticalBlankStarted.map(_ != true))(clock)
+  } yield ()
+
   def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
     NesState(
-      Vector.fill(2 * 1024)(0x00),
+      Vector.fill(0x800)(0x00),
       CpuState.initial,
       PpuState.initial(mirroring),
       cartridge,
@@ -88,17 +93,21 @@ object NesState {
   private def nesFileDecoder: Decoder[NesState] = for {
     header <- ignore(4 * 8) :: uint8 :: uint8 :: uint8 :: uint8 :: uint8 :: ignore(7 * 8)
     _ :: prgRomBanks :: chrRomBanks :: flags6 :: flags7 :: prgRamBanks :: _ :: HNil = header
-    prgRamSize = if (prgRamBanks) prgRamBanks * 8 * 1024 else 8 * 1024
+    prgRamSize = if (prgRamBanks) prgRamBanks * 0x2000 else 0x2000
+    prgRomSize = prgRomBanks * 0x4000
+    chrRomSize = chrRomBanks * 0x2000
+    chrRam = if (chrRomBanks == 0) Vector.fill[UInt8](0x2000)(0x00) else Vector.empty
     mirroring = if (flags6 & 0x1) Mirroring.Vertical else Mirroring.Horizontal
     mapperId = (flags7 & 0xF0) | (flags6 >> 4)
     rom <- conditional(flags6 & 0x04, ignore(512 * 8)) ::
-      fixedSizeBytes(prgRomBanks * 0x4000, vector(uint8)) ::
-      fixedSizeBytes(chrRomBanks * 0x2000, vector(uint8))
+      fixedSizeBytes(prgRomSize, vector(uint8)) ::
+      fixedSizeBytes(chrRomSize, vector(uint8))
     _ :: prgRom :: chrRom :: HNil = rom
+    chrMem = if (chrRom.isEmpty) chrRam else chrRom
     cartridge <- if (mapperId == 0)
-        Decoder.point(Mapper000(prgRom, chrRom, prgRamSize))
+        Decoder.point(Mapper000(prgRom, chrMem, prgRamSize))
       else if (mapperId == 1)
-        Decoder.point(Mapper001(prgRom, chrRom, prgRamSize))
+        Decoder.point(Mapper001(prgRom, chrMem, prgRamSize))
       else
         Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
   } yield NesState.initial(mirroring, cartridge)

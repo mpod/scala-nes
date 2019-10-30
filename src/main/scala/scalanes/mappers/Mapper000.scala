@@ -11,7 +11,15 @@ case class Mapper000(prgRom: Vector[UInt8],
 
   type SpecificMapper = Mapper000
 
-  override def prgWrite(address: UInt16, d: UInt8): Mapper000 = this
+  override def prgWrite(address: UInt16, d: UInt8): Mapper000 =
+    if (address >= 0x8000) {
+      println(s"writing to cartridge rom $address, $d...")
+      this
+    } else {
+      println(s"writing to cartridge ram $address, $d")
+      copy(prgRam.updated(address - 0x6000, d))
+    }
+
 
   override def chrWrite(address: UInt16, d: UInt8): Mapper000 = this
 

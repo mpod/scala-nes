@@ -33,7 +33,7 @@ trait Mapper {
         if (addr >= (bankMap.offset + bankMap.sizeInKB * 1024))
           (addr - bankMap.sizeInKB * 1024, None)
         else
-          (addr, Option(prgRom(bankMap.offset + addr)))
+          (addr, Option(bankMap.offset + addr))
       case (acc, _) => acc
     }
     require(result.nonEmpty, s"$address")

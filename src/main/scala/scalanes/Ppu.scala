@@ -45,7 +45,7 @@ object PpuState {
     0,
     0,
     BgRenderingState.initial,
-    Vector.fill(256, 240)(Rgb.initial)
+    Vector.fill(240, 256)(Rgb.initial)
   )
 }
 
@@ -176,7 +176,10 @@ object PpuMask {
 }
 
 case class PpuStatus(spriteOverflow: Boolean, spriteZeroHit: Boolean, verticalBlank: Boolean) {
-  def asUInt8: UInt8 = ???
+  def asUInt8: UInt8 =
+    (if (spriteOverflow) 0x01 << 5 else 0x00) |
+    (if (spriteZeroHit)  0x01 << 6 else 0x00) |
+    (if (verticalBlank)  0x01 << 7 else 0x00)
 }
 
 object PpuStatus {
@@ -380,6 +383,9 @@ object Ppu {
   def isRendering: State[PpuState, Boolean] =
     getMask.map(m => m.renderBackground || m.renderSprites)
 
+  def isRenderingBackground: State[PpuState, Boolean] =
+    getMask.map(_.renderBackground)
+
   def incScanline: State[PpuState, Int] =
     State.modify(PpuState.scanline.modify(_ + 1)).get.map(PpuState.scanline.get)
 
@@ -459,11 +465,15 @@ object Ppu {
     _ <- setBgRenderingState(updated)
   } yield ()
 
-  def shiftBgRegisters(): State[PpuState, Unit] = for {
-    bg <- getBgRenderingState
-    updated = bg.shiftRegisters
-    _ <- setBgRenderingState(updated)
-  } yield ()
+  def shiftBgRegisters(): State[PpuState, Unit] = Monad[State[PpuState, *]]
+    .ifM(isRenderingBackground)(
+      ifTrue = for {
+        bg <- getBgRenderingState
+        updated = bg.shiftRegisters
+        _ <- setBgRenderingState(updated)
+      } yield (),
+      ifFalse = dummy
+    )
 
   private def mapToNametableAddress(address: UInt16, mirroring: Mirroring): UInt16 = {
     val addr = address & 0x0FFF
@@ -506,8 +516,8 @@ object Ppu {
 
   def advanceRenderer: State[PpuState, Unit] = for {
     cycle <- incCycle
-    _ <- if (cycle == 0) resetCycle else dummy
-    scanline <- incScanline
+    _ <- if (cycle >= 341) resetCycle.flatMap(_ => incScanline) else dummy
+    scanline <- getScanline
     _ <- if (scanline >= 261) resetScanline else dummy
   } yield ()
 
@@ -516,21 +526,37 @@ object Ppu {
     readPalettes(address).map(Rgb.palette)
   }
 
-  def pixel: State[PpuState, Unit] = for {
-    x <- getLoopyX
-    bitMux = 0x8000 >> x
-    bg <- getBgRenderingState
-    p0 = if (bg.patternShiftLo & bitMux) 0x01 else 0x00
-    p1 = if (bg.patternShiftHi & bitMux) 0x02 else 0x00
-    bgPixel = p1 | p0
-    pal0 = if (bg.attributeShiftLo & bitMux) 0x01 else 0x00
-    pal1 = if (bg.attributeShiftHi & bitMux) 0x02 else 0x00
-    bgPalette = pal1 | pal0
-    color <- getColor(bgPalette, bgPixel)
-    scanline <- getScanline
-    cycle <- getCycle
-    _ <- setPixel(scanline, cycle - 1, color)
-  } yield ()
+  def pixel: State[PpuState, Unit] = Monad[State[PpuState, *]].ifM(isRenderingBackground)(
+    ifTrue = for {
+      x <- getLoopyX
+      bitMux = 0x8000 >> x
+      bg <- getBgRenderingState
+      p0 = if (bg.patternShiftLo & bitMux) 0x01 else 0x00
+      p1 = if (bg.patternShiftHi & bitMux) 0x02 else 0x00
+      bgPixel = p1 | p0
+      pal0 = if (bg.attributeShiftLo & bitMux) 0x01 else 0x00
+      pal1 = if (bg.attributeShiftHi & bitMux) 0x02 else 0x00
+      bgPalette = pal1 | pal0
+      color <- getColor(bgPalette, bgPixel)
+      scanline <- getScanline
+      cycle <- getCycle
+      x = cycle - 1
+      _ <- if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256)
+        setPixel(scanline, x, color)
+      else
+        dummy
+    } yield (),
+    ifFalse = for {
+      color <- getColor(0x00, 0x00)
+      scanline <- getScanline
+      cycle <- getCycle
+      x = cycle - 1
+      _ <- if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256)
+        setPixel(scanline, x, color)
+      else
+        dummy
+    } yield ()
+  )
 
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
