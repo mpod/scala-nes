@@ -738,6 +738,93 @@ object Cpu extends LazyLogging {
     _ <- address.write(d)
   } yield ()
 
+  def DCP(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    temp = (d - 1) & 0xFF
+    _ <- address.write(temp)
+    _ <- setFlag(CpuFlags.Z, temp == 0x00)
+    _ <- setFlag(CpuFlags.N, temp & 0x80)
+    _ <- compare(address.read(), getA)
+  } yield ()
+
+  def ISC(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    temp1 = (d + 1) & 0xFF
+    _ <- address.write(temp1)
+    value = temp1 ^ 0x00FF
+    a <- getA
+    c <- getFlag(CpuFlags.C)
+    lsb = if (c) 1 else 0
+    temp2 = a + value + lsb
+    _ <- setFlag(CpuFlags.C, temp2 & 0xFF00)
+    _ <- setFlag(CpuFlags.Z, (temp2 & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.V, (temp2 ^ a) & (temp2 ^ value) & 0x80)
+    _ <- setFlag(CpuFlags.N, temp2 & 0x80)
+    _ <- setA(temp2 & 0xFF)
+  } yield ()
+
+  def SLO(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    temp1 = d << 1
+    _ <- setFlag(CpuFlags.C, temp1 & 0xFF00)
+    _ <- address.write(temp1 & 0x00FF)
+    a <- getA
+    temp2 = (a | temp1) & 0xFF
+    _ <- setA(temp2)
+    _ <- setFlag(CpuFlags.Z, temp2 == 0x00)
+    _ <- setFlag(CpuFlags.N, temp2 & 0x80)
+  } yield ()
+
+  def RLA(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    c <- getFlag(CpuFlags.C)
+    lsb = if (c) 1 else 0
+    temp = (d << 1) | lsb
+    _ <- setFlag(CpuFlags.C, temp & 0xFF00)
+    _ <- address.write(temp & 0xFF)
+    a <- getA
+    r = a & temp & 0xFF
+    _ <- setA(r)
+    _ <- setFlag(CpuFlags.Z, r == 0x00)
+    _ <- setFlag(CpuFlags.N, r & 0x80)
+  } yield ()
+
+  def SRE(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    _ <- setFlag(CpuFlags.C, d & 0x01)
+    temp1 = (d >> 1) & 0xFF
+    _ <- address.write(temp1)
+    a <- getA
+    temp2 = (a ^ temp1) & 0xFF
+    _ <- setA(temp2)
+    _ <- setFlag(CpuFlags.Z, temp2 == 0x00)
+    _ <- setFlag(CpuFlags.N, temp2 & 0x80)
+  } yield ()
+
+  def RRA(addressMode: AddressMode): Op = for {
+    address <- addressMode
+    d <- address.read()
+    c <- getFlag(CpuFlags.C)
+    msb = if (c) 1 << 7 else 0
+    temp1 = (d >> 1) | msb
+    _ <- setFlag(CpuFlags.C, d & 0x01)
+    _ <- address.write(temp1 & 0xFF)
+    a <- getA
+    c <- getFlag(CpuFlags.C)
+    lsb = if (c) 1 else 0
+    temp2 = a + temp1 + lsb
+    _ <- setFlag(CpuFlags.C, temp2 & 0xFF00)
+    _ <- setFlag(CpuFlags.Z, (temp2 & 0x00FF) == 0x00)
+    _ <- setFlag(CpuFlags.V, (~(a ^ temp1) & (a ^ temp2)) & 0x80)
+    _ <- setFlag(CpuFlags.N, temp2 & 0x80)
+    _ <- setA(temp2 & 0xFF)
+  } yield ()
+
   def XXX: Op = State.pure(())
 
   case class Instr(info: String, op: Op, cycles: Int)
@@ -820,12 +907,34 @@ object Cpu extends LazyLogging {
     0xF9 -> Instr("SBC/ABY", SBC(ABY), 4),     0xFD -> Instr("SBC/ABX", SBC(ABX), 4),
     0xFE -> Instr("INC/ABX", INC(ABX), 7),
 
+    // Unofficial opcodes
     0xA3 -> Instr("LAX/IZX", LAX(IZX), 6),     0xA7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
     0xAB -> Instr("LAX/IMM", LAX(IMM), 2),     0xAF -> Instr("LAX/ABS", LAX(ABS), 4),
     0xB3 -> Instr("LAX/IZY", LAX(IZY), 5),     0xB7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
     0xBF -> Instr("LAX/ABY", LAX(ABY), 4),     0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
     0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),     0x8F -> Instr("SAX/ABS", SAX(ABS), 4),
-    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),     0xEB -> Instr("SBC/IMM", SBC(IMM), 2)
+    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),     0xEB -> Instr("SBC/IMM", SBC(IMM), 2),
+    0xC3 -> Instr("DCP/IZX", DCP(IZX), 8),     0xC7 -> Instr("DCP/ZP0", DCP(ZP0), 5),
+    0xCF -> Instr("DCP/ABS", DCP(ABS), 6),     0xD3 -> Instr("DCP/IZY", DCP(IZY), 8),
+    0xD7 -> Instr("DCP/ZPX", DCP(ZPX), 6),     0xDB -> Instr("DCP/ABY", DCP(ABY), 7),
+    0xDF -> Instr("DCP/ABX", DCP(ABX), 7),     0xE3 -> Instr("ISC/IZX", ISC(IZX), 8),
+    0xE7 -> Instr("ISC/ZP0", ISC(ZP0), 5),     0xEF -> Instr("ISC/ABS", ISC(ABS), 6),
+    0xF3 -> Instr("ISC/IZY", ISC(IZY), 8),     0xF7 -> Instr("ISC/ZPX", ISC(ZPX), 6),
+    0xFB -> Instr("ISC/ABY", ISC(ABY), 7),     0xFF -> Instr("ISC/ABX", ISC(ABX), 7),
+    0x03 -> Instr("SLO/IZX", SLO(IZX), 8),     0x07 -> Instr("SLO/ZP0", SLO(ZP0), 5),
+    0x0F -> Instr("SLO/ABS", SLO(ABS), 6),     0x13 -> Instr("SLO/IZY", SLO(IZY), 8),
+    0x17 -> Instr("SLO/ZPX", SLO(ZPX), 6),     0x1B -> Instr("SLO/ABY", SLO(ABY), 7),
+    0x1F -> Instr("SLO/ABX", SLO(ABX), 7),     0x23 -> Instr("RLA/IZX", RLA(IZX), 8),
+    0x27 -> Instr("RLA/ZP0", RLA(ZP0), 5),     0x2F -> Instr("RLA/ABS", RLA(ABS), 6),
+    0x33 -> Instr("RLA/IZY", RLA(IZY), 8),     0x37 -> Instr("RLA/ZPX", RLA(ZPX), 6),
+    0x3B -> Instr("RLA/ABY", RLA(ABY), 7),     0x3F -> Instr("RLA/ABX", RLA(ABX), 7),
+    0x43 -> Instr("SRE/IZX", SRE(IZX), 8),     0x47 -> Instr("SRE/ZP0", SRE(ZP0), 5),
+    0x4F -> Instr("SRE/ABS", SRE(ABS), 6),     0x53 -> Instr("SRE/IZY", SRE(IZY), 8),
+    0x57 -> Instr("SRE/ZPX", SRE(ZPX), 6),     0x5B -> Instr("SRE/ABY", SRE(ABY), 7),
+    0x5F -> Instr("SRE/ABX", SRE(ABX), 7),     0x63 -> Instr("RRA/IZX", RRA(IZX), 8),
+    0x67 -> Instr("RRA/ZP0", RRA(ZP0), 5),     0x6F -> Instr("RRA/ABS", RRA(ABS), 6),
+    0x73 -> Instr("RRA/IZY", RRA(IZY), 8),     0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
+    0x7B -> Instr("RRA/ABY", RRA(ABY), 7),     0x7F -> Instr("RRA/ABX", RRA(ABX), 7)
   ).withDefault { d =>
     if (Set(0x80, 0x82, 0xC2, 0xE2, 0x89).contains(d))
       Instr("NOP/IMM", NOP(IMM), 2)
@@ -843,14 +952,10 @@ object Cpu extends LazyLogging {
       Instr("XXX/IMP", XXX, 2)
     else if (Set(0xBB).contains(d))
       Instr("XXX/IMP", XXX, 4)
-    else if (Set(0x07, 0x27, 0x47, 0x67, 0xC7, 0xE7, 0x9B, 0x9E, 0x9F).contains(d))
+    else if (Set(0x9B, 0x9E, 0x9F).contains(d))
       Instr("XXX/IMP", XXX, 5)
-    else if (Set(0x93, 0x17, 0x37, 0x57, 0x77, 0xD7, 0xF7, 0x0F, 0x2F, 0x4F, 0x6F, 0xCF, 0xEF).contains(d))
+    else if (Set(0x93).contains(d))
       Instr("XXX/IMP", XXX, 6)
-    else if (Set(0x1B, 0x1F, 0x3B, 0x3F, 0x5B, 0x5F, 0x7B, 0x7F, 0xDB, 0xDF, 0xFB, 0xFF).contains(d))
-      Instr("XXX/IMP", XXX, 7)
-    else if (Set(0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73, 0xC3, 0xD3, 0xE3, 0xF3).contains(d))
-      Instr("XXX/IMP", XXX, 8)
     else {
       println(s"Invalid opcode: ${hex(d, 2)}")
       Instr("XXX/IMP", XXX, 8)
