@@ -17,6 +17,7 @@
 ### Scala template
 *.class
 *.log
+!nestest.log
 
 .idea
 /target

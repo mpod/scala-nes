@@ -24,7 +24,8 @@ libraryDependencies ++= Seq(
   "org.scodec"                 %% "scodec-core"     % "1.11.4",
   "org.scodec"                 %% "scodec-stream"   % "2.0.0",
   "co.fs2"                     %% "fs2-core"        % "2.0.1",
-  "co.fs2"                     %% "fs2-io"          % "2.0.1"
+  "co.fs2"                     %% "fs2-io"          % "2.0.1",
+  "org.scalatest"              %% "scalatest"       % "3.0.8" % "test"
 )
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-Xcheckinit", "-encoding", "utf8", "-feature")
 
