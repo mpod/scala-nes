@@ -63,7 +63,7 @@ object NesState {
     _ <- if (freqCounter == 0) Cpu.clock else dummy
     _ <- incFreqCounter
     _ <- Monad[State[NesState, *]]
-      .ifM(Ppu.isVerticalBlankStarted)(
+      .ifM(Ppu.isNmiReady)(
         ifTrue = Cpu.nmi,
         ifFalse = dummy
       )

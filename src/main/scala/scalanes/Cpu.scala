@@ -5,8 +5,6 @@ import cats.data.State
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.CpuFlags.CpuFlags
 
-import scala.collection.immutable.Queue
-
 case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int)
 
 object CpuState {
@@ -128,7 +126,6 @@ object Cpu extends LazyLogging {
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require((address & 0xFFFF) == address)
     require((d & 0xFF) == d)
-    println(s"cpuWrite ${hex(address, 4)}, ${hex(d, 2)}")
     if (address >= 0x0000 && address <= 0x1FFF)
       State.modify(NesState.ram.modify(_.updated(address, d)))
     else if (address >= 0x2000 && address <= 0x3FFF)
@@ -1019,59 +1016,4 @@ object Cpu extends LazyLogging {
   def disassemble(n: Int): State[NesState, List[(UInt16, String)]] =
     Monad[State[NesState, *]].replicateA(n, disassemble)
 
-  def disassemble(start: UInt16, end: UInt16, nesState: NesState): Vector[(UInt16, String)] = {
-    val (res, _) = Stream
-      .range(start, end)
-      .foldLeft((Queue.empty[(UInt16, String)], Queue.empty[UInt8])) { case ((acc, parts), address) =>
-        val cell = if (address >= 0x8000) nesState.cartridge.prgRead(address) else 0x00
-        val cmdParts = parts :+ cell
-        val infoParts = lookup(cmdParts.head).info.split('/')
-        val opcode = infoParts.head
-        val addressMode = infoParts.last
-        if (addressMode == "IMP" && cmdParts.size == 1) {
-          val cmd = (address - 0) -> s"$opcode {IMP}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "IMM" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode #$$${hex(cmdParts(1), 2)} {IMM}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ZP0" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode $$${hex(cmdParts(1), 2)} {ZP0}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ZPX" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode $$${hex(cmdParts(1), 2)}, X {ZPX}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ZPY" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode $$${hex(cmdParts(1), 2)}, Y {ZPY}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "IZX" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode ($$${hex(cmdParts(1), 2)}, X) {IZX}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "IZY" && cmdParts.size == 2) {
-          val cmd = (address - 1) -> s"$opcode ($$${hex(cmdParts(1), 2)}, Y) {IZY}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ABS" && cmdParts.size == 3) {
-          val a = asUInt16(cmdParts(2), cmdParts(1))
-          val cmd = (address - 2) -> s"$opcode $$${hex(a, 4)} {ABS}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ABX" && cmdParts.size == 3) {
-          val a = asUInt16(cmdParts(2), cmdParts(1))
-          val cmd = (address - 2) -> s"$opcode $$${hex(a, 4)}, X {ABX}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "ABY" && cmdParts.size == 3) {
-          val a = asUInt16(cmdParts(2), cmdParts(1))
-          val cmd = (address - 2) -> s"$opcode $$${hex(a, 4)}, Y {ABY}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "IND" && cmdParts.size == 3) {
-          val a = asUInt16(cmdParts(2), cmdParts(1))
-          val cmd = (address - 2) -> s"$opcode ($$${hex(a, 4)}) {IND}"
-          (acc :+ cmd, Queue.empty)
-        } else if (addressMode == "REL" && cmdParts.size == 2) {
-          val a = cmdParts(1)
-          val cmd = (address - 1) -> s"$opcode $$${hex(a, 2)} [$$${hex(address + 1 + a.toByte, 4)}] {REL}"
-          (acc :+ cmd, Queue.empty)
-        } else
-          (acc, cmdParts)
-      }
-    res.toVector
-  }
 }

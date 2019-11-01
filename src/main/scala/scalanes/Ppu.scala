@@ -207,37 +207,39 @@ object LoopyRegisters {
   def initial: LoopyRegisters = LoopyRegisters(LoopyAddress.initial, LoopyAddress.initial, 0, w = false)
 }
 
-case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametables: UInt2, fineY: UInt3) {
+case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametableX: UInt1, nametableY: UInt1, fineY: UInt3) {
   require((coarseX & 0x1F) == coarseX)
   require((coarseY & 0x1F) == coarseY)
-  require((nametables & 0x3) == nametables)
+  require((nametableX & 0x1) == nametableX)
+  require((nametableY & 0x1) == nametableY)
   require((fineY & 0x7) == fineY)
 
   def setCoarseX(d: UInt5): LoopyAddress = LoopyAddress.coarseX.set(d)(this)
-  def incCoarseX(): LoopyAddress = setCoarseX(coarseX + 1)
   def setCoarseY(d: UInt5): LoopyAddress = LoopyAddress.coarseY.set(d)(this)
-  def setNametable(d: UInt2): LoopyAddress = LoopyAddress.nametable.set(d)(this)
+  def setNametables(d: UInt2): LoopyAddress =
+    (LoopyAddress.nametableX.set(d & 0x01) andThen LoopyAddress.nametableY.set((d >> 1) & 0x01))(this)
+  def nametables: UInt2 = (nametableY << 1) | nametableX
   def setFineY(d: UInt3): LoopyAddress = LoopyAddress.fineY.set(d)(this)
-  def setNametableX(d: UInt1): LoopyAddress = LoopyAddress.nametable.modify(_ | (d & 0x1))(this)
-  def setNametableY(d: UInt1): LoopyAddress = LoopyAddress.nametable.modify(_ | ((d & 0x1) << 1))(this)
-  def flipNametableX(): LoopyAddress = setNametable(nametables ^ 0x1)
-  def flipNametableY(): LoopyAddress = setNametable(nametables ^ 0x2)
-  def nametableX: UInt1 = nametables & 0x1
-  def nametableY: UInt1 = (nametables & 0x2) >> 1
+  def setNametableX(d: UInt1): LoopyAddress = LoopyAddress.nametableX.set(d)(this)
+  def setNametableY(d: UInt1): LoopyAddress = LoopyAddress.nametableY.set(d)(this)
+  def flipNametableX(): LoopyAddress = setNametables(nametableX ^ 0x1)
+  def flipNametableY(): LoopyAddress = setNametables(nametableY ^ 0x1)
 
-  def asUInt16: UInt16 = ((fineY & 0x7) << 12) | ((nametables & 0x3) << 10) | ((coarseY & 0x1F) << 5) | (coarseX & 0x1F)
+  def asUInt16: UInt16 = (fineY << 12) | (nametableY << 11) | (nametableX << 10) | (coarseY << 5) | coarseX
 }
 
 object LoopyAddress {
   val coarseX: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseX)
   val coarseY: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseY)
-  val nametable: Lens[LoopyAddress, UInt2] = GenLens[LoopyAddress](_.nametables)
+  val nametableX: Lens[LoopyAddress, UInt1] = GenLens[LoopyAddress](_.nametableX)
+  val nametableY: Lens[LoopyAddress, UInt1] = GenLens[LoopyAddress](_.nametableY)
   val fineY: Lens[LoopyAddress, UInt3] = GenLens[LoopyAddress](_.fineY)
 
   def apply(address: UInt16): LoopyAddress = new LoopyAddress(
     address & 0x1F,
     (address >> 5) & 0x1F,
-    (address >> 10) & 0x3,
+    (address >> 10) & 0x1,
+    (address >> 11) & 0x1,
     (address >> 12) & 0x7
   )
 
@@ -603,7 +605,7 @@ object Ppu {
           _    <- setCtrl(d)
           ctrl <- getCtrl
           t1   <- getLoopyT
-          t2   =  t1.setNametable(ctrl.nametable.id)
+          t2   =  t1.setNametables(ctrl.nametable.id)
           _    <- setLoopyT(t2)
         } yield ()
       ).toNesState
@@ -618,15 +620,15 @@ object Ppu {
     else if (address0 == 0x0005)
       Monad[State[PpuState, *]].ifM(getLoopyW)(
         ifTrue = for {
-          _  <- setLoopyX(d & 0x07)
           t1 <- getLoopyT
-          t2 =  t1.setCoarseX((d >> 3) & 0x1F)
+          t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
           _  <- setLoopyT(t2)
           _  <- setLoopyW(false)
         } yield (),
         ifFalse = for {
+          _  <- setLoopyX(d & 0x07)
           t1 <- getLoopyT
-          t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
+          t2 =  t1.setCoarseX((d >> 3) & 0x1F)
           _  <- setLoopyT(t2)
           _  <- setLoopyW(true)
         } yield ()
@@ -648,14 +650,13 @@ object Ppu {
         } yield ()
       ).toNesState
     else
-      (
-        for {
-          ctrl  <- getCtrl
-          vram1 <- getLoopyV
-          vram2 =  LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
-          _     <- setLoopyV(vram2)
-        } yield ()
-      ).toNesState
+      for {
+        ctrl  <- getCtrl.toNesState
+        vram1 <- getLoopyV.toNesState
+        _ <- ppuWrite(vram1.asUInt16, d)
+        vram2 =  LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
+        _     <- setLoopyV(vram2).toNesState
+      } yield ()
   }
 
   def ppuRead(address: UInt16): State[NesState, UInt8] = {
@@ -691,89 +692,104 @@ object Ppu {
       throw new RuntimeException("Invalid address!")
   }
 
-  def clock: State[NesState, Unit] = State.get[PpuState].flatMap { s =>
+  def clock: State[NesState, Unit] = State.get[NesState].flatMap { s =>
     def isVisiblePart(scanline: Int): Boolean =
       scanline >= -1 && scanline < 240
 
     def isFetch(scanline: Int, cycle: Int): Boolean =
       isVisiblePart(scanline) && ((cycle >= 2 && cycle < 258) || (cycle >= 321 && cycle < 338))
 
-    (s.scanline, s.cycle) match {
+    (s.ppuState.scanline, s.ppuState.cycle) match {
       case (0, 0) =>
-        incCycle.map(_ => ())
+        incCycle.map(_ => ()).toNesState
       case (-1, 1) =>
-        setVerticalBlank(false)
+        setVerticalBlank(false).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
-        for {
-          _ <- shiftBgRegisters()
-          _ <- loadBgRegisters
-          v <- getLoopyV
-          bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
-          bgRenderingState <- getBgRenderingState
-          updated = bgRenderingState.copy(nextTileId = bgNextTileId)
-          _ <- setBgRenderingState(updated)
-        } yield ()
+        (
+          for {
+            _ <- shiftBgRegisters()
+            _ <- loadBgRegisters
+            v <- getLoopyV
+            bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
+            bgRenderingState <- getBgRenderingState
+            updated = bgRenderingState.copy(nextTileId = bgNextTileId)
+            _ <- setBgRenderingState(updated)
+          } yield ()
+        ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
-        for {
-          _ <- shiftBgRegisters()
-          v <- getLoopyV
-          address = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
-          attr1 <- readNametables(address)
-          attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
-          attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
-          attr4 = attr3 & 0x03
-          bgRenderingState <- getBgRenderingState
-          updated = bgRenderingState.copy(nextTileAttribute = attr4)
-          _ <- setBgRenderingState(updated)
-        } yield ()
+        (
+          for {
+            _ <- shiftBgRegisters()
+            v <- getLoopyV
+            address = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
+            attr1 <- readNametables(address)
+            attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
+            attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
+            attr4 = attr3 & 0x03
+            bgRenderingState <- getBgRenderingState
+            updated = bgRenderingState.copy(nextTileAttribute = attr4)
+            _ <- setBgRenderingState(updated)
+          } yield ()
+        ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
         for {
-          bgRenderingState <- getBgRenderingState
-          ctrl <- getCtrl
-          v <- getLoopyV
+          bgRenderingState <- getBgRenderingState.toNesState
+          ctrl <- getCtrl.toNesState
+          v <- getLoopyV.toNesState
           address = ctrl.backgroundTableAddress.address + (bgRenderingState.nextTileId << 4) + v.fineY + 0
-          updated = bgRenderingState.copy(nextTileLsb = address)
-          _ <- setBgRenderingState(updated)
+          tile <- ppuRead(address)
+          updated = bgRenderingState.copy(nextTileLsb = tile)
+          _ <- setBgRenderingState(updated).toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
         for {
-          bgRenderingState <- getBgRenderingState
-          ctrl <- getCtrl
-          v <- getLoopyV
+          bgRenderingState <- getBgRenderingState.toNesState
+          ctrl <- getCtrl.toNesState
+          v <- getLoopyV.toNesState
           address = ctrl.backgroundTableAddress.address + (bgRenderingState.nextTileId << 4) + v.fineY + 8
-          updated = bgRenderingState.copy(nextTileLsb = address)
-          _ <- setBgRenderingState(updated)
+          tile <- ppuRead(address)
+          updated = bgRenderingState.copy(nextTileLsb = tile)
+          _ <- setBgRenderingState(updated).toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
-        incScrollX
+        incScrollX.toNesState
       case (scanline, 256) if isVisiblePart(scanline) =>
-        incScrollY
+        incScrollY.toNesState
       case (scanline, 257) if isVisiblePart(scanline) =>
-        for {
-          _ <- loadBgRegisters
-          _ <- transferAddressX
-        } yield ()
+        (
+          for {
+            _ <- loadBgRegisters
+            _ <- transferAddressX
+          } yield ()
+        ).toNesState
       case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
-        for {
-          v <- getLoopyV
-          bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
-          bgRenderingState <- getBgRenderingState
-          updated = bgRenderingState.copy(nextTileId = bgNextTileId)
-          _ <- setBgRenderingState(updated)
-        } yield ()
+        (
+          for {
+            v <- getLoopyV
+            bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
+            bgRenderingState <- getBgRenderingState
+            updated = bgRenderingState.copy(nextTileId = bgNextTileId)
+            _ <- setBgRenderingState(updated)
+          } yield ()
+        ).toNesState
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
-        transferAddressY
+        transferAddressY.toNesState
       case (240, _) =>
-        dummy
+        dummy.toNesState
       case (241, 1) =>
-        setVerticalBlank(true)
+        setVerticalBlank(true).toNesState
       case _ =>
-        dummy
+        dummy.toNesState
     }
-  }.flatMap(_ => pixel).flatMap(_ => advanceRenderer).toNesState
+  }.flatMap(_ => pixel.toNesState).flatMap(_ => advanceRenderer.toNesState)
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
     State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2).toNesState
+
+  def isNmiReady: State[NesState, Boolean] = (for {
+    a <- State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2)
+    b <- getCtrl
+  } yield a && (b.nmiMode == NmiMode.On)).toNesState
 
   def reset: State[NesState, Unit] = State.modify[PpuState](_.reset).toNesState
 
