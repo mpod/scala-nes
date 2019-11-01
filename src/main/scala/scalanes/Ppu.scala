@@ -168,8 +168,16 @@ case class PpuMask(greyscale: Boolean,
 object PpuMask {
   def apply(d: UInt8): PpuMask = {
     require((d & 0xFF) == d)
-    new PpuMask(d & 0x01, (d >> 1) & 0x01, (d >> 2) & 0x01, (d >> 3) & 0x01,
-      (d >> 4) & 0x01, (d >> 5) & 0x01, (d >> 6) & 0x01, (d >> 7) & 0x01)
+    new PpuMask(
+      (d >> 0) & 0x01,
+      (d >> 1) & 0x01,
+      (d >> 2) & 0x01,
+      (d >> 3) & 0x01,
+      (d >> 4) & 0x01,
+      (d >> 5) & 0x01,
+      (d >> 6) & 0x01,
+      (d >> 7) & 0x01
+    )
   }
 
   def initial: PpuMask = apply(0)
@@ -222,8 +230,8 @@ case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametableX: UInt1, namet
   def setFineY(d: UInt3): LoopyAddress = LoopyAddress.fineY.set(d)(this)
   def setNametableX(d: UInt1): LoopyAddress = LoopyAddress.nametableX.set(d)(this)
   def setNametableY(d: UInt1): LoopyAddress = LoopyAddress.nametableY.set(d)(this)
-  def flipNametableX(): LoopyAddress = setNametables(nametableX ^ 0x1)
-  def flipNametableY(): LoopyAddress = setNametables(nametableY ^ 0x1)
+  def flipNametableX(): LoopyAddress = LoopyAddress.nametableX.modify(_ ^ 0x1)(this)
+  def flipNametableY(): LoopyAddress = LoopyAddress.nametableY.modify(_ ^ 0x1)(this)
 
   def asUInt16: UInt16 = (fineY << 12) | (nametableY << 11) | (nametableX << 10) | (coarseY << 5) | coarseX
 }
@@ -422,7 +430,7 @@ object Ppu {
     Monad[State[PpuState, *]].ifM(isRendering)(
       ifTrue = getLoopyV.flatMap { v =>
         if (v.coarseX == 31) setLoopyV(v.setCoarseX(0).flipNametableX())
-        else setLoopyV(v)
+        else setLoopyV(v.setCoarseX(v.coarseX + 1))
       },
       ifFalse = dummy
     )
@@ -433,7 +441,7 @@ object Ppu {
         val updated = if (v.fineY < 7) v.setFineY(v.fineY + 1)
         else if (v.coarseY == 29) v.setFineY(0).setCoarseY(0).flipNametableY()
         else if (v.coarseY == 31) v.setFineY(0).setCoarseY(0)
-        else v.setCoarseY(v.coarseY + 1)
+        else v.setFineY(0).setCoarseY(v.coarseY + 1)
         setLoopyV(updated)
       },
       ifFalse = dummy
@@ -467,7 +475,7 @@ object Ppu {
     _ <- setBgRenderingState(updated)
   } yield ()
 
-  def shiftBgRegisters(): State[PpuState, Unit] = Monad[State[PpuState, *]]
+  def shiftBgRegisters: State[PpuState, Unit] = Monad[State[PpuState, *]]
     .ifM(isRenderingBackground)(
       ifTrue = for {
         bg <- getBgRenderingState
@@ -584,14 +592,14 @@ object Ppu {
     else if (address0 == 0x0006) zero // PPUADDR
     else                              // PPUDATA
       for {
-        d1          <- getData.toNesState
-        vramAddress <- getLoopyV.toNesState
-        d2          <- ppuRead(vramAddress.asUInt16)
-        _           <- setData(d2).toNesState
-        ctrl        <- getCtrl.toNesState
-        v           <- getLoopyV.toNesState
-        _           <- setLoopyV(LoopyAddress(v.asUInt16 + ctrl.incrementMode.delta)).toNesState
-      } yield if (vramAddress.asUInt16 >= 0x3F00) d2 else d1
+        d1   <- getData.toNesState
+        v1   <- getLoopyV.toNesState
+        d2   <- ppuRead(v1.asUInt16)
+        _    <- setData(d2).toNesState
+        ctrl <- getCtrl.toNesState
+        v2   =  LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
+        _    <- setLoopyV(v2).toNesState
+      } yield if (v1.asUInt16 >= 0x3F00) d2 else d1
   }
 
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
@@ -653,7 +661,7 @@ object Ppu {
       for {
         ctrl  <- getCtrl.toNesState
         vram1 <- getLoopyV.toNesState
-        _ <- ppuWrite(vram1.asUInt16, d)
+        _     <- ppuWrite(vram1.asUInt16, d)
         vram2 =  LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
         _     <- setLoopyV(vram2).toNesState
       } yield ()
@@ -707,19 +715,21 @@ object Ppu {
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
         (
           for {
-            _ <- shiftBgRegisters()
+            _ <- shiftBgRegisters
             _ <- loadBgRegisters
             v <- getLoopyV
             bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
             bgRenderingState <- getBgRenderingState
             updated = bgRenderingState.copy(nextTileId = bgNextTileId)
             _ <- setBgRenderingState(updated)
+            _ <- if (cycle == 256) incScrollY else dummy
+            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
           } yield ()
         ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
         (
           for {
-            _ <- shiftBgRegisters()
+            _ <- shiftBgRegisters
             v <- getLoopyV
             address = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
             attr1 <- readNametables(address)
@@ -729,10 +739,13 @@ object Ppu {
             bgRenderingState <- getBgRenderingState
             updated = bgRenderingState.copy(nextTileAttribute = attr4)
             _ <- setBgRenderingState(updated)
+            _ <- if (cycle == 256) incScrollY else dummy
+            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
           } yield ()
         ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
         for {
+          _ <- shiftBgRegisters.toNesState
           bgRenderingState <- getBgRenderingState.toNesState
           ctrl <- getCtrl.toNesState
           v <- getLoopyV.toNesState
@@ -740,19 +753,33 @@ object Ppu {
           tile <- ppuRead(address)
           updated = bgRenderingState.copy(nextTileLsb = tile)
           _ <- setBgRenderingState(updated).toNesState
+          _ <- if (cycle == 256) incScrollY.toNesState else dummy.toNesState
+          _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX).toNesState else dummy.toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
         for {
+          _ <- shiftBgRegisters.toNesState
           bgRenderingState <- getBgRenderingState.toNesState
           ctrl <- getCtrl.toNesState
           v <- getLoopyV.toNesState
           address = ctrl.backgroundTableAddress.address + (bgRenderingState.nextTileId << 4) + v.fineY + 8
           tile <- ppuRead(address)
-          updated = bgRenderingState.copy(nextTileLsb = tile)
+          updated = bgRenderingState.copy(nextTileMsb = tile)
           _ <- setBgRenderingState(updated).toNesState
+          _ <- if (cycle == 256) incScrollY.toNesState else dummy.toNesState
+          _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX).toNesState else dummy.toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
-        incScrollX.toNesState
+        (
+          for {
+            _ <- shiftBgRegisters
+            _ <- incScrollX
+            _ <- if (cycle == 256) incScrollY else dummy
+            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
+          } yield ()
+        ).toNesState
+      case (scanline, cycle) if isFetch(scanline, cycle) =>
+        shiftBgRegisters.toNesState
       case (scanline, 256) if isVisiblePart(scanline) =>
         incScrollY.toNesState
       case (scanline, 257) if isVisiblePart(scanline) =>

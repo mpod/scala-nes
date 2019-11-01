@@ -54,8 +54,6 @@ object Console extends JFXApp {
        |X:       $$${hex(s.cpuState.x, 2)}
        |Y:       $$${hex(s.cpuState.y, 2)}
        |Stack P: $$${hex(s.cpuState.stkp, 2)}
-       |PPU:     ${s.ppuState.scanline}, ${s.ppuState.cycle}
-       |         ${hex(s.ppuState.registers.status.asUInt8, 2)}
        |""".stripMargin
   }
 
@@ -101,18 +99,33 @@ object Console extends JFXApp {
       color = Ppu.getColor(palette, pixel).runA(nesState.ppuState).value
     } yield {
       gc.fill = Color.rgb(color.r, color.g, color.b)
-      gc.fillRect(2 * (j * 8 + col), 2 * (i * 8 + row), 2, 2)
+      gc.fillRect(j * 8 + col, i * 8 + row, 1, 1)
     }
   }
 
-  val patternsLeftCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
-  val patternsRightCanvas = new Canvas(16 * 8 * 2, 16 * 8 * 2)
+  def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
+    val gc = canvas.graphicsContext2D
+
+    for {
+      (row, i) <- nesState.ppuState.pixels.zipWithIndex
+      (color, j) <- row.zipWithIndex
+    } yield {
+      gc.fill = Color.rgb(color.r, color.g, color.b)
+      gc.fillRect(2 * j, 2 * i, 2, 2)
+    }
+  }
+
+  val screenCanvas = new Canvas(256 * 2, 240 * 2)
+  val patternsLeftCanvas = new Canvas(16 * 8, 16 * 8)
+  val patternsRightCanvas = new Canvas(16 * 8, 16 * 8)
   nesState.onChange((_, _, state: NesState) => {
     drawPatterns(state, 0, 0, patternsLeftCanvas)
     drawPatterns(state, 1, 0, patternsRightCanvas)
+    drawScreen(state, screenCanvas)
   })
   drawPatterns(nesState.value, 0, 0, patternsLeftCanvas)
   drawPatterns(nesState.value, 1, 0, patternsRightCanvas)
+  drawScreen(nesState.value, screenCanvas)
 
   val screen: ObjectBinding[Vector[Vector[Color]]] = Bindings.createObjectBinding(
     () => {
@@ -123,21 +136,26 @@ object Console extends JFXApp {
     nesState
   )
 
-  val screenCanvas = new Canvas(256 * 2, 240 * 2)
-
   val hSpacer = new Region
   hSpacer.setPrefWidth(16)
+
+  val vSpacer = new Region
+  vSpacer.setPrefHeight(16)
 
   stage = new PrimaryStage {
     title = "ScalaNES console"
     scene = new Scene(600, 400) {
       onKeyPressed = { event =>
         if (event.getCode == KeyCode.SPACE) {
-          //          nesState.value = (0 to 100).foldLeft(nesState.value)((s, _) => NesState.executeFrame.runS(s).value)
-          //          nesState.value = NesState.clock.runS(nesState.value).value
-          nesState.value = Monad[State[NesState, *]]
-            .whileM_(State.get.map(s => s.ppuState.scanline != 240 || s.ppuState.cycle != 339))(NesState.clock)
-            .runS(nesState.value).value
+          nesState.value = NesState.executeFrame.runS(nesState.value).value
+//          nesState.value = (0 until 10).foldLeft(nesState.value) {
+//            case (acc, i) =>
+//              NesState.executeFrame.runS(acc).value
+//          }
+//           nesState.value = NesState.clock.runS(nesState.value).value
+//          nesState.value = Monad[State[NesState, *]]
+//            .whileM_(State.get.map(s => s.ppuState.scanline != 240 || s.ppuState.cycle != 339))(NesState.clock)
+//            .runS(nesState.value).value
         } else if (event.getCode == KeyCode.N) {
           nesState.value = NesState.clock.runS(nesState.value).value
         } else if (event.getCode == KeyCode.R)
@@ -152,14 +170,13 @@ object Console extends JFXApp {
         children = Seq(
           new VBox {
             children = Seq(
-              new Text {
-                text <== ram
-              },
+              screenCanvas,
+              vSpacer,
               new HBox {
                 children = Seq(patternsLeftCanvas, hSpacer, patternsRightCanvas)
               },
               new Text {
-                text = "\nSPACE - next instruction, R - reset"
+                text = "\nSPACE - next frame, R - reset"
               }
             )
           },
