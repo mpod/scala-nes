@@ -1,8 +1,6 @@
 package scalanes
-import java.nio.file.Paths
+import java.nio.file.{Path, Paths}
 
-import cats.Monad
-import cats.data.State
 import cats.effect.{ContextShift, IO}
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
@@ -11,7 +9,7 @@ import scalafx.beans.binding.{Bindings, ObjectBinding, StringBinding}
 import scalafx.beans.property.ObjectProperty
 import scalafx.scene.Scene
 import scalafx.scene.canvas.Canvas
-import scalafx.scene.layout.{HBox, Pane, Region, VBox}
+import scalafx.scene.layout.{HBox, Region, VBox}
 import scalafx.scene.paint.Color
 import scalafx.scene.text.Text
 
@@ -21,7 +19,8 @@ object Console extends JFXApp {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("nestest.nes")).unsafeRunSync()
+  val nestestRom: Path = Paths.get(getClass.getResource("/nestest.nes").toURI)
+  val loaded: List[NesState] = NesState.fromFile[IO](nestestRom).unsafeRunSync()
   require(loaded.size == 1)
   val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).value)
 
@@ -147,7 +146,10 @@ object Console extends JFXApp {
     scene = new Scene(600, 400) {
       onKeyPressed = { event =>
         if (event.getCode == KeyCode.SPACE) {
+          val start = System.currentTimeMillis()
           nesState.value = NesState.executeFrame.runS(nesState.value).value
+          val duration = System.currentTimeMillis() - start
+          println(s"Frame generated in ${duration / 1000}s ${duration % 1000}ms")
 //          nesState.value = (0 until 10).foldLeft(nesState.value) {
 //            case (acc, i) =>
 //              NesState.executeFrame.runS(acc).value
