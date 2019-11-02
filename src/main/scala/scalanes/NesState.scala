@@ -21,7 +21,7 @@ case class NesState(ram: Vector[UInt8],
                     cpuState: CpuState,
                     ppuState: PpuState,
                     cartridge: Cartridge,
-                    freqCounter: Int) {
+                    counter: Long) {
   def isFrameComplete: Boolean = ppuState.scanline == -1 && ppuState.cycle == 0
 }
 
@@ -37,31 +37,29 @@ object NesState {
   val cycles: Lens[NesState, Int] = cpuRegisters composeLens GenLens[CpuState](_.cycles)
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
   val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
-  val freqCounter: Lens[NesState, Int] = GenLens[NesState](_.freqCounter)
+  val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
 
   def dummy: State[NesState, Unit] = State.pure(())
 
-  def getFreqCounter: State[NesState, Int] =
-    State.inspect(freqCounter.get)
+  def incCounter: State[NesState, Long] = State { s =>
+    val updated = NesState.counter.modify(_ + 1)(s)
+    (updated, NesState.counter.get(updated))
+  }
 
-  def incFreqCounter: State[NesState, Unit] =
-    State.modify(freqCounter.modify(a => if (a >= 2) 0 else a + 1))
-
-  def resetFreqCounter: State[NesState, Unit] =
-    State.modify(freqCounter.set(0))
+  def resetCounter: State[NesState, Unit] =
+    State.modify(counter.set(0))
 
   def reset: State[NesState, Unit] = for {
     _ <- Cpu.reset
     _ <- Ppu.reset
     _ <- Cartridge.reset
-    _ <- resetFreqCounter
+    _ <- resetCounter
   } yield ()
 
   def clock: State[NesState, Unit] = for {
     _ <- Ppu.clock
-    freqCounter <- getFreqCounter
-    _ <- if (freqCounter == 0) Cpu.clock else dummy
-    _ <- incFreqCounter
+    counter <- incCounter
+    _ <- if ((counter % 3) == 1) Cpu.clock else dummy
     _ <- Monad[State[NesState, *]]
       .ifM(Ppu.isNmiReady)(
         ifTrue = Cpu.nmi,

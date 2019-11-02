@@ -524,50 +524,41 @@ object Ppu {
   def writePalettes(address: UInt16, d: UInt8): State[PpuState, Unit] =
     State.modify(PpuState.palettes.modify(_.updated(mapToPalettesIndex(address), d)))
 
-  def advanceRenderer: State[PpuState, Unit] = for {
-    cycle <- incCycle
-    _ <- if (cycle >= 341) resetCycle.flatMap(_ => incScanline) else dummy
-    scanline <- getScanline
-    _ <- if (scanline >= 261) resetScanline else dummy
-  } yield ()
+  def advanceRenderer: State[PpuState, Unit] = State { s =>
+    val (cycle, scanline) = if (s.cycle >= 340)
+      (0, if (s.scanline >= 260) -1 else s.scanline + 1)
+    else
+      (s.cycle + 1, s.scanline)
+    val updated = (PpuState.cycle.set(cycle) andThen PpuState.scanline.set(scanline))(s)
+    (updated, ())
+  }
 
   def getColor(palette: UInt2, pixel: UInt2): State[PpuState, Rgb] = {
     val address = (0x3F00 + (palette << 2) + pixel) & 0x3F
     readPalettes(address).map(Rgb.palette)
   }
 
-  def pixel: State[PpuState, Unit] = Monad[State[PpuState, *]].ifM(isRenderingBackground)(
-    ifTrue = for {
-      x <- getLoopyX
-      bitMux = 0x8000 >> x
-      bg <- getBgRenderingState
-      p0 = if (bg.patternShiftLo & bitMux) 0x01 else 0x00
-      p1 = if (bg.patternShiftHi & bitMux) 0x02 else 0x00
-      bgPixel = p1 | p0
-      pal0 = if (bg.attributeShiftLo & bitMux) 0x01 else 0x00
-      pal1 = if (bg.attributeShiftHi & bitMux) 0x02 else 0x00
-      bgPalette = pal1 | pal0
-      color <- getColor(bgPalette, bgPixel)
-      scanline <- getScanline
-      cycle <- getCycle
-      x = cycle - 1
-      _ <- if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256)
-        setPixel(scanline, x, color)
+  def pixel: State[PpuState, Unit] = State.modify { s =>
+    val scanline = s.scanline
+    val x = s.cycle - 1
+    if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256) {
+      val bitMux = 0x8000 >> s.registers.loopy.x
+      val p0 = if (s.bgRenderingState.patternShiftLo & bitMux) 0x01 else 0x00
+      val p1 = if (s.bgRenderingState.patternShiftHi & bitMux) 0x02 else 0x00
+      val bgPixel = p1 | p0
+      val pal0 = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
+      val pal1 = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
+      val bgPalette = pal1 | pal0
+      val colorAddress = (0x3F00 + (bgPalette << 2) + bgPixel) & 0x3F
+      val colorValue = if (s.registers.mask.renderBackground)
+        s.palettes(mapToPalettesIndex(colorAddress))
       else
-        dummy
-    } yield (),
-    ifFalse = for {
-      color <- getColor(0x00, 0x00)
-      scanline <- getScanline
-      cycle <- getCycle
-      x = cycle - 1
-      _ <- if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256)
-        setPixel(scanline, x, color)
-      else
-        dummy
-    } yield ()
-  )
-
+        s.palettes(mapToPalettesIndex(0x0000))
+      val color = Rgb.palette(colorValue)
+      PpuState.pixels.modify(p => p.updated(scanline, p(scanline).updated(x, color)))(s)
+    } else
+      s
+  }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     // The PPU exposes eight memory-mapped registers to the CPU, which are mapped to the
