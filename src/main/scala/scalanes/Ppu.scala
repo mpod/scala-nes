@@ -263,6 +263,7 @@ case class BgRenderingState(patternShiftLo: UInt16,
                             nextTileLsb: UInt8,
                             nextTileMsb: UInt8) {
 
+  require((nextTileId & 0xFF) == nextTileId)
   require((nextTileLsb & 0xFF) == nextTileLsb)
   require((nextTileMsb & 0xFF) == nextTileMsb)
   require((nextTileAttribute & 0xFF) == nextTileAttribute)
@@ -275,13 +276,22 @@ case class BgRenderingState(patternShiftLo: UInt16,
       attributeShiftHi = attributeShiftHi << 1
     )
 
-  def loadRegisters: BgRenderingState =
+  def loadRegisters: BgRenderingState = {
     copy(
       patternShiftLo = (patternShiftLo & 0xFF00) | nextTileLsb,
       patternShiftHi = (patternShiftHi & 0xFF00) | nextTileMsb,
       attributeShiftLo = (attributeShiftLo & 0xFF00) | (if (nextTileAttribute & 0x01) 0xFF else 0x00),
       attributeShiftHi = (attributeShiftHi & 0xFF00) | (if (nextTileAttribute & 0x02) 0xFF else 0x00)
     )
+  }
+
+  def setNextTileId(d: UInt8): BgRenderingState = copy(nextTileId = d)
+
+  def setNextTileAttribute(d: UInt8): BgRenderingState = copy(nextTileAttribute = d)
+
+  def setNextTileLsb(d: UInt8): BgRenderingState = copy(nextTileLsb = d)
+
+  def setNextTileMsb(d: UInt8): BgRenderingState = copy(nextTileMsb = d)
 
   def reset: BgRenderingState = BgRenderingState.initial
 }
@@ -339,8 +349,11 @@ object Ppu {
 
   def dummy: State[PpuState, Unit] = State.pure(())
 
-  def setVerticalBlank(d: Boolean): State[PpuState, Unit] =
+  def setVerticalBlankS(d: Boolean): State[PpuState, Unit] =
     State.modify((statusRegister composeLens PpuStatus.verticalBlank).set(d))
+
+  def setVerticalBlank(d: Boolean)(s: PpuState): PpuState =
+    (statusRegister composeLens PpuStatus.verticalBlank).set(d)(s)
 
   def getData: State[PpuState, UInt8] = State.inspect(PpuState.registers.get).map(_.data)
 
@@ -369,14 +382,26 @@ object Ppu {
   def getLoopyV: State[PpuState, LoopyAddress] =
     State.inspect((loopyRegisters composeLens LoopyRegisters.v).get)
 
-  def setLoopyV(d: LoopyAddress): State[PpuState, Unit] =
-    State.modify((loopyRegisters composeLens LoopyRegisters.v).set(d))
+  def getLoopyV(s: PpuState): LoopyAddress =
+    s.registers.loopy.v
+
+  def setLoopyVS(d: LoopyAddress): State[PpuState, Unit] =
+    State.modify(setLoopyV(d))
+
+  def setLoopyV(d: LoopyAddress)(s: PpuState): PpuState =
+    (loopyRegisters composeLens LoopyRegisters.v).set(d)(s)
 
   def getLoopyT: State[PpuState, LoopyAddress] =
     State.inspect((loopyRegisters composeLens LoopyRegisters.t).get)
 
-  def setLoopyT(d: LoopyAddress): State[PpuState, Unit] =
-    State.modify((loopyRegisters composeLens LoopyRegisters.t).set(d))
+  def getLoopyT(s: PpuState): LoopyAddress =
+    s.registers.loopy.t
+
+  def setLoopyT(d: LoopyAddress)(s: PpuState): PpuState =
+    (loopyRegisters composeLens LoopyRegisters.t).set(d)(s)
+
+  def setLoopyTS(d: LoopyAddress): State[PpuState, Unit] =
+    State.modify(setLoopyT(d))
 
   def getLoopyX: State[PpuState, UInt3] =
     State.inspect(loopyRegisters.get).map(_.x)
@@ -393,11 +418,14 @@ object Ppu {
   def isRendering: State[PpuState, Boolean] =
     getMask.map(m => m.renderBackground || m.renderSprites)
 
+  def isRendering(s: PpuState): Boolean =
+    s.registers.mask.renderBackground || s.registers.mask.renderSprites
+
   def isRenderingBackground: State[PpuState, Boolean] =
     getMask.map(_.renderBackground)
 
-  def incScanline: State[PpuState, Int] =
-    State.modify(PpuState.scanline.modify(_ + 1)).get.map(PpuState.scanline.get)
+  def isRenderingBackground(s: PpuState): Boolean =
+    s.registers.mask.renderBackground
 
   def resetScanline: State[PpuState, Unit] =
     State.modify(PpuState.scanline.set(-1))
@@ -420,96 +448,99 @@ object Ppu {
   def getBgRenderingState: State[PpuState, BgRenderingState] =
     State.inspect(PpuState.bgRenderingState.get)
 
-  def setBgRenderingState(d: BgRenderingState): State[PpuState, Unit] =
-    State.modify(PpuState.bgRenderingState.set(d))
+  def setBgRenderingStateS(d: BgRenderingState): State[PpuState, Unit] =
+    State.modify(setBgRenderingState(d))
 
-  def setPixel(i: Int, j: Int, color: Rgb): State[PpuState, Unit] =
-    State.modify(PpuState.pixels.modify(p => p.updated(i, p(i).updated(j, color))))
+  def setBgRenderingState(d: BgRenderingState)(s: PpuState): PpuState =
+    PpuState.bgRenderingState.set(d)(s)
 
-  def incScrollX: State[PpuState, Unit] =
-    Monad[State[PpuState, *]].ifM(isRendering)(
-      ifTrue = getLoopyV.flatMap { v =>
-        if (v.coarseX == 31) setLoopyV(v.setCoarseX(0).flipNametableX())
-        else setLoopyV(v.setCoarseX(v.coarseX + 1))
-      },
-      ifFalse = dummy
-    )
+  def modifyBgRenderingState(f: BgRenderingState => BgRenderingState)(s: PpuState): PpuState =
+    PpuState.bgRenderingState.modify(f)(s)
 
-  def incScrollY: State[PpuState, Unit] =
-    Monad[State[PpuState, *]].ifM(isRendering)(
-      ifTrue = getLoopyV.flatMap { v =>
-        val updated = if (v.fineY < 7) v.setFineY(v.fineY + 1)
-        else if (v.coarseY == 29) v.setFineY(0).setCoarseY(0).flipNametableY()
-        else if (v.coarseY == 31) v.setFineY(0).setCoarseY(0)
-        else v.setFineY(0).setCoarseY(v.coarseY + 1)
-        setLoopyV(updated)
-      },
-      ifFalse = dummy
-    )
+  def incScrollXS: State[PpuState, Unit] = State.modify(incScrollX)
 
-  def transferAddressX: State[PpuState, Unit] =
-    Monad[State[PpuState, *]].ifM(isRendering)(
-      ifTrue = for {
-        v <- getLoopyV
-        t <- getLoopyT
-        updatedV = v.setCoarseX(t.coarseX).setNametableX(t.nametableX)
-        _ <- setLoopyV(updatedV)
-      } yield (),
-      ifFalse = dummy
-    )
+  def incScrollX(s: PpuState): PpuState =
+    if (isRendering(s)) {
+      val v = getLoopyV(s)
+      val updatedV = if (v.coarseX == 31) v.setCoarseX(0).flipNametableX()
+      else v.setCoarseX(v.coarseX + 1)
+      setLoopyV(updatedV)(s)
+    } else
+      s
 
-  def transferAddressY: State[PpuState, Unit] =
-    Monad[State[PpuState, *]].ifM(isRendering)(
-      ifTrue = for {
-        v <- getLoopyV
-        t <- getLoopyT
-        updatedV = v.setFineY(t.fineY).setNametableY(t.nametableY).setCoarseY(t.coarseY)
-        _ <- setLoopyV(updatedV)
-      } yield (),
-      ifFalse = dummy
-    )
+  def incScrollYS: State[PpuState, Unit] = State.modify(incScrollY)
 
-  def loadBgRegisters: State[PpuState, Unit] = for {
-    bg <- getBgRenderingState
-    updated = bg.loadRegisters
-    _ <- setBgRenderingState(updated)
-  } yield ()
+  def incScrollY(s: PpuState): PpuState =
+    if (isRendering(s)) {
+      val v = getLoopyV(s)
+      val updatedV = if (v.fineY < 7) v.setFineY(v.fineY + 1)
+      else if (v.coarseY == 29) v.setFineY(0).setCoarseY(0).flipNametableY()
+      else if (v.coarseY == 31) v.setFineY(0).setCoarseY(0)
+      else v.setFineY(0).setCoarseY(v.coarseY + 1)
+      setLoopyV(updatedV)(s)
+    } else
+      s
 
-  def shiftBgRegisters: State[PpuState, Unit] = Monad[State[PpuState, *]]
-    .ifM(isRenderingBackground)(
-      ifTrue = for {
-        bg <- getBgRenderingState
-        updated = bg.shiftRegisters
-        _ <- setBgRenderingState(updated)
-      } yield (),
-      ifFalse = dummy
-    )
+  def transferAddressXS: State[PpuState, Unit] = State.modify(transferAddressX)
 
-  private def mapToNametableAddress(address: UInt16, mirroring: Mirroring): UInt16 = {
+  def transferAddressX(s: PpuState): PpuState =
+    if (isRendering(s)) {
+      val v = getLoopyV(s)
+      val t = getLoopyT(s)
+      val updatedV = v.setCoarseX(t.coarseX).setNametableX(t.nametableX)
+      setLoopyV(updatedV)(s)
+    } else
+      s
+
+  def transferAddressY: State[PpuState, Unit] = State.modify(transferAddressY)
+
+  def transferAddressY(s: PpuState): PpuState =
+    if (isRendering(s)) {
+      val v = getLoopyV(s)
+      val t = getLoopyT(s)
+      val updatedV = v.setFineY(t.fineY).setNametableY(t.nametableY).setCoarseY(t.coarseY)
+      setLoopyV(updatedV)(s)
+    } else
+      s
+
+  def loadBgRegistersS: State[PpuState, Unit] = State.modify(loadBgRegisters)
+
+  def loadBgRegisters(s: PpuState): PpuState =
+    PpuState.bgRenderingState.modify(_.loadRegisters)(s)
+
+  def shiftBgRegistersS: State[PpuState, Unit] = State.modify(shiftBgRegisters)
+
+  def shiftBgRegisters(s: PpuState): PpuState =
+    if (isRenderingBackground(s)) PpuState.bgRenderingState.modify(_.shiftRegisters)(s)
+    else s
+
+  private def mapToNametableIndex(address: UInt16, mirroring: Mirroring): UInt16 = {
     val addr = address & 0x0FFF
     if (mirroring == Mirroring.Vertical) addr & 0x07FF
     else if (mirroring == Mirroring.Horizontal) ((addr & 0x800) >> 1) | (addr & 0x3FF)
     else addr
   }
 
-  def readNametables(address: UInt16): State[PpuState, UInt8] = {
+  def readNametablesS(address: UInt16): State[PpuState, UInt8] =
+    State.inspect(readNametables(address))
+
+  def readNametables(address: UInt16)(s: PpuState): UInt8 = {
     require((address & 0xFFFF) == address)
     require(address >= 0x2000 && address < 0x3F00)
-    for {
-      mirroring <- getMirroring
-      addr = mapToNametableAddress(address, mirroring)
-      d <- State.inspect(PpuState.nametables.get).map(_.apply(addr))
-    } yield d
+
+    val addr = mapToNametableIndex(address, s.mirroring)
+    s.nametables(addr)
   }
 
-  def writeNametables(address: UInt16, d: UInt8): State[PpuState, Unit] = {
+  def writeNametablesS(address: UInt16, d: UInt8): State[PpuState, Unit] =
+    State.modify(writeNametables(address, d))
+
+  def writeNametables(address: UInt16, d: UInt8)(s: PpuState): PpuState = {
     require((address & 0xFFFF) == address)
     require(address >= 0x2000 && address < 0x3F00)
-    for {
-      mirroring <- getMirroring
-      addr = mapToNametableAddress(address, mirroring)
-      _ <- State.modify(PpuState.nametables.modify(_.updated(addr, d)))
-    } yield ()
+
+    val addr = mapToNametableIndex(address, s.mirroring)
+    PpuState.nametables.modify(_.updated(addr, d))(s)
   }
 
   private def mapToPalettesIndex(address: UInt16): UInt16 = {
@@ -518,27 +549,50 @@ object Ppu {
     if ((addr & 0x13) == 0x10) addr & ~0x10 else addr
   }
 
-  def readPalettes(address: UInt16): State[PpuState, UInt8] =
-    State.inspect(PpuState.palettes.get).map(_.apply(mapToPalettesIndex(address)))
+  def readPalettesS(address: UInt16): State[PpuState, UInt8] =
+    State.inspect(readPalettes(address))
+
+  def readPalettes(address: UInt16)(s: PpuState): UInt8 = {
+    require((address & 0xFFFF) == address)
+    require(address >= 0x3F00 && address < 0x4000, s"failed: $address")
+
+    val addr = mapToPalettesIndex(address)
+    val color = s.palettes(addr)
+    val greyscale = s.registers.mask.greyscale
+    if (greyscale) color & 0x30
+    else color
+  }
 
   def writePalettes(address: UInt16, d: UInt8): State[PpuState, Unit] =
     State.modify(PpuState.palettes.modify(_.updated(mapToPalettesIndex(address), d)))
 
-  def advanceRenderer: State[PpuState, Unit] = State { s =>
+  def writePalettes(s: PpuState, address: UInt16, d: UInt8): PpuState = {
+    require((address & 0xFFFF) == address)
+    require(address >= 0x3F00 && address < 0x3FFF)
+
+    val addr = mapToPalettesIndex(address)
+    PpuState.palettes.modify(_.updated(addr, d))(s)
+  }
+
+  def advanceRendererS: State[NesState, Unit] =
+    State.modify(NesState.ppuState.modify(advanceRenderer))
+
+  def advanceRenderer(s: PpuState): PpuState = {
     val (cycle, scanline) = if (s.cycle >= 340)
       (0, if (s.scanline >= 260) -1 else s.scanline + 1)
     else
       (s.cycle + 1, s.scanline)
-    val updated = (PpuState.cycle.set(cycle) andThen PpuState.scanline.set(scanline))(s)
-    (updated, ())
+    (PpuState.cycle.set(cycle) andThen PpuState.scanline.set(scanline))(s)
   }
 
   def getColor(palette: UInt2, pixel: UInt2): State[PpuState, Rgb] = {
-    val address = (0x3F00 + (palette << 2) + pixel) & 0x3F
-    readPalettes(address).map(Rgb.palette)
+    val address = (0x3F00 + (palette << 2) + pixel)
+    readPalettesS(address).map(Rgb.palette)
   }
 
-  def pixel: State[PpuState, Unit] = State.modify { s =>
+  def pixelS: State[PpuState, Unit] = State.modify(pixel)
+
+  def pixel(s: PpuState): PpuState = {
     val scanline = s.scanline
     val x = s.cycle - 1
     if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256) {
@@ -549,7 +603,7 @@ object Ppu {
       val pal0 = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
       val pal1 = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
       val bgPalette = pal1 | pal0
-      val colorAddress = (0x3F00 + (bgPalette << 2) + bgPixel) & 0x3F
+      val colorAddress = 0x3F00 + (bgPalette << 2) + bgPixel
       val colorValue = if (s.registers.mask.renderBackground)
         s.palettes(mapToPalettesIndex(colorAddress))
       else
@@ -574,7 +628,7 @@ object Ppu {
           data   <- getData
           status <- getStatus.map(_.asUInt8)
           _      <- clearLoopyW
-          _      <- setVerticalBlank(false)
+          _      <- setVerticalBlankS(false)
         } yield (status & 0xE0) | (data & 0x1F)
       ).toNesState
     else if (address0 == 0x0003) zero // OAMADDR
@@ -585,11 +639,11 @@ object Ppu {
       for {
         d1   <- getData.toNesState
         v1   <- getLoopyV.toNesState
-        d2   <- ppuRead(v1.asUInt16)
+        d2   <- ppuReadS(v1.asUInt16)
         _    <- setData(d2).toNesState
         ctrl <- getCtrl.toNesState
         v2   =  LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
-        _    <- setLoopyV(v2).toNesState
+        _    <- setLoopyVS(v2).toNesState
       } yield if (v1.asUInt16 >= 0x3F00) d2 else d1
   }
 
@@ -605,7 +659,7 @@ object Ppu {
           ctrl <- getCtrl
           t1   <- getLoopyT
           t2   =  t1.setNametables(ctrl.nametable.id)
-          _    <- setLoopyT(t2)
+          _    <- setLoopyTS(t2)
         } yield ()
       ).toNesState
     else if (address0 == 0x0001)
@@ -621,14 +675,14 @@ object Ppu {
         ifTrue = for {
           t1 <- getLoopyT
           t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
-          _  <- setLoopyT(t2)
+          _  <- setLoopyTS(t2)
           _  <- setLoopyW(false)
         } yield (),
         ifFalse = for {
           _  <- setLoopyX(d & 0x07)
           t1 <- getLoopyT
           t2 =  t1.setCoarseX((d >> 3) & 0x1F)
-          _  <- setLoopyT(t2)
+          _  <- setLoopyTS(t2)
           _  <- setLoopyW(true)
         } yield ()
       ).toNesState
@@ -637,14 +691,14 @@ object Ppu {
         ifTrue = for {
           t1 <- getLoopyT
           t2 =  LoopyAddress((t1.asUInt16 & 0xFF00) | d)
-          _  <- setLoopyT(t2)
-          _  <- setLoopyV(t2)
+          _  <- setLoopyTS(t2)
+          _  <- setLoopyVS(t2)
           _  <- setLoopyW(false)
         } yield (),
         ifFalse = for {
           t1 <- getLoopyT
           t2 =  LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF))
-          _  <- setLoopyT(t2)
+          _  <- setLoopyTS(t2)
           _  <- setLoopyW(true)
         } yield ()
       ).toNesState
@@ -652,46 +706,109 @@ object Ppu {
       for {
         ctrl  <- getCtrl.toNesState
         vram1 <- getLoopyV.toNesState
-        _     <- ppuWrite(vram1.asUInt16, d)
+        _     <- ppuWriteS(vram1.asUInt16, d)
         vram2 =  LoopyAddress(vram1.asUInt16 + ctrl.incrementMode.delta)
-        _     <- setLoopyV(vram2).toNesState
+        _     <- setLoopyVS(vram2).toNesState
       } yield ()
   }
 
-  def ppuRead(address: UInt16): State[NesState, UInt8] = {
-    require((address & 0xFFFF) == address)
-    val addr = address & 0x3FFF
+  def ppuReadS(address: UInt16): State[NesState, UInt8] = State.inspect(ppuRead(address))
 
-    if (addr >= 0x0000 && addr <= 0x1FFF)
-      Cartridge.ppuRead(addr)
-    else if (addr >= 0x2000 && addr <= 0x3EFF)
-      readNametables(addr).toNesState
-    else if (addr >= 0x3F00 && addr <= 0x3FFF)
-      (
-        for {
-          color <- readPalettes(addr)
-          mask <- getMask
-        } yield color & (if (mask.greyscale) 0x30 else 0xFF)
-      ).toNesState
+  def ppuRead(address: UInt16)(ns: NesState): UInt8 = {
+    require((address & 0x3FFF) == address)
+
+    val s = ns.ppuState
+    if (address >= 0x0000 && address <= 0x1FFF)
+      Cartridge.ppuRead(address).runA(ns).value
+    else if (address >= 0x2000 && address <= 0x3EFF)
+      readNametables(address)(s)
     else
-      throw new RuntimeException("Invalid address!")
+      readPalettes(address)(s)
   }
 
-  def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
-    require((address & 0xFFFF) == address)
-    val addr = address & 0x3FFF
+  def ppuWriteS(address: UInt16, d: UInt8): State[NesState, Unit] = State.modify(ppuWrite(address, d))
 
-    if (addr >= 0x0000 && addr <= 0x1FFF)
-      Cartridge.ppuWrite(addr, d)
-    else if (addr >= 0x2000 && addr <= 0x3EFF)
-      writeNametables(addr, d).toNesState
-    else if (addr >= 0x3F00 && addr <= 0x3FFF)
-      writePalettes(address, d).toNesState
-    else
-      throw new RuntimeException("Invalid address!")
+  def ppuWrite(address: UInt16, d: UInt8)(ns: NesState): NesState = {
+    require((address & 0x3FFF) == address)
+
+    val s = ns.ppuState
+    if (address >= 0x0000 && address <= 0x1FFF)
+      Cartridge.ppuWrite(address, d).runS(ns).value
+    else if (address >= 0x2000 && address <= 0x3EFF) {
+      val updatedS = writeNametables(address, d)(s)
+      NesState.ppuState.set(updatedS)(ns)
+    } else {
+      val updatedS = writePalettes(s, address, d)
+      NesState.ppuState.set(updatedS)(ns)
+    }
   }
 
-  def clock: State[NesState, Unit] = State.get[NesState].flatMap { s =>
+  def clock: State[NesState, Unit] = State.modify { ns =>
+    def isVisiblePart(scanline: Int): Boolean =
+      scanline >= -1 && scanline < 240
+
+    def isFetch(scanline: Int, cycle: Int): Boolean =
+      isVisiblePart(scanline) && ((cycle >= 2 && cycle < 258) || (cycle >= 321 && cycle < 338))
+
+    val s = ns.ppuState
+    val update: PpuState => PpuState = (ns.ppuState.scanline, ns.ppuState.cycle) match {
+      case (0, 0) =>
+        PpuState.cycle.set(1)
+      case (-1, 1) =>
+        setVerticalBlank(false)
+      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
+        val v = getLoopyV(s)
+        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
+        val nextTileId = readNametables(nametableAddress)(s)
+        shiftBgRegisters _ andThen
+          loadBgRegisters andThen
+          modifyBgRenderingState(_.setNextTileId(nextTileId)) andThen
+          (if (cycle == 257) loadBgRegisters _ andThen transferAddressX else identity)
+      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
+        val v = getLoopyV(s)
+        val attributeAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
+        val attr1 = readNametables(attributeAddress)(s)
+        val attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
+        val attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
+        val attr4 = attr3 & 0x03
+        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileAttribute(attr4))
+      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
+        val ctrl = s.registers.ctrl
+        val v = getLoopyV(s)
+        val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 0
+        val tile = ppuRead(address)(ns)
+        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileLsb(tile))
+      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
+        val ctrl = s.registers.ctrl
+        val v = getLoopyV(s)
+        val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 8
+        val tile = ppuRead(address)(ns)
+        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileMsb(tile))
+      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
+        shiftBgRegisters _ andThen incScrollX andThen (if (cycle == 256) incScrollY else identity)
+      case (scanline, cycle) if isFetch(scanline, cycle) =>
+        shiftBgRegisters
+      case (scanline, 256) if isVisiblePart(scanline) =>
+        incScrollY
+      case (scanline, 257) if isVisiblePart(scanline) =>
+        loadBgRegisters _ andThen transferAddressX
+      case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
+        val v = getLoopyV(s)
+        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
+        val nextTileId = readNametables(nametableAddress)(s)
+        val bgUpdated = s.bgRenderingState.setNextTileId(nextTileId)
+        setBgRenderingState(bgUpdated)
+      case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
+        transferAddressY
+      case (241, 1) =>
+        setVerticalBlank(true)
+      case _ =>
+        identity
+    }
+    NesState.ppuState.modify(update andThen pixel andThen advanceRenderer)(ns)
+  }
+
+  def clockS: State[NesState, Unit] = State.get[NesState].flatMap { s =>
     def isVisiblePart(scanline: Int): Boolean =
       scanline >= -1 && scanline < 240
 
@@ -702,92 +819,94 @@ object Ppu {
       case (0, 0) =>
         incCycle.map(_ => ()).toNesState
       case (-1, 1) =>
-        setVerticalBlank(false).toNesState
+        setVerticalBlankS(false).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
         (
           for {
-            _ <- shiftBgRegisters
-            _ <- loadBgRegisters
+            _ <- shiftBgRegistersS
+            _ <- loadBgRegistersS
             v <- getLoopyV
-            bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
+            bgNextTileId <- readNametablesS(0x2000 | (v.asUInt16 & 0x0FFF))
             bgRenderingState <- getBgRenderingState
             updated = bgRenderingState.copy(nextTileId = bgNextTileId)
-            _ <- setBgRenderingState(updated)
-            _ <- if (cycle == 256) incScrollY else dummy
-            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
+            _ <- setBgRenderingStateS(updated)
+            _ <- if (cycle == 256) incScrollYS else dummy
+            _ <- if (cycle == 257) loadBgRegistersS.flatMap(_ => transferAddressXS) else dummy
           } yield ()
         ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
         (
           for {
-            _ <- shiftBgRegisters
+            _ <- shiftBgRegistersS
             v <- getLoopyV
             address = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
-            attr1 <- readNametables(address)
+            attr1 <- readNametablesS(address)
             attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
             attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
             attr4 = attr3 & 0x03
             bgRenderingState <- getBgRenderingState
             updated = bgRenderingState.copy(nextTileAttribute = attr4)
-            _ <- setBgRenderingState(updated)
-            _ <- if (cycle == 256) incScrollY else dummy
-            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
+            _ <- setBgRenderingStateS(updated)
+            _ <- if (cycle == 256) incScrollYS else dummy
+            _ <- if (cycle == 257) loadBgRegistersS.flatMap(_ => transferAddressXS) else dummy
           } yield ()
         ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
         for {
-          _ <- shiftBgRegisters.toNesState
+          _ <- shiftBgRegistersS.toNesState
           bgRenderingState <- getBgRenderingState.toNesState
           ctrl <- getCtrl.toNesState
           v <- getLoopyV.toNesState
           address = ctrl.backgroundTableAddress.address + (bgRenderingState.nextTileId << 4) + v.fineY + 0
-          tile <- ppuRead(address)
+          tile <- ppuReadS(address)
+          _ = {if (tile != 0) println(tile)}
           updated = bgRenderingState.copy(nextTileLsb = tile)
-          _ <- setBgRenderingState(updated).toNesState
-          _ <- if (cycle == 256) incScrollY.toNesState else dummy.toNesState
-          _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX).toNesState else dummy.toNesState
+          _ <- setBgRenderingStateS(updated).toNesState
+          _ <- if (cycle == 256) incScrollYS.toNesState else dummy.toNesState
+          _ <- if (cycle == 257) loadBgRegistersS.flatMap(_ => transferAddressXS).toNesState else dummy.toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
         for {
-          _ <- shiftBgRegisters.toNesState
+          _ <- shiftBgRegistersS.toNesState
           bgRenderingState <- getBgRenderingState.toNesState
           ctrl <- getCtrl.toNesState
           v <- getLoopyV.toNesState
           address = ctrl.backgroundTableAddress.address + (bgRenderingState.nextTileId << 4) + v.fineY + 8
-          tile <- ppuRead(address)
+          tile <- ppuReadS(address)
+          _ = {if (tile != 0) println(tile)}
           updated = bgRenderingState.copy(nextTileMsb = tile)
-          _ <- setBgRenderingState(updated).toNesState
-          _ <- if (cycle == 256) incScrollY.toNesState else dummy.toNesState
-          _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX).toNesState else dummy.toNesState
+          _ <- setBgRenderingStateS(updated).toNesState
+          _ <- if (cycle == 256) incScrollYS.toNesState else dummy.toNesState
+          _ <- if (cycle == 257) loadBgRegistersS.flatMap(_ => transferAddressXS).toNesState else dummy.toNesState
         } yield ()
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
         (
           for {
-            _ <- shiftBgRegisters
-            _ <- incScrollX
-            _ <- if (cycle == 256) incScrollY else dummy
-            _ <- if (cycle == 257) loadBgRegisters.flatMap(_ => transferAddressX) else dummy
+            _ <- shiftBgRegistersS
+            _ <- incScrollXS
+            _ <- if (cycle == 256) incScrollYS else dummy
+            _ <- if (cycle == 257) loadBgRegistersS.flatMap(_ => transferAddressXS) else dummy
           } yield ()
         ).toNesState
       case (scanline, cycle) if isFetch(scanline, cycle) =>
-        shiftBgRegisters.toNesState
+        shiftBgRegistersS.toNesState
       case (scanline, 256) if isVisiblePart(scanline) =>
-        incScrollY.toNesState
+        incScrollYS.toNesState
       case (scanline, 257) if isVisiblePart(scanline) =>
         (
           for {
-            _ <- loadBgRegisters
-            _ <- transferAddressX
+            _ <- loadBgRegistersS
+            _ <- transferAddressXS
           } yield ()
         ).toNesState
       case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
         (
           for {
             v <- getLoopyV
-            bgNextTileId <- readNametables(0x2000 | (v.asUInt16 & 0x0FFF))
+            bgNextTileId <- readNametablesS(0x2000 | (v.asUInt16 & 0x0FFF))
             bgRenderingState <- getBgRenderingState
             updated = bgRenderingState.copy(nextTileId = bgNextTileId)
-            _ <- setBgRenderingState(updated)
+            _ <- setBgRenderingStateS(updated)
           } yield ()
         ).toNesState
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
@@ -795,11 +914,11 @@ object Ppu {
       case (240, _) =>
         dummy.toNesState
       case (241, 1) =>
-        setVerticalBlank(true).toNesState
+        setVerticalBlankS(true).toNesState
       case _ =>
         dummy.toNesState
     }
-  }.flatMap(_ => pixel.toNesState).flatMap(_ => advanceRenderer.toNesState)
+  }.flatMap(_ => pixelS.toNesState).flatMap(_ => advanceRendererS)
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
     State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2).toNesState
