@@ -95,7 +95,7 @@ object Console extends JFXApp {
       shiftedTileLsb = tileLsb << col
       shiftedTileMsb = tileMsb << col
       pixel = ((shiftedTileMsb & 0x80) >> 6) | ((shiftedTileLsb & 0x80) >> 7)
-      color = Ppu.getColor(palette, pixel).runA(nesState.ppuState).value
+      color = Ppu.getColor(palette, pixel)(nesState.ppuState)
     } yield {
       gc.fill = Color.rgb(color.r, color.g, color.b)
       gc.fillRect(j * 8 + col, i * 8 + row, 1, 1)
