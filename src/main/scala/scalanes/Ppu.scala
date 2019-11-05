@@ -689,7 +689,9 @@ object Ppu {
   }
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
-    State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2).toNesState
+    State.inspect[PpuState, Boolean](s => isVerticalBlankStarted(s)).toNesState
+
+  def isVerticalBlankStarted(s: PpuState): Boolean = s.scanline == 241 && s.cycle == 2
 
   def isNmiReady: State[NesState, Boolean] = (for {
     a <- State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2)
