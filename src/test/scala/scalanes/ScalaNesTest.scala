@@ -52,6 +52,10 @@ class ScalaNesTest extends AnyFlatSpec with Matchers {
       .toList
       .unsafeRunSync()
 
+    if (result.nonEmpty) {
+      println(s"Failed at: ${result.head._2}")
+    }
     result shouldBe empty
+
   }
 }
