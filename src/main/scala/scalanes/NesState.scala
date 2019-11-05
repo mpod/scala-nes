@@ -27,14 +27,14 @@ case class NesState(ram: Vector[UInt8],
 
 object NesState {
   val ram: Lens[NesState, Vector[UInt8]] = GenLens[NesState](_.ram)
-  val cpuRegisters: Lens[NesState, CpuState] = GenLens[NesState](_.cpuState)
-  val a: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.a)
-  val x: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.x)
-  val y: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.y)
-  val stkp: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.stkp)
-  val pc: Lens[NesState, UInt16] = cpuRegisters composeLens GenLens[CpuState](_.pc)
-  val status: Lens[NesState, UInt8] = cpuRegisters composeLens GenLens[CpuState](_.status)
-  val cycles: Lens[NesState, Int] = cpuRegisters composeLens GenLens[CpuState](_.cycles)
+  val cpuState: Lens[NesState, CpuState] = GenLens[NesState](_.cpuState)
+  val a: Lens[NesState, UInt8] = cpuState composeLens GenLens[CpuState](_.a)
+  val x: Lens[NesState, UInt8] = cpuState composeLens GenLens[CpuState](_.x)
+  val y: Lens[NesState, UInt8] = cpuState composeLens GenLens[CpuState](_.y)
+  val stkp: Lens[NesState, UInt8] = cpuState composeLens GenLens[CpuState](_.stkp)
+  val pc: Lens[NesState, UInt16] = cpuState composeLens GenLens[CpuState](_.pc)
+  val status: Lens[NesState, UInt8] = cpuState composeLens GenLens[CpuState](_.status)
+  val cycles: Lens[NesState, Int] = cpuState composeLens GenLens[CpuState](_.cycles)
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
   val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
   val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
@@ -67,10 +67,13 @@ object NesState {
       )
   } yield ()
 
-  def executeFrame: State[NesState, Unit] = for {
-    _ <- clock
-    _ <- Monad[State[NesState, *]].whileM_(Ppu.isVerticalBlankStarted.map(_ != true))(clock)
-  } yield ()
+  def executeFrame: State[NesState, Unit] = State.modify { s =>
+    var ss = clock.runS(s).value
+    while (!Ppu.isVerticalBlankStarted(ss.ppuState)) {
+      ss = clock.runS(ss).value
+    }
+    ss
+  }
 
   def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
     NesState(
