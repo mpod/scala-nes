@@ -517,12 +517,12 @@ object Ppu {
       s
   }
 
-  def cpuRead(address: UInt16): State[NesState, UInt8] = State { ns =>
+  def cpuRead(address: UInt16): State[NesState, UInt8] = State.get.flatMap { ns =>
     // The PPU exposes eight memory-mapped registers to the CPU, which are mapped to the
     // address range $2000-$2007. Addresses between $2008 and $3FFF are mirrored.
     require(address >= 0x2000 && address <= 0x3FFF)
     val addr = address & 0x7
-    val zero = (ns, 0x00)
+    val zero = State.pure[NesState, UInt8](0x00)
     val s: PpuState = ns.ppuState
     if (addr == 0x0000)      zero // PPUCTRL
     else if (addr == 0x0001) zero // PPUMASK
@@ -531,7 +531,7 @@ object Ppu {
       val status = s.registers.status.asUInt8
       val update = clearLoopyW _ andThen setVerticalBlank(false)
       val d = (status & 0xE0) | (data & 0x1F)
-      (NesState.ppuState.modify(update)(ns), d)
+      State { ns => (NesState.ppuState.modify(update)(ns), d) }
     }
     else if (addr == 0x0003) zero // OAMADDR
     else if (addr == 0x0004) zero // OAMDATA
@@ -540,35 +540,37 @@ object Ppu {
     else {                        // PPUDATA
       val d1 = s.registers.data
       val v1 = s.registers.loopy.v
-      val d2 = ppuRead(v1.asUInt16)(ns)
       val ctrl = s.registers.ctrl
       val v2 = LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
-      val update = setData(d2) _ andThen setLoopyV(v2)
-      val d = if (v1.asUInt16 >= 0x3F00) d2 else d1
-      (NesState.ppuState.modify(update)(ns), d)
+      ppuRead(v1.asUInt16).transform { (ns, d2) =>
+        val update = setData(d2) _ andThen setLoopyV(v2)
+        val d = if (v1.asUInt16 >= 0x3F00) d2 else d1
+        (NesState.ppuState.modify(update)(ns), d)
+      }
     }
   }
 
-  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = State.modify { ns =>
+  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = State.get.flatMap { ns =>
     require(address >= 0x2000 && address <= 0x3FFF)
     require((d & 0xFF) == d)
     val addr = address & 0x7
+    val empty = State.set(ns)
     val s: PpuState = ns.ppuState
     val t1 = s.registers.loopy.t
     if (addr == 0x0000) {
       val ctrl = PpuCtrl(d)
       val t2 = t1.setNametables(ctrl.nametable.id)
       val update = setCtrl(d) _ andThen setLoopyT(t2)
-      NesState.ppuState.modify(update)(ns)
+      modifyNesState(update)
     } else if (addr == 0x0001) {
       val update = maskRegister.set(PpuMask(d))
-      NesState.ppuState.modify(update)(ns)
+      modifyNesState(update)
     } else if (addr == 0x0002)
-      ns
+      empty
     else if (addr == 0x0003)
-      ns
+      empty
     else if (addr == 0x0004)
-      ns
+      empty
     else if (addr == 0x0005) {
       val update = if (s.registers.loopy.w) {
         val t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
@@ -577,7 +579,7 @@ object Ppu {
         val t2 =  t1.setCoarseX((d >> 3) & 0x1F)
         setLoopyX(d & 0x07) _ andThen setLoopyT(t2) andThen setLoopyW(true)
       }
-      NesState.ppuState.modify(update)(ns)
+      modifyNesState(update)
     } else if (addr == 0x0006) {
       val update = if (s.registers.loopy.w) {
         val t2 =  LoopyAddress((t1.asUInt16 & 0xFF00) | d)
@@ -586,44 +588,41 @@ object Ppu {
         val t2 =  LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF))
         setLoopyT(t2) _ andThen setLoopyW(true)
       }
-      NesState.ppuState.modify(update)(ns)
+      modifyNesState(update)
     } else {
       val ctrl = s.registers.ctrl
       val v1 = s.registers.loopy.v
       val v2 =  LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
-      val update = ppuWrite(v1.asUInt16, d) _ andThen NesState.ppuState.modify(setLoopyV(v2))
-      update(ns)
+      ppuWrite(v1.asUInt16, d).modify(NesState.ppuState.modify(setLoopyV(v2)))
     }
   }
 
-  def ppuRead(address: UInt16)(ns: NesState): UInt8 = {
+  def ppuRead(address: UInt16): State[NesState, UInt8] = State.get.flatMap { _ =>
     require((address & 0x3FFF) == address)
 
-    val s = ns.ppuState
     if (address >= 0x0000 && address <= 0x1FFF)
-      Cartridge.ppuRead(address).runA(ns).value
+      Cartridge.ppuRead(address)
     else if (address >= 0x2000 && address <= 0x3EFF)
-      readNametables(address)(s)
+      State.inspect(ns => readNametables(address)(ns.ppuState))
     else
-      readPalettes(address)(s)
+      State.inspect(ns => readPalettes(address)(ns.ppuState))
   }
 
-  def ppuWrite(address: UInt16, d: UInt8)(ns: NesState): NesState = {
+  def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = State.get.flatMap { _ =>
     require((address & 0x3FFF) == address)
 
-    val s = ns.ppuState
     if (address >= 0x0000 && address <= 0x1FFF)
-      Cartridge.ppuWrite(address, d).runS(ns).value
-    else if (address >= 0x2000 && address <= 0x3EFF) {
-      val updatedS = writeNametables(address, d)(s)
-      NesState.ppuState.set(updatedS)(ns)
-    } else {
-      val updatedS = writePalettes(address, d)(s)
-      NesState.ppuState.set(updatedS)(ns)
-    }
+      Cartridge.ppuWrite(address, d)
+    else if (address >= 0x2000 && address <= 0x3EFF)
+      modifyNesState(writeNametables(address, d))
+    else
+      modifyNesState(writePalettes(address, d))
   }
 
-  def clock: State[NesState, Unit] = State.modify { ns =>
+  private def modifyNesState(f: PpuState => PpuState): State[NesState, Unit] =
+    State.modify(NesState.ppuState.modify(f))
+
+  def clock: State[NesState, Unit] = State.get[NesState].flatMap { ns =>
     def isVisiblePart(scanline: Int): Boolean =
       scanline >= -1 && scanline < 240
 
@@ -631,19 +630,18 @@ object Ppu {
       isVisiblePart(scanline) && ((cycle >= 2 && cycle < 258) || (cycle >= 321 && cycle < 338))
 
     val s = ns.ppuState
-    val update: PpuState => PpuState = (ns.ppuState.scanline, ns.ppuState.cycle) match {
+    (ns.ppuState.scanline, ns.ppuState.cycle) match {
       case (0, 0) =>
-        PpuState.cycle.set(1)
+        modifyNesState(PpuState.cycle.set(1))
       case (-1, 1) =>
-        setVerticalBlank(false)
+        modifyNesState(setVerticalBlank(false))
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
         val v = getLoopyV(s)
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
         val nextTileId = readNametables(nametableAddress)(s)
-        shiftBgRegisters _ andThen
-          loadBgRegisters andThen
-          modifyBgRenderingState(_.setNextTileId(nextTileId)) andThen
-          (if (cycle == 257) loadBgRegisters _ andThen transferAddressX else identity)
+        val bg = s.bgRenderingState.shiftRegisters.loadRegisters.setNextTileId(nextTileId)
+        val update = setBgRenderingState(bg) _ andThen (if (cycle == 257) transferAddressX else identity)
+        modifyNesState(update)
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
         val v = getLoopyV(s)
         val attributeAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
@@ -651,42 +649,51 @@ object Ppu {
         val attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
         val attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
         val attr4 = attr3 & 0x03
-        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileAttribute(attr4))
+        val bg = s.bgRenderingState.shiftRegisters.setNextTileAttribute(attr4)
+        modifyNesState(setBgRenderingState(bg))
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
         val ctrl = s.registers.ctrl
         val v = getLoopyV(s)
         val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 0
-        val tile = ppuRead(address)(ns)
-        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileLsb(tile))
+        ppuRead(address).transform { (ns, tile) =>
+          val bg = s.bgRenderingState.shiftRegisters.setNextTileLsb(tile)
+          (NesState.ppuState.modify(setBgRenderingState(bg))(ns), ())
+        }
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
         val ctrl = s.registers.ctrl
         val v = getLoopyV(s)
         val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 8
-        val tile = ppuRead(address)(ns)
-        shiftBgRegisters _ andThen modifyBgRenderingState(_.setNextTileMsb(tile))
+        ppuRead(address).transform { (ns, tile) =>
+          val bg = s.bgRenderingState.shiftRegisters.setNextTileMsb(tile)
+          (NesState.ppuState.modify(setBgRenderingState(bg))(ns), ())
+        }
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
-        shiftBgRegisters _ andThen incScrollX andThen (if (cycle == 256) incScrollY else identity)
+        val bg = s.bgRenderingState.shiftRegisters
+        val update = setBgRenderingState(bg) _ andThen incScrollX andThen (if (cycle == 256) incScrollY else identity)
+        modifyNesState(update)
       case (scanline, cycle) if isFetch(scanline, cycle) =>
-        shiftBgRegisters
+        val bg = s.bgRenderingState.shiftRegisters
+        modifyNesState(setBgRenderingState(bg))
       case (scanline, 256) if isVisiblePart(scanline) =>
-        incScrollY
+        State.modify(NesState.ppuState.modify(incScrollY))
       case (scanline, 257) if isVisiblePart(scanline) =>
-        loadBgRegisters _ andThen transferAddressX
+        val bg = s.bgRenderingState.loadRegisters
+        val update = setBgRenderingState(bg) _ andThen transferAddressX
+        modifyNesState(update)
       case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
         val v = getLoopyV(s)
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
         val nextTileId = readNametables(nametableAddress)(s)
         val bgUpdated = s.bgRenderingState.setNextTileId(nextTileId)
-        setBgRenderingState(bgUpdated)
+        modifyNesState(setBgRenderingState(bgUpdated))
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
-        transferAddressY
+        modifyNesState(transferAddressY)
       case (241, 1) =>
-        setVerticalBlank(true)
+        modifyNesState(setVerticalBlank(true))
       case _ =>
-        identity
+        State.modify(identity)
     }
-    NesState.ppuState.modify(update andThen pixel andThen advanceRenderer)(ns)
-  }
+  }.flatMap(_ => modifyNesState(pixel _ andThen advanceRenderer))
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
     State.inspect[PpuState, Boolean](s => isVerticalBlankStarted(s)).toNesState
