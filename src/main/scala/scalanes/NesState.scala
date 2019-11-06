@@ -66,14 +66,14 @@ object NesState {
       dummy
   }
 
-  val executeFrame: State[NesState, Unit] = {
-    val eff = Stream.unfold(State.pure[NesState, Unit](())) { s =>
-      val ns = s.flatMap(_ => clock)
-      Option((ns, ns))
-    }.repeat.drop(262 * 340 - 1).take(1)
-
-    eff.toList.head
-  }
+  val executeFrame: State[NesState, Unit] =
+    Stream.unfold(State.pure[NesState, Unit](())) { s =>
+        val ns = s.flatMap(_ => clock)
+        Option((ns, ns))
+      }
+      .drop(262 * 340 - 1)
+      .take(1)
+      .toList.head
 
   def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
     NesState(
