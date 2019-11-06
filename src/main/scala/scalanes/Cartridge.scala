@@ -1,6 +1,5 @@
 package scalanes
 
-import cats.data.State
 import scalanes.mappers.Mapper000
 
 import scala.language.higherKinds

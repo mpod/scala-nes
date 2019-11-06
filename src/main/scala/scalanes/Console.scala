@@ -22,7 +22,7 @@ object Console extends JFXApp {
   val nestestRom: Path = Paths.get(getClass.getResource("/nestest.nes").toURI)
   val loaded: List[NesState] = NesState.fromFile[IO](nestestRom).unsafeRunSync()
   require(loaded.size == 1)
-  val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).value)
+  val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).unsafeRunSync())
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>
@@ -67,7 +67,7 @@ object Console extends JFXApp {
   val asmAt: StringBinding = Bindings.createStringBinding(
     () => {
       Option(nesState.value)
-        .map(s => Cpu.disassemble.runA(s).value)
+        .map(s => Cpu.disassemble.runA(s).unsafeRunSync())
         .map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }
         .getOrElse("")
     },
@@ -76,7 +76,7 @@ object Console extends JFXApp {
   val asmAfter: StringBinding = Bindings.createStringBinding(
     () => {
       Option(nesState.value).map(s =>
-        Cpu.disassemble(20).runA(s).value.drop(1).map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }.mkString("\n")
+          Cpu.disassemble(20).runA(s).unsafeRunSync().drop(1).map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }.mkString("\n")
       ).getOrElse("")
     },
     nesState
@@ -89,8 +89,8 @@ object Console extends JFXApp {
       j <- 0 until 16
       offset = i * 256 + j * 16
       row <- 0 until 8
-      tileLsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0000).runA(nesState).value
-      tileMsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0008).runA(nesState).value
+      tileLsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0000).runA(nesState).unsafeRunSync()
+      tileMsb = Cartridge.ppuRead(patternTableIndex * 0x1000 + offset + row + 0x0008).runA(nesState).unsafeRunSync()
       col <- 0 until 8
       shiftedTileLsb = tileLsb << col
       shiftedTileMsb = tileMsb << col
@@ -147,21 +147,13 @@ object Console extends JFXApp {
       onKeyPressed = { event =>
         if (event.getCode == KeyCode.SPACE) {
           val start = System.currentTimeMillis()
-          nesState.value = NesState.executeFrame.runS(nesState.value).value
+          nesState.value = NesState.executeFrame.runS(nesState.value).unsafeRunSync()
           val duration = System.currentTimeMillis() - start
           println(s"Frame generated in ${duration / 1000}s ${duration % 1000}ms")
-//          nesState.value = (0 until 10).foldLeft(nesState.value) {
-//            case (acc, i) =>
-//              NesState.executeFrame.runS(acc).value
-//          }
-//           nesState.value = NesState.clock.runS(nesState.value).value
-//          nesState.value = Monad[State[NesState, *]]
-//            .whileM_(State.get.map(s => s.ppuState.scanline != 240 || s.ppuState.cycle != 339))(NesState.clock)
-//            .runS(nesState.value).value
         } else if (event.getCode == KeyCode.N) {
-          nesState.value = NesState.clock.runS(nesState.value).value
+          nesState.value = NesState.clock.runS(nesState.value).unsafeRunSync()
         } else if (event.getCode == KeyCode.R)
-          nesState.value = Cpu.reset.runS(nesState.value).value
+          nesState.value = Cpu.reset.runS(nesState.value).unsafeRunSync()
       }
       root = new HBox {
         style =

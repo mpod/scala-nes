@@ -1,7 +1,6 @@
 package scalanes
 
 import cats.Monad
-import cats.data.State
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.CpuFlags.CpuFlags
 
@@ -63,7 +62,7 @@ object Cpu extends LazyLogging {
   private def readExecute(addressMode: AddressMode)(op: UInt8 => CpuState => CpuState): Op = for {
     address <- addressMode
     d <- address.read()
-    _ <- State.modify(op(d)).toNesState
+    _ <- State.modify(NesState.cpuState.modify(op(d)))
   } yield ()
 
   private def readExecuteWrite(addressMode: AddressMode)(op: UInt8 => CpuState => (CpuState, UInt8)): Op = for {

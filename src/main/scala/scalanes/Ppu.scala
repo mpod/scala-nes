@@ -1,6 +1,5 @@
 package scalanes
 
-import cats.data.State
 import monocle.Lens
 import monocle.macros.GenLens
 import scalanes.AddressIncrementMode.AddressIncrementMode
@@ -622,26 +621,37 @@ object Ppu {
   private def modifyNesState(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
 
-  def clock: State[NesState, Unit] = State.get[NesState].flatMap { ns =>
+  val clock: State[NesState, NesState] = State.get[NesState].flatMap { ns =>
     def isVisiblePart(scanline: Int): Boolean =
       scanline >= -1 && scanline < 240
 
     def isFetch(scanline: Int, cycle: Int): Boolean =
       isVisiblePart(scanline) && ((cycle >= 2 && cycle < 258) || (cycle >= 321 && cycle < 338))
 
+    def modifyState(f: PpuState => PpuState): State[NesState, NesState] = State { ns =>
+      val updated = (
+        NesState.ppuState.modify(f andThen pixel andThen advanceRenderer) andThen
+        NesState.counter.modify(_ + 1)
+      )(ns)
+      (updated, updated)
+    }
+
     val s = ns.ppuState
     (ns.ppuState.scanline, ns.ppuState.cycle) match {
       case (0, 0) =>
-        modifyNesState(PpuState.cycle.set(1))
+        modifyState(PpuState.cycle.set(1))
+
       case (-1, 1) =>
-        modifyNesState(setVerticalBlank(false))
+        modifyState(setVerticalBlank(false))
+
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
         val v = getLoopyV(s)
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
         val nextTileId = readNametables(nametableAddress)(s)
         val bg = s.bgRenderingState.shiftRegisters.loadRegisters.setNextTileId(nextTileId)
         val update = setBgRenderingState(bg) _ andThen (if (cycle == 257) transferAddressX else identity)
-        modifyNesState(update)
+        modifyState(update)
+
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
         val v = getLoopyV(s)
         val attributeAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
@@ -650,50 +660,69 @@ object Ppu {
         val attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
         val attr4 = attr3 & 0x03
         val bg = s.bgRenderingState.shiftRegisters.setNextTileAttribute(attr4)
-        modifyNesState(setBgRenderingState(bg))
+        modifyState(setBgRenderingState(bg))
+
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
         val ctrl = s.registers.ctrl
         val v = getLoopyV(s)
         val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 0
         ppuRead(address).transform { (ns, tile) =>
           val bg = s.bgRenderingState.shiftRegisters.setNextTileLsb(tile)
-          (NesState.ppuState.modify(setBgRenderingState(bg))(ns), ())
+          val updated = (
+            NesState.ppuState.modify(setBgRenderingState(bg) _ andThen pixel andThen advanceRenderer) andThen
+            NesState.counter.modify(_ + 1)
+          )(ns)
+          (updated, updated)
         }
+
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
         val ctrl = s.registers.ctrl
         val v = getLoopyV(s)
         val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 8
         ppuRead(address).transform { (ns, tile) =>
           val bg = s.bgRenderingState.shiftRegisters.setNextTileMsb(tile)
-          (NesState.ppuState.modify(setBgRenderingState(bg))(ns), ())
+          val updated = (
+            NesState.ppuState.modify(setBgRenderingState(bg) _ andThen pixel andThen advanceRenderer) andThen
+            NesState.counter.modify(_ + 1)
+          )(ns)
+          (updated, updated)
         }
+
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
         val bg = s.bgRenderingState.shiftRegisters
         val update = setBgRenderingState(bg) _ andThen incScrollX andThen (if (cycle == 256) incScrollY else identity)
-        modifyNesState(update)
+        modifyState(update)
+
       case (scanline, cycle) if isFetch(scanline, cycle) =>
         val bg = s.bgRenderingState.shiftRegisters
-        modifyNesState(setBgRenderingState(bg))
+        modifyState(setBgRenderingState(bg))
+
       case (scanline, 256) if isVisiblePart(scanline) =>
-        State.modify(NesState.ppuState.modify(incScrollY))
+        modifyState(incScrollY)
+
       case (scanline, 257) if isVisiblePart(scanline) =>
         val bg = s.bgRenderingState.loadRegisters
         val update = setBgRenderingState(bg) _ andThen transferAddressX
-        modifyNesState(update)
+        modifyState(update)
+
       case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
         val v = getLoopyV(s)
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
         val nextTileId = readNametables(nametableAddress)(s)
         val bgUpdated = s.bgRenderingState.setNextTileId(nextTileId)
-        modifyNesState(setBgRenderingState(bgUpdated))
+        modifyState(setBgRenderingState(bgUpdated))
+
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
-        modifyNesState(transferAddressY)
+        modifyState(transferAddressY)
+
       case (241, 1) =>
-        modifyNesState(setVerticalBlank(true))
+        modifyState(setVerticalBlank(true))
+
       case _ =>
-        State.modify(identity)
+        modifyState(identity)
+
     }
-  }.flatMap(_ => modifyNesState(pixel _ andThen advanceRenderer))
+  }
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
     State.inspect[PpuState, Boolean](s => isVerticalBlankStarted(s)).toNesState
@@ -704,6 +733,9 @@ object Ppu {
     a <- State.inspect[PpuState, Boolean](s => s.scanline == 241 && s.cycle == 2)
     b <- State.inspect[PpuState, PpuCtrl](_.registers.ctrl)
   } yield a && (b.nmiMode == NmiMode.On)).toNesState
+
+  def isNmiReady(s: PpuState): Boolean =
+    s.scanline == 241 && s.cycle == 2 && s.registers.ctrl.nmiMode == NmiMode.On
 
   def reset: State[NesState, Unit] = State.modify[PpuState](_.reset).toNesState
 

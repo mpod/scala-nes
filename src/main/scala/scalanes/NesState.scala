@@ -2,8 +2,6 @@ package scalanes
 
 import java.nio.file.Path
 
-import cats.Monad
-import cats.data.State
 import cats.effect.{Blocker, ContextShift, Sync}
 import fs2.{Stream, io}
 import monocle.Lens
@@ -56,23 +54,25 @@ object NesState {
     _ <- resetCounter
   } yield ()
 
-  def clock: State[NesState, Unit] = for {
-    _ <- Ppu.clock
-    counter <- incCounter
-    _ <- if ((counter % 3) == 1) Cpu.clock else dummy
-    _ <- Monad[State[NesState, *]]
-      .ifM(Ppu.isNmiReady)(
-        ifTrue = Cpu.nmi,
-        ifFalse = dummy
-      )
-  } yield ()
+  val clock: State[NesState, Unit] = Ppu.clock.flatMap { ns =>
+    if ((ns.counter % 3) == 1)
+      if (Ppu.isNmiReady(ns.ppuState))
+        Cpu.clock.flatMap(_ => Cpu.nmi)
+      else
+        Cpu.clock
+    else if (Ppu.isNmiReady(ns.ppuState))
+      Cpu.nmi
+    else
+      dummy
+  }
 
-  def executeFrame: State[NesState, Unit] = State.modify { s =>
-    var ss = clock.runS(s).value
-    while (!Ppu.isVerticalBlankStarted(ss.ppuState)) {
-      ss = clock.runS(ss).value
-    }
-    ss
+  val executeFrame: State[NesState, Unit] = {
+    val eff = Stream.unfold(State.pure[NesState, Unit](())) { s =>
+      val ns = s.flatMap(_ => clock)
+      Option((ns, ns))
+    }.repeat.drop(262 * 340 - 1).take(1)
+
+    eff.toList.head
   }
 
   def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
