@@ -67,13 +67,7 @@ object NesState {
   }
 
   val executeFrame: State[NesState, Unit] =
-    Stream.unfold(State.pure[NesState, Unit](())) { s =>
-        val ns = s.flatMap(_ => clock)
-        Option((ns, ns))
-      }
-      .drop(262 * 340 - 1)
-      .take(1)
-      .toList.head
+    (1 until 262 * 340).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
 
   def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
     NesState(
