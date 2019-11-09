@@ -1,6 +1,7 @@
 package scalanes
 
 import monocle.Lens
+import monocle.function.Index._
 import monocle.macros.GenLens
 import scalanes.AddressIncrementMode.AddressIncrementMode
 import scalanes.BackgroundTableAddress.BackgroundTableAddress
@@ -8,6 +9,7 @@ import scalanes.MasterSlaveMode.MasterSlaveMode
 import scalanes.Mirroring.Mirroring
 import scalanes.NametableAddress.NametableAddress
 import scalanes.NmiMode.NmiMode
+import scalanes.SpritePriority.SpritePriority
 import scalanes.SpriteSize.SpriteSize
 import scalanes.SpriteTableAddress.SpriteTableAddress
 
@@ -20,20 +22,24 @@ case class PpuState(nametables: Vector[UInt8],
                     scanline: Int,
                     cycle: Int,
                     bgRenderingState: BgRenderingState,
+                    spritesState: SpritesState,
                     pixels: Vector[Vector[Rgb]]) {
+
   def reset: PpuState =
     copy(registers = registers.reset, scanline = 0, cycle = 0, bgRenderingState = bgRenderingState.reset)
+
 }
 
 object PpuState {
-  val nametables: Lens[PpuState, Vector[UInt8]] = GenLens[PpuState](_.nametables)
-  val palettes: Lens[PpuState, Vector[UInt8]] = GenLens[PpuState](_.palettes)
-  val registers: Lens[PpuState, PpuRegisters] = GenLens[PpuState](_.registers)
-  val mirroring: Lens[PpuState, Mirroring] = GenLens[PpuState](_.mirroring)
-  val scanline: Lens[PpuState, Int] = GenLens[PpuState](_.scanline)
-  val cycle: Lens[PpuState, Int] = GenLens[PpuState](_.cycle)
+  val nametables: Lens[PpuState, Vector[UInt8]]          = GenLens[PpuState](_.nametables)
+  val palettes: Lens[PpuState, Vector[UInt8]]            = GenLens[PpuState](_.palettes)
+  val registers: Lens[PpuState, PpuRegisters]            = GenLens[PpuState](_.registers)
+  val mirroring: Lens[PpuState, Mirroring]               = GenLens[PpuState](_.mirroring)
+  val scanline: Lens[PpuState, Int]                      = GenLens[PpuState](_.scanline)
+  val cycle: Lens[PpuState, Int]                         = GenLens[PpuState](_.cycle)
   val bgRenderingState: Lens[PpuState, BgRenderingState] = GenLens[PpuState](_.bgRenderingState)
-  val pixels: Lens[PpuState, Vector[Vector[Rgb]]] = GenLens[PpuState](_.pixels)
+  val spritesState: Lens[PpuState, SpritesState]         = GenLens[PpuState](_.spritesState)
+  val pixels: Lens[PpuState, Vector[Vector[Rgb]]]        = GenLens[PpuState](_.pixels)
 
   def initial(mirroring: Mirroring): PpuState = PpuState(
     Vector.fill(2 * 1024)(0x00),
@@ -43,6 +49,7 @@ object PpuState {
     0,
     0,
     BgRenderingState.initial,
+    SpritesState.initial,
     Vector.fill(240, 256)(Rgb.initial)
   )
 }
@@ -52,10 +59,10 @@ case class PpuRegisters(ctrl: PpuCtrl, mask: PpuMask, status: PpuStatus, data: U
 }
 
 object PpuRegisters {
-  val ctrl: Lens[PpuRegisters, PpuCtrl] = GenLens[PpuRegisters](_.ctrl)
-  val mask: Lens[PpuRegisters, PpuMask] = GenLens[PpuRegisters](_.mask)
-  val status: Lens[PpuRegisters, PpuStatus] = GenLens[PpuRegisters](_.status)
-  val data: Lens[PpuRegisters, UInt8] = GenLens[PpuRegisters](_.data)
+  val ctrl: Lens[PpuRegisters, PpuCtrl]         = GenLens[PpuRegisters](_.ctrl)
+  val mask: Lens[PpuRegisters, PpuMask]         = GenLens[PpuRegisters](_.mask)
+  val status: Lens[PpuRegisters, PpuStatus]     = GenLens[PpuRegisters](_.status)
+  val data: Lens[PpuRegisters, UInt8]           = GenLens[PpuRegisters](_.data)
   val loopy: Lens[PpuRegisters, LoopyRegisters] = GenLens[PpuRegisters](_.loopy)
 
   def initial: PpuRegisters =
@@ -69,6 +76,7 @@ case class PpuCtrl(nametable: NametableAddress,
                    spriteSize: SpriteSize,
                    masterSlaveMode: MasterSlaveMode,
                    nmiMode: NmiMode) {
+
   def toUInt8: UInt8 =
     ((nametable.id              & 0x03) << 0) |
     ((incrementMode.id          & 0x01) << 2) |
@@ -77,6 +85,7 @@ case class PpuCtrl(nametable: NametableAddress,
     ((spriteSize.id             & 0x01) << 5) |
     ((masterSlaveMode.id        & 0x01) << 6) |
     ((nmiMode.id                & 0x01) << 7)
+
 }
 
 object PpuCtrl {
@@ -97,9 +106,9 @@ object NametableAddress extends Enumeration {
   type NametableAddress = Val
   protected case class Val(address: UInt16) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val First = Val(0x2000)
+  val First  = Val(0x2000)
   val Second = Val(0x2400)
-  val Third = Val(0x2800)
+  val Third  = Val(0x2800)
   val Fourth = Val(0x2C00)
 }
 
@@ -128,8 +137,11 @@ object BackgroundTableAddress extends Enumeration {
 }
 
 object SpriteSize extends Enumeration {
-  type SpriteSize = Value
-  val Small, Large = Value
+  type SpriteSize = Val
+  protected case class Val(height: Int) extends super.Val
+  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
+  val Small = Val(8)
+  val Large = Val(16)
 }
 
 object MasterSlaveMode extends Enumeration {
@@ -182,10 +194,12 @@ object PpuMask {
 }
 
 case class PpuStatus(spriteOverflow: Boolean, spriteZeroHit: Boolean, verticalBlank: Boolean) {
+
   def asUInt8: UInt8 =
     (if (spriteOverflow) 0x01 << 5 else 0x00) |
     (if (spriteZeroHit)  0x01 << 6 else 0x00) |
     (if (verticalBlank)  0x01 << 7 else 0x00)
+
 }
 
 object PpuStatus {
@@ -235,11 +249,11 @@ case class LoopyAddress(coarseX: UInt5, coarseY: UInt5, nametableX: UInt1, namet
 }
 
 object LoopyAddress {
-  val coarseX: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseX)
-  val coarseY: Lens[LoopyAddress, UInt5] = GenLens[LoopyAddress](_.coarseY)
+  val coarseX: Lens[LoopyAddress, UInt5]    = GenLens[LoopyAddress](_.coarseX)
+  val coarseY: Lens[LoopyAddress, UInt5]    = GenLens[LoopyAddress](_.coarseY)
   val nametableX: Lens[LoopyAddress, UInt1] = GenLens[LoopyAddress](_.nametableX)
   val nametableY: Lens[LoopyAddress, UInt1] = GenLens[LoopyAddress](_.nametableY)
-  val fineY: Lens[LoopyAddress, UInt3] = GenLens[LoopyAddress](_.fineY)
+  val fineY: Lens[LoopyAddress, UInt3]      = GenLens[LoopyAddress](_.fineY)
 
   def apply(address: UInt16): LoopyAddress = new LoopyAddress(
     address & 0x1F,
@@ -331,11 +345,79 @@ object Rgb {
   val initial: Rgb = Rgb(0, 0, 0)
 }
 
+case class OamEntry(y: UInt8, id: UInt8, attribute: UInt8, x: UInt8) {
+  require((y & 0xFF) == y)
+  require((id & 0xFF) == id)
+  require((attribute & 0xFF) == attribute)
+  require((x & 0xFF) == attribute)
+
+  def readField(i: Int): UInt8 = i match {
+    case 0 => y
+    case 1 => id
+    case 2 => attribute
+    case 3 => x
+    case _ => throw new IllegalArgumentException("Index should be in range 0..3")
+  }
+
+  def writeField(i: Int, d: UInt8): OamEntry = i match {
+    case 0 => copy(y = d)
+    case 1 => copy(id = d)
+    case 2 => copy(attribute = d)
+    case 3 => copy(x = d)
+    case _ => throw  new IllegalArgumentException("Index should be in range 0..3")
+  }
+
+  val palette: UInt3 = (attribute & 0x03) + 4
+  val priority: SpritePriority = SpritePriority(attribute & 0x10)
+  val flipHorizontally: Boolean = attribute & 0x40
+  val flipVertically: Boolean = attribute & 0x80
+}
+
+object OamEntry {
+  val y: Lens[OamEntry, UInt8] = GenLens[OamEntry](_.y)
+  val x: Lens[OamEntry, UInt8] = GenLens[OamEntry](_.x)
+  val initial: OamEntry = OamEntry(0x00, 0x00, 0x00, 0x00)
+}
+
+case class ScanlineOamEntry(sprite: OamEntry, spriteShiftLo: UInt8, spriteShiftHi: UInt8, isSpriteZero: Boolean) {
+
+  def shift: ScanlineOamEntry =
+    if (sprite.x > 0)
+      (ScanlineOamEntry.sprite composeLens OamEntry.x).modify(_ - 1)(this)
+    else
+      (ScanlineOamEntry.spriteShiftHi.modify(_ << 1) andThen ScanlineOamEntry.spriteShiftLo.modify(_ << 1))(this)
+
+}
+
+object ScanlineOamEntry {
+  val sprite: Lens[ScanlineOamEntry, OamEntry] = GenLens[ScanlineOamEntry](_.sprite)
+  val spriteShiftLo: Lens[ScanlineOamEntry, UInt8] = GenLens[ScanlineOamEntry](_.spriteShiftLo)
+  val spriteShiftHi: Lens[ScanlineOamEntry, UInt8] = GenLens[ScanlineOamEntry](_.spriteShiftHi)
+
+  def apply(sprite: OamEntry, isZeroSprite: Boolean): ScanlineOamEntry =
+    new ScanlineOamEntry(sprite, 0x00, 0x00, isZeroSprite)
+}
+
+object SpritePriority extends Enumeration {
+  type SpritePriority = Value
+  val InFrontOfBackground, BehindBackground = Value
+}
+
+case class SpritesState(oam: Vector[OamEntry], oamAddress: UInt8, scanlineOam: Vector[ScanlineOamEntry])
+
+object SpritesState {
+  val oam: Lens[SpritesState, Vector[OamEntry]] = GenLens[SpritesState](_.oam)
+  val oamAddress: Lens[SpritesState, UInt8] = GenLens[SpritesState](_.oamAddress)
+  val scanlineOam: Lens[SpritesState, Vector[ScanlineOamEntry]] = GenLens[SpritesState](_.scanlineOam)
+
+  val initial: SpritesState = SpritesState(Vector.fill(64)(OamEntry.initial), 0x00, Vector.empty)
+}
+
 object Ppu {
 
-  private val ctrlRegister = PpuState.registers composeLens PpuRegisters.ctrl
+  private val ctrlRegister   = PpuState.registers composeLens PpuRegisters.ctrl
   private val statusRegister = PpuState.registers composeLens PpuRegisters.status
-  private val maskRegister = PpuState.registers composeLens PpuRegisters.mask
+  private val maskRegister   = PpuState.registers composeLens PpuRegisters.mask
   private val loopyRegisters = PpuState.registers composeLens PpuRegisters.loopy
 
   implicit class PpuStateOps[A](val a: State[PpuState, A]) extends AnyVal {
@@ -347,6 +429,9 @@ object Ppu {
 
   def setVerticalBlank(d: Boolean)(s: PpuState): PpuState =
     (statusRegister composeLens PpuStatus.verticalBlank).set(d)(s)
+
+  def setSpriteZeroHit(d: Boolean)(s: PpuState): PpuState =
+    (statusRegister composeLens PpuStatus.spriteZeroHit).set(d)(s)
 
   def setData(d: UInt8)(s: PpuState): PpuState =
     (PpuState.registers composeLens PpuRegisters.data).set(d)(s)
@@ -491,6 +576,59 @@ object Ppu {
     PpuState.palettes.modify(_.updated(addr, d))(s)
   }
 
+  def evaluateSprites(ps: PpuState): PpuState = {
+    val s = ps.spritesState
+    val affectedSprites = s.oam.zipWithIndex
+      .collect {
+        case (e, i) if (ps.scanline - e.y) >= 0 => ScanlineOamEntry(e, i == 0)
+      }
+    val spriteOverflow = affectedSprites.size > 8
+    val scanlineSprites = affectedSprites.take(8)
+    val update = (PpuState.spritesState composeLens SpritesState.scanlineOam).set(scanlineSprites) andThen
+      (statusRegister composeLens PpuStatus.spriteOverflow).set(spriteOverflow)
+    update(ps)
+  }
+
+  private def flipByte(d: UInt8): UInt8 = {
+    val d1 = (d  & 0xF0) >> 4 | (d  & 0x0F) << 4
+    val d2 = (d1 & 0xCC) >> 2 | (d1 & 0x33) << 2
+    val d3 = (d2 & 0xAA) >> 1 | (d2 & 0x55) << 1
+    d3
+  }
+
+  def loadSprites: State[NesState, NesState] = State.get[NesState].flatMap { ns =>
+    val ps = ns.ppuState
+    ps.spritesState.scanlineOam.zipWithIndex.map { case (e, i) =>
+      val spriteSize = ps.registers.ctrl.spriteSize
+      val addrBase = if (spriteSize == SpriteSize.Small)
+        ps.registers.ctrl.spriteTableAddress.address | (e.sprite.id << 4)
+      else
+        ((e.sprite.id & 0x01) << 12) | ((e.sprite.id & 0xFE) << 4)
+      val row = if (e.sprite.flipVertically)
+        spriteSize.height - 1 - (ps.scanline - e.sprite.y) % spriteSize.height
+      else
+        (ps.scanline - e.sprite.y) % spriteSize.height
+      val addr = addrBase + row
+
+      for {
+        lo <- ppuRead(addr + 0)
+        hi <- ppuRead(addr + 8)
+        spriteLo = if (e.sprite.flipHorizontally) flipByte(lo) else lo
+        spriteHi = if (e.sprite.flipHorizontally) flipByte(hi) else hi
+        _ <- State.modify[NesState] { p =>
+          val scanlineEntry = SpritesState.scanlineOam composeOptional index(i)
+          val update = (NesState.ppuState composeLens PpuState.spritesState).modify(
+            (scanlineEntry composeLens ScanlineOamEntry.spriteShiftLo).set(spriteLo) andThen
+            (scanlineEntry composeLens ScanlineOamEntry.spriteShiftHi).set(spriteHi)
+          )
+          update(p)
+        }
+      } yield ()
+    }
+    .foldLeft(State.pure[NesState, Unit](())) { case (acc, a) => acc.flatMap(_ => a) }
+    .get
+  }
+
   def advanceRenderer(s: PpuState): PpuState = {
     val (cycle, scanline) = if (s.cycle >= 340)
       (0, if (s.scanline >= 260) -1 else s.scanline + 1)
@@ -503,15 +641,49 @@ object Ppu {
     val scanline = s.scanline
     val x = s.cycle - 1
     if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256) {
-      val bitMux = 0x8000 >> s.registers.loopy.x
-      val p0 = if (s.bgRenderingState.patternShiftLo & bitMux) 0x01 else 0x00
-      val p1 = if (s.bgRenderingState.patternShiftHi & bitMux) 0x02 else 0x00
-      val bgPixel = p1 | p0
-      val pal0 = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
-      val pal1 = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
-      val bgPalette = pal1 | pal0
-      val color = getColor(bgPalette, bgPixel)(s)
-      PpuState.pixels.modify(p => p.updated(scanline, p(scanline).updated(x, color)))(s)
+      val (bgPixel, bgPalette) = if (s.registers.mask.renderBackground) {
+        val bitMux = 0x8000 >> s.registers.loopy.x
+        val p0 = if (s.bgRenderingState.patternShiftLo & bitMux) 0x01 else 0x00
+        val p1 = if (s.bgRenderingState.patternShiftHi & bitMux) 0x02 else 0x00
+        val pixel = p1 | p0
+        val pal0 = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
+        val pal1 = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
+        val palette = pal1 | pal0
+        (pixel, palette)
+      } else
+        (0x00, 0x00)
+
+      val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
+      val (fgPixel, fgPalette, fgPriority, spriteZeroHit) = if (s.registers.mask.renderSprites) {
+        s.spritesState.scanlineOam
+          .filter(_.sprite.x == 0)
+          .map { e =>
+            val p0 = if (e.spriteShiftLo & 0x80) 0x01 else 0x00
+            val p1 = if (e.spriteShiftHi & 0x80) 0x02 else 0x00
+            val pixel = p1 | p0
+            val palette = e.sprite.palette
+            val priority = e.sprite.priority
+            (pixel, palette, priority, e.isSpriteZero)
+          }
+          .find { case (pixel, _, _, _) => pixel != 0x00 }
+          .getOrElse(defaultFg)
+      } else
+        defaultFg
+
+      val (pixel, palette) = if (fgPixel > 0 && (bgPixel == 0 || fgPriority == SpritePriority.InFrontOfBackground))
+        (fgPixel, fgPalette)
+      else
+        (bgPixel, bgPalette)
+
+      val color = getColor(palette, pixel)(s)
+
+      val modifiedSpriteZeroHit = spriteZeroHit && isRendering(s) && s.cycle < 258 && x != 255 &&
+        ((s.registers.mask.renderSpritesLeft || s.registers.mask.renderBackgroundLeft) && x > 7)
+
+      (
+        (PpuState.pixels composeOptional index(scanline) composeOptional index(x)).set(color) andThen
+        setSpriteZeroHit(modifiedSpriteZeroHit)
+      )(s)
     } else
       s
   }
@@ -520,79 +692,114 @@ object Ppu {
     // The PPU exposes eight memory-mapped registers to the CPU, which are mapped to the
     // address range $2000-$2007. Addresses between $2008 and $3FFF are mirrored.
     require(address >= 0x2000 && address <= 0x3FFF)
-    val addr = address & 0x7
     val zero = State.pure[NesState, UInt8](0x00)
     val s: PpuState = ns.ppuState
-    if (addr == 0x0000)      zero // PPUCTRL
-    else if (addr == 0x0001) zero // PPUMASK
-    else if (addr == 0x0002) {    // PPUSTATUS
-      val data = s.registers.data
-      val status = s.registers.status.asUInt8
-      val update = clearLoopyW _ andThen setVerticalBlank(false)
-      val d = (status & 0xE0) | (data & 0x1F)
-      State { ns => (NesState.ppuState.modify(update)(ns), d) }
-    }
-    else if (addr == 0x0003) zero // OAMADDR
-    else if (addr == 0x0004) zero // OAMDATA
-    else if (addr == 0x0005) zero // PPUSCROLL
-    else if (addr == 0x0006) zero // PPUADDR
-    else {                        // PPUDATA
-      val d1 = s.registers.data
-      val v1 = s.registers.loopy.v
-      val ctrl = s.registers.ctrl
-      val v2 = LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
-      ppuRead(v1.asUInt16).transform { (ns, d2) =>
-        val update = setData(d2) _ andThen setLoopyV(v2)
-        val d = if (v1.asUInt16 >= 0x3F00) d2 else d1
-        (NesState.ppuState.modify(update)(ns), d)
-      }
+    address & 0x0007 match {
+      case 0x0000 => // PPUCTRL
+        zero
+
+      case 0x0001 => // PPUMASK
+        zero
+
+      case 0x0002 => // PPUSTATUS
+        val data = s.registers.data
+        val status = s.registers.status.asUInt8
+        val update = clearLoopyW _ andThen setVerticalBlank(false)
+        val d = (status & 0xE0) | (data & 0x1F)
+        State { ns =>
+          (NesState.ppuState.modify(update)(ns), d)
+        }
+
+      case 0x0003 => // OAMADDR
+        zero
+
+      case 0x0004 => // OAMDATA
+        val addr = s.spritesState.oamAddress / 4
+        val field = s.spritesState.oamAddress % 4
+        val data = s.spritesState.oam(addr).readField(field)
+        State.pure(data)
+        zero
+
+      case 0x0005 => // PPUSCROLL
+        zero
+
+      case 0x0006 => // PPUADDR
+        zero
+
+      case _ =>      // PPUDATA
+        val d1 = s.registers.data
+        val v1 = s.registers.loopy.v
+        val ctrl = s.registers.ctrl
+        val v2 = LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
+        ppuRead (v1.asUInt16).transform { (ns, d2) =>
+          val update = setData(d2) _ andThen setLoopyV(v2)
+          val d = if (v1.asUInt16 >= 0x3F00) d2 else d1
+          (NesState.ppuState.modify(update)(ns), d)
+        }
+
     }
   }
 
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = State.get.flatMap { ns =>
     require(address >= 0x2000 && address <= 0x3FFF)
     require((d & 0xFF) == d)
-    val addr = address & 0x7
     val empty = State.set(ns)
     val s: PpuState = ns.ppuState
     val t1 = s.registers.loopy.t
-    if (addr == 0x0000) {
-      val ctrl = PpuCtrl(d)
-      val t2 = t1.setNametables(ctrl.nametable.id)
-      val update = setCtrl(d) _ andThen setLoopyT(t2)
-      modifyNesState(update)
-    } else if (addr == 0x0001) {
-      val update = maskRegister.set(PpuMask(d))
-      modifyNesState(update)
-    } else if (addr == 0x0002)
-      empty
-    else if (addr == 0x0003)
-      empty
-    else if (addr == 0x0004)
-      empty
-    else if (addr == 0x0005) {
-      val update = if (s.registers.loopy.w) {
-        val t2 =  t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
-        setLoopyT(t2) _ andThen setLoopyW(false)
-      } else {
-        val t2 =  t1.setCoarseX((d >> 3) & 0x1F)
-        setLoopyX(d & 0x07) _ andThen setLoopyT(t2) andThen setLoopyW(true)
-      }
-      modifyNesState(update)
-    } else if (addr == 0x0006) {
-      val update = if (s.registers.loopy.w) {
-        val t2 =  LoopyAddress((t1.asUInt16 & 0xFF00) | d)
-        setLoopyT(t2) _ andThen setLoopyV(t2) andThen setLoopyW(false)
-      } else {
-        val t2 =  LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF))
-        setLoopyT(t2) _ andThen setLoopyW(true)
-      }
-      modifyNesState(update)
-    } else {
-      val ctrl = s.registers.ctrl
-      val v1 = s.registers.loopy.v
-      val v2 =  LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
-      ppuWrite(v1.asUInt16, d).modify(NesState.ppuState.modify(setLoopyV(v2)))
+    address & 0x0007 match {
+      case 0x0000 => // PPUCTRL
+        val ctrl = PpuCtrl(d)
+        val t2 = t1.setNametables(ctrl.nametable.id)
+        val update = setCtrl(d) _ andThen setLoopyT(t2)
+        modifyNesState(update)
+
+      case 0x0001 => // PPUMASK
+        val update = maskRegister.set(PpuMask(d))
+        modifyNesState(update)
+
+      case 0x0002 => // PPUSTATUS
+        empty
+
+      case 0x0003 => // OAMADDR
+        val update = (PpuState.spritesState composeLens SpritesState.oamAddress).set(d)
+        modifyNesState(update)
+
+      case 0x0004 => // OAMDATA
+        val addr = s.spritesState.oamAddress / 4
+        val field = s.spritesState.oamAddress % 4
+        val update = (PpuState.spritesState composeLens SpritesState.oam).modify { oam =>
+          val entry = oam(addr)
+          val updated = entry.writeField(field, d)
+          oam.updated(addr, updated)
+        }
+        modifyNesState(update)
+
+      case 0x0005 => // PPUSCROLL
+        val update = if (s.registers.loopy.w) {
+          val t2 = t1.setCoarseY((d >> 3) & 0x1F).setFineY(d & 0x07)
+          setLoopyT(t2) _ andThen setLoopyW(false)
+        } else {
+          val t2 = t1.setCoarseX((d >> 3) & 0x1F)
+          setLoopyX(d & 0x07) _ andThen setLoopyT(t2) andThen setLoopyW(true)
+        }
+        modifyNesState(update)
+
+      case 0x0006 => // PPUADDR
+        val update = if (s.registers.loopy.w) {
+          val t2 = LoopyAddress((t1.asUInt16 & 0xFF00) | d)
+          setLoopyT(t2) _ andThen setLoopyV(t2) andThen setLoopyW(false)
+        } else {
+          val t2 = LoopyAddress(((d & 0x3F) << 8) | (t1.asUInt16 & 0x00FF) )
+          setLoopyT(t2) _ andThen setLoopyW(true)
+        }
+        modifyNesState(update)
+
+      case _ =>      // PPUDATA
+        val ctrl = s.registers.ctrl
+        val v1 = s.registers.loopy.v
+        val v2 = LoopyAddress(v1.asUInt16 + ctrl.incrementMode.delta)
+        ppuWrite(v1.asUInt16, d).modify(NesState.ppuState.modify(setLoopyV(v2)))
+
     }
   }
 
@@ -637,7 +844,7 @@ object Ppu {
     }
 
     val s = ns.ppuState
-    (ns.ppuState.scanline, ns.ppuState.cycle) match {
+    val background = (ns.ppuState.scanline, ns.ppuState.cycle) match {
       case (0, 0) =>
         modifyState(PpuState.cycle.set(1))
 
@@ -697,14 +904,6 @@ object Ppu {
         val bg = s.bgRenderingState.shiftRegisters
         modifyState(setBgRenderingState(bg))
 
-      case (scanline, 256) if isVisiblePart(scanline) =>
-        modifyState(incScrollY)
-
-      case (scanline, 257) if isVisiblePart(scanline) =>
-        val bg = s.bgRenderingState.loadRegisters
-        val update = setBgRenderingState(bg) _ andThen transferAddressX
-        modifyState(update)
-
       case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
         val v = getLoopyV(s)
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
@@ -722,6 +921,19 @@ object Ppu {
         modifyState(identity)
 
     }
+
+    val foreground: State[NesState, NesState] = (ns.ppuState.scanline, ns.ppuState.cycle) match {
+      case (scanline, 257) if isVisiblePart(scanline) =>
+        modifyState(evaluateSprites)
+
+      case (scanline, 340) if isVisiblePart(scanline) =>
+        loadSprites
+
+      case _ =>
+        State.get
+    }
+
+    foreground.flatMap(_ => background)
   }
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
