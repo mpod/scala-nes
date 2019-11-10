@@ -20,7 +20,7 @@ object Console extends JFXApp {
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   val nestestRom: Path = Paths.get(getClass.getResource("/nestest.nes").toURI)
-  val loaded: List[NesState] = NesState.fromFile[IO](nestestRom).unsafeRunSync()
+  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("nestest.nes")).unsafeRunSync()
   require(loaded.size == 1)
   val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).unsafeRunSync())
 
@@ -56,6 +56,12 @@ object Console extends JFXApp {
        |""".stripMargin
   }
 
+  def oamInfo(s: NesState): String = {
+    s.ppuState.spritesState.oam.zipWithIndex.map { case (e, i) =>
+      s"${hex(i, 2)} (${e.x}, ${e.y}) ID: ${hex(e.id, 2)} AT: ${hex(e.attribute, 2)}"
+    }.take(20).mkString("\n")
+  }
+
   val cpuState: StringBinding = Bindings.createStringBinding(
     () => Option(nesState.value).map(cpuStateInfo).getOrElse(""),
     nesState
@@ -78,6 +84,13 @@ object Console extends JFXApp {
       Option(nesState.value).map(s =>
           Cpu.disassemble(20).runA(s).unsafeRunSync().drop(1).map { case (address, instr) => s"$$${hex(address, 4)}: $instr" }.mkString("\n")
       ).getOrElse("")
+    },
+    nesState
+  )
+
+  val oamInfo: StringBinding = Bindings.createStringBinding(
+    () => {
+      Option(nesState.value).map(s => oamInfo(s)).getOrElse("")
     },
     nesState
   )

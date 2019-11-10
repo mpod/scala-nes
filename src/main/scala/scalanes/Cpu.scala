@@ -1,6 +1,7 @@
 package scalanes
 
 import cats.Monad
+import cats.implicits._
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.CpuFlags.CpuFlags
 
@@ -143,11 +144,11 @@ object Cpu extends LazyLogging {
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
-    if (address >= 0x0000 && address <= 0x1FFF)
+    if (address >= 0x0000 && address <= 0x1FFF)       // RAM
       State.inspect(_.ram(address % 0x800))
-    else if (address >= 0x2000 && address <= 0x3FFF)
+    else if (address >= 0x2000 && address <= 0x3FFF)  // PPU registers
       Ppu.cpuRead(address)
-    else if (address >= 0x6000 && address <= 0xFFFF)
+    else if (address >= 0x6000 && address <= 0xFFFF)  // Cartridge
       Cartridge.cpuRead(address)
     else
       State.pure(0x00)
@@ -156,11 +157,16 @@ object Cpu extends LazyLogging {
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require((address & 0xFFFF) == address)
     require((d & 0xFF) == d)
-    if (address >= 0x0000 && address <= 0x1FFF)
+    if (address >= 0x0000 && address <= 0x1FFF)         //RAM
       State.modify(NesState.ram.modify(_.updated(address, d)))
-    else if (address >= 0x2000 && address <= 0x3FFF)
+    else if (address >= 0x2000 && address <= 0x3FFF)    // PPU registers
       Ppu.cpuWrite(address, d)
-    else if (address >= 0x6000 && address <= 0xFFFF)
+    else if (address == 0x4014) {                       // OAM DMA
+      val page = d << 8
+      incCycles(513) >> (0 until 256).map { oamAddress =>
+        cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
+      }.reduce(_ >> _)
+    } else if (address >= 0x6000 && address <= 0xFFFF)  // Cartridge
       Cartridge.cpuWrite(address, d)
     else
       State.pure(())
@@ -257,7 +263,7 @@ object Cpu extends LazyLogging {
         State[NesState, Unit] { ns =>
           val updated = (NesState.cycles.set(instr.cycles) andThen NesState.pc.modify(_ + 1))(ns)
           (updated, ())
-        }.flatMap(_ => instr.op).flatMap(_ => setFlag(CpuFlags.U, value = true))
+        } >> instr.op >> setFlag(CpuFlags.U, value = true)
       }
     else
       State.modify(NesState.cycles.modify(_ - 1))

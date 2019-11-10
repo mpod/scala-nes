@@ -1,6 +1,7 @@
 package scalanes
 
-import monocle.Lens
+import cats.implicits._
+import monocle.{Lens, Traversal}
 import monocle.function.Index._
 import monocle.macros.GenLens
 import scalanes.AddressIncrementMode.AddressIncrementMode
@@ -349,7 +350,7 @@ case class OamEntry(y: UInt8, id: UInt8, attribute: UInt8, x: UInt8) {
   require((y & 0xFF) == y)
   require((id & 0xFF) == id)
   require((attribute & 0xFF) == attribute)
-  require((x & 0xFF) == attribute)
+  require((x & 0xFF) == x)
 
   def readField(i: Int): UInt8 = i match {
     case 0 => y
@@ -380,12 +381,11 @@ object OamEntry {
 }
 
 case class ScanlineOamEntry(sprite: OamEntry, spriteShiftLo: UInt8, spriteShiftHi: UInt8, isSpriteZero: Boolean) {
+  require((spriteShiftLo & 0xFF) == spriteShiftLo)
+  require((spriteShiftHi & 0xFF) == spriteShiftHi)
 
-  def shift: ScanlineOamEntry =
-    if (sprite.x > 0)
-      (ScanlineOamEntry.sprite composeLens OamEntry.x).modify(_ - 1)(this)
-    else
-      (ScanlineOamEntry.spriteShiftHi.modify(_ << 1) andThen ScanlineOamEntry.spriteShiftLo.modify(_ << 1))(this)
+  def shiftRegisters: ScanlineOamEntry =
+    copy(spriteShiftLo = (spriteShiftLo << 1) & 0xFF, spriteShiftHi = (spriteShiftHi << 1) & 0xFF)
 
 }
 
@@ -432,6 +432,12 @@ object Ppu {
 
   def setSpriteZeroHit(d: Boolean)(s: PpuState): PpuState =
     (statusRegister composeLens PpuStatus.spriteZeroHit).set(d)(s)
+
+  def setSpriteOverflow(d: Boolean)(s: PpuState): PpuState =
+    (statusRegister composeLens PpuStatus.spriteOverflow).set(d)(s)
+
+  def clearScanlineOam(s: PpuState): PpuState =
+    (PpuState.spritesState composeLens SpritesState.scanlineOam).set(Vector.empty)(s)
 
   def setData(d: UInt8)(s: PpuState): PpuState =
     (PpuState.registers composeLens PpuRegisters.data).set(d)(s)
@@ -576,17 +582,60 @@ object Ppu {
     PpuState.palettes.modify(_.updated(addr, d))(s)
   }
 
-  def evaluateSprites(ps: PpuState): PpuState = {
+  def readOam: State[NesState, UInt8] = State.inspect { ns =>
+    val oamAddress = ns.ppuState.spritesState.oamAddress
+    val entryIndex = oamAddress / 4
+    val field = oamAddress % 4
+    ns.ppuState.spritesState.oam(entryIndex).readField(field)
+  }
+
+  def writeOam(oamAddress: UInt8, d: UInt8): State[NesState, Unit] = {
+    val entryIndex = oamAddress / 4
+    val field = oamAddress % 4
+    val update = (PpuState.spritesState composeLens SpritesState.oam composeOptional index(entryIndex)).modify(
+      _.writeField(field, d)
+    )
+    modifyNesState(update)
+  }
+
+  def evaluateSprites: State[NesState, NesState] = State { ns =>
+    val ps = ns.ppuState
     val s = ps.spritesState
+    val spriteSize = ps.registers.ctrl.spriteSize
     val affectedSprites = s.oam.zipWithIndex
-      .collect {
-        case (e, i) if (ps.scanline - e.y) >= 0 => ScanlineOamEntry(e, i == 0)
+      .filter { case (e, _) =>
+        val diff = ps.scanline - e.y
+        diff >= 0 && diff < spriteSize.height
+      }
+      .map { case (e, i) =>
+        ScanlineOamEntry(e, i == 0)
       }
     val spriteOverflow = affectedSprites.size > 8
     val scanlineSprites = affectedSprites.take(8)
-    val update = (PpuState.spritesState composeLens SpritesState.scanlineOam).set(scanlineSprites) andThen
+    val updated = NesState.ppuState.modify(
+      (PpuState.spritesState composeLens SpritesState.scanlineOam).set(scanlineSprites) andThen
       (statusRegister composeLens PpuStatus.spriteOverflow).set(spriteOverflow)
-    update(ps)
+    )(ns)
+    (updated, updated)
+  }
+
+  def shiftSprites: State[NesState, NesState] = State { ns =>
+    val ps = ns.ppuState
+    val x = ps.cycle - 1
+
+    val each = NesState.ppuState composeLens
+      PpuState.spritesState composeLens
+      SpritesState.scanlineOam composeTraversal
+      Traversal.fromTraverse[Vector, ScanlineOamEntry]
+
+    val updated = if (ps.registers.mask.renderSprites)
+      each.modify { e =>
+        if (x > e.sprite.x) e.shiftRegisters
+        else e
+      }(ns)
+    else
+      ns
+    (updated, updated)
   }
 
   private def flipByte(d: UInt8): UInt8 = {
@@ -615,18 +664,17 @@ object Ppu {
         hi <- ppuRead(addr + 8)
         spriteLo = if (e.sprite.flipHorizontally) flipByte(lo) else lo
         spriteHi = if (e.sprite.flipHorizontally) flipByte(hi) else hi
-        _ <- State.modify[NesState] { p =>
+        s <- State { p: NesState =>
           val scanlineEntry = SpritesState.scanlineOam composeOptional index(i)
-          val update = (NesState.ppuState composeLens PpuState.spritesState).modify(
+          val updated = (NesState.ppuState composeLens PpuState.spritesState).modify(
             (scanlineEntry composeLens ScanlineOamEntry.spriteShiftLo).set(spriteLo) andThen
             (scanlineEntry composeLens ScanlineOamEntry.spriteShiftHi).set(spriteHi)
-          )
-          update(p)
+          )(p)
+          (updated, updated)
         }
-      } yield ()
+      } yield s
     }
-    .foldLeft(State.pure[NesState, Unit](())) { case (acc, a) => acc.flatMap(_ => a) }
-    .get
+    .foldLeft(State.get[NesState]) { case (acc, a) => acc >> a }
   }
 
   def advanceRenderer(s: PpuState): PpuState = {
@@ -656,7 +704,7 @@ object Ppu {
       val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
       val (fgPixel, fgPalette, fgPriority, spriteZeroHit) = if (s.registers.mask.renderSprites) {
         s.spritesState.scanlineOam
-          .filter(_.sprite.x == 0)
+          .filter(e => (x - e.sprite.x) >= 0)
           .map { e =>
             val p0 = if (e.spriteShiftLo & 0x80) 0x01 else 0x00
             val p1 = if (e.spriteShiftHi & 0x80) 0x02 else 0x00
@@ -670,19 +718,19 @@ object Ppu {
       } else
         defaultFg
 
-      val (pixel, palette) = if (fgPixel > 0 && (bgPixel == 0 || fgPriority == SpritePriority.InFrontOfBackground))
+      val (pixel, palette) = if (fgPixel != 0 && (bgPixel == 0 || fgPriority == SpritePriority.InFrontOfBackground))
         (fgPixel, fgPalette)
       else
         (bgPixel, bgPalette)
 
       val color = getColor(palette, pixel)(s)
 
-      val modifiedSpriteZeroHit = spriteZeroHit && isRendering(s) && s.cycle < 258 && x != 255 &&
+      val verifiedSpriteZeroHit = spriteZeroHit && isRendering(s) && s.cycle < 258 && x != 255 &&
         ((s.registers.mask.renderSpritesLeft || s.registers.mask.renderBackgroundLeft) && x > 7)
 
       (
         (PpuState.pixels composeOptional index(scanline) composeOptional index(x)).set(color) andThen
-        setSpriteZeroHit(modifiedSpriteZeroHit)
+        setSpriteZeroHit(verifiedSpriteZeroHit)
       )(s)
     } else
       s
@@ -714,11 +762,7 @@ object Ppu {
         zero
 
       case 0x0004 => // OAMDATA
-        val addr = s.spritesState.oamAddress / 4
-        val field = s.spritesState.oamAddress % 4
-        val data = s.spritesState.oam(addr).readField(field)
-        State.pure(data)
-        zero
+        readOam
 
       case 0x0005 => // PPUSCROLL
         zero
@@ -765,14 +809,7 @@ object Ppu {
         modifyNesState(update)
 
       case 0x0004 => // OAMDATA
-        val addr = s.spritesState.oamAddress / 4
-        val field = s.spritesState.oamAddress % 4
-        val update = (PpuState.spritesState composeLens SpritesState.oam).modify { oam =>
-          val entry = oam(addr)
-          val updated = entry.writeField(field, d)
-          oam.updated(addr, updated)
-        }
-        modifyNesState(update)
+        writeOam(s.spritesState.oamAddress, d)
 
       case 0x0005 => // PPUSCROLL
         val update = if (s.registers.loopy.w) {
@@ -849,7 +886,12 @@ object Ppu {
         modifyState(PpuState.cycle.set(1))
 
       case (-1, 1) =>
-        modifyState(setVerticalBlank(false))
+        modifyState(
+          setVerticalBlank(false) _ andThen
+          setSpriteOverflow(false) andThen
+          setSpriteZeroHit(false) andThen
+          clearScanlineOam
+        )
 
       case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
         val v = getLoopyV(s)
@@ -924,16 +966,19 @@ object Ppu {
 
     val foreground: State[NesState, NesState] = (ns.ppuState.scanline, ns.ppuState.cycle) match {
       case (scanline, 257) if isVisiblePart(scanline) =>
-        modifyState(evaluateSprites)
+        evaluateSprites
 
       case (scanline, 340) if isVisiblePart(scanline) =>
         loadSprites
+
+      case (scanline, cycle) if isFetch(scanline, cycle) && cycle < 258 =>
+        shiftSprites
 
       case _ =>
         State.get
     }
 
-    foreground.flatMap(_ => background)
+    foreground >> background
   }
 
   def isVerticalBlankStarted: State[NesState, Boolean] =
