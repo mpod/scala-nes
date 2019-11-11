@@ -88,7 +88,7 @@ object NesState {
     pc.set(offset)(s)
   }
 
-  private def nesFileDecoder(controllerState: ControllerRef): Decoder[NesState] = for {
+  private def nesFileDecoder(controllerRef: ControllerRef): Decoder[NesState] = for {
     header <- ignore(4 * 8) :: uint8 :: uint8 :: uint8 :: uint8 :: uint8 :: ignore(7 * 8)
     _ :: prgRomBanks :: chrRomBanks :: flags6 :: flags7 :: prgRamBanks :: _ :: HNil = header
     prgRamSize = if (prgRamBanks) prgRamBanks * 0x2000 else 0x2000
@@ -108,14 +108,21 @@ object NesState {
         Decoder.point(Mapper001(prgRom, chrMem, prgRamSize))
       else
         Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
-  } yield NesState.initial(mirroring, cartridge, controllerState)
+  } yield NesState.initial(mirroring, cartridge, controllerRef)
 
-  def fromFile[F[_] : Sync : ContextShift](file: Path, controllerState: ControllerRef): F[List[NesState]] =
+  def fromFile[F[_] : Sync : ContextShift](file: Path, controllerRef: ControllerRef): F[List[NesState]] =
+    Stream.resource(Blocker[F]).flatMap { blocker =>
+      io.file
+        .readAll[F](file, blocker, 4096)
+        .through(StreamDecoder.once(nesFileDecoder(controllerRef)).toPipeByte)
+    }.compile.toList
+
+  def fromFile2[F[_]: Sync: ContextShift](file: Path, controllerState: ControllerRef): Stream[F, NesState] =
     Stream.resource(Blocker[F]).flatMap { blocker =>
       io.file
         .readAll[F](file, blocker, 4096)
         .through(StreamDecoder.once(nesFileDecoder(controllerState)).toPipeByte)
-    }.compile.toList
+    }
 
 }
 

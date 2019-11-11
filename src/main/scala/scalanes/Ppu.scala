@@ -24,7 +24,7 @@ case class PpuState(nametables: Vector[UInt8],
                     cycle: Int,
                     bgRenderingState: BgRenderingState,
                     spritesState: SpritesState,
-                    pixels: Vector[Vector[Rgb]]) {
+                    pixels: Array[Int]) {
 
   def reset: PpuState =
     copy(registers = registers.reset, scanline = 0, cycle = 0, bgRenderingState = bgRenderingState.reset)
@@ -40,7 +40,7 @@ object PpuState {
   val cycle: Lens[PpuState, Int]                         = GenLens[PpuState](_.cycle)
   val bgRenderingState: Lens[PpuState, BgRenderingState] = GenLens[PpuState](_.bgRenderingState)
   val spritesState: Lens[PpuState, SpritesState]         = GenLens[PpuState](_.spritesState)
-  val pixels: Lens[PpuState, Vector[Vector[Rgb]]]        = GenLens[PpuState](_.pixels)
+  val pixels: Lens[PpuState, Array[Int]]                 = GenLens[PpuState](_.pixels)
 
   def initial(mirroring: Mirroring): PpuState = PpuState(
     Vector.fill(2 * 1024)(0x00),
@@ -51,7 +51,7 @@ object PpuState {
     0,
     BgRenderingState.initial,
     SpritesState.initial,
-    Vector.fill(240, 256)(Rgb.initial)
+    Array.fill(240 * 2 * 256 * 2)(0)
   )
 }
 
@@ -318,7 +318,9 @@ object Mirroring extends Enumeration {
   val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
 }
 
-case class Rgb(r: Int, g: Int, b: Int)
+case class Rgb(r: Int, g: Int, b: Int) {
+  def asInt: Int = (b & 0xFF) | ((g & 0xFF) << 8) | ((r & 0xFF) << 16) | (0xFF << 24)
+}
 
 object Rgb {
   val palette: Vector[Rgb] = Vector(
@@ -723,15 +725,17 @@ object Ppu {
       else
         (bgPixel, bgPalette)
 
-      val color = getColor(palette, pixel)(s)
+      val color = getColor(palette, pixel)(s).asInt
 
       val verifiedSpriteZeroHit = spriteZeroHit && isRendering(s) && s.cycle < 258 && x != 255 &&
         ((s.registers.mask.renderSpritesLeft || s.registers.mask.renderBackgroundLeft) && x > 7)
 
-      (
-        (PpuState.pixels composeOptional index(scanline) composeOptional index(x)).set(color) andThen
-        setSpriteZeroHit(verifiedSpriteZeroHit)
-      )(s)
+      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 0 + 2 * x + 0) = color
+      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 0 + 2 * x + 1) = color
+      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 0) = color
+      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 1) = color
+
+      setSpriteZeroHit(verifiedSpriteZeroHit)(s)
     } else
       s
   }

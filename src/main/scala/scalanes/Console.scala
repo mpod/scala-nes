@@ -3,6 +3,7 @@ import java.nio.file.{Path, Paths}
 
 import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, IO}
+import fs2.Stream
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
 import scalafx.application.JFXApp.PrimaryStage
@@ -10,6 +11,7 @@ import scalafx.beans.binding.{Bindings, ObjectBinding, StringBinding}
 import scalafx.beans.property.ObjectProperty
 import scalafx.scene.Scene
 import scalafx.scene.canvas.Canvas
+import scalafx.scene.image.PixelFormat
 import scalafx.scene.layout.{HBox, Region, VBox}
 import scalafx.scene.paint.Color
 import scalafx.scene.text.Text
@@ -20,15 +22,30 @@ object Console extends JFXApp {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
+  val controller: Ref[IO, UInt8] = Ref.of[IO, UInt8](0x00).unsafeRunSync()
   val nestestRom: Path = Paths.get(getClass.getResource("/nestest.nes").toURI)
-  val (controller, loaded) = (
-    for {
-      controller <- Ref.of[IO, UInt8](0x00)
-      loaded <- NesState.fromFile[IO](Paths.get("screen.nes"), controller)
-    } yield (controller, loaded)
-  ).unsafeRunSync()
-  require(loaded.size == 1)
-  val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).unsafeRunSync())
+  val nesState: ObjectProperty[NesState] = ObjectProperty(
+    NesState.fromFile2[IO](Paths.get("nestest.nes"), controller).take(1).compile.toVector.unsafeRunSync().head
+  )
+
+  val screenCanvas = new Canvas(256 * 2, 240 * 2)
+  var i = 0
+
+  val loop: Stream[IO, NesState] = for {
+    loaded <- NesState.fromFile2[IO](Paths.get("nestest.nes"), controller).take(1)
+    initial <- Stream.eval(NesState.reset.runS(loaded))
+    next <- Stream.unfoldEval(initial) { s =>
+      println(i)
+      i += 1
+      NesState.executeFrame.runS(s).map(nextState => Option(nextState, nextState))
+    }
+    _ <- Stream.eval(IO.async[Unit] { cb =>
+      drawScreen(next, screenCanvas)
+      cb(Right(()))
+    })
+  } yield next
+
+  loop.drain.compile.toVector.unsafeRunAsyncAndForget()
 
   def ramInfo(s: NesState, address: Int, rows: Int, columns: Int): String =
     (0 until rows).map { i =>
@@ -123,36 +140,20 @@ object Console extends JFXApp {
 
   def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
     val gc = canvas.graphicsContext2D
+    val pw = gc.pixelWriter
+    val pixelFormat = PixelFormat.getIntArgbInstance
 
-    for {
-      (row, i) <- nesState.ppuState.pixels.zipWithIndex
-      (color, j) <- row.zipWithIndex
-    } yield {
-      gc.fill = Color.rgb(color.r, color.g, color.b)
-      gc.fillRect(2 * j, 2 * i, 2, 2)
-    }
+    pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, nesState.ppuState.pixels, 0, 256 * 2)
   }
 
-  val screenCanvas = new Canvas(256 * 2, 240 * 2)
   val patternsLeftCanvas = new Canvas(16 * 8, 16 * 8)
   val patternsRightCanvas = new Canvas(16 * 8, 16 * 8)
   nesState.onChange((_, _, state: NesState) => {
     drawPatterns(state, 0, 0, patternsLeftCanvas)
     drawPatterns(state, 1, 0, patternsRightCanvas)
-    drawScreen(state, screenCanvas)
   })
   drawPatterns(nesState.value, 0, 0, patternsLeftCanvas)
   drawPatterns(nesState.value, 1, 0, patternsRightCanvas)
-  drawScreen(nesState.value, screenCanvas)
-
-  val screen: ObjectBinding[Vector[Vector[Color]]] = Bindings.createObjectBinding(
-    () => {
-      Option(nesState.value)
-        .map(_.ppuState.pixels).map(_.map(_.map(c => Color.rgb(c.r, c.g, c.b))))
-        .getOrElse(Vector.empty)
-    },
-    nesState
-  )
 
   val hSpacer = new Region
   hSpacer.setPrefWidth(16)
