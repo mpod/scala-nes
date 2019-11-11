@@ -2,6 +2,7 @@ package scalanes
 
 import java.nio.file.Paths
 
+import cats.effect.concurrent.Ref
 import cats.effect.{Blocker, ContextShift, IO}
 import fs2.{Pure, Stream, io, text}
 import org.scalatest.Matchers
@@ -30,7 +31,12 @@ class ScalaNesTest extends AnyFlatSpec with Matchers {
     val nestestRom = Paths.get(getClass.getResource("/nestest.nes").toURI)
     val nestestLog = Paths.get(getClass.getResource("/nestest.log").toURI)
 
-    val decodedNesRom = NesState.fromFile[IO](nestestRom).unsafeRunSync()
+    val decodedNesRom = (
+      for {
+        controller <- Ref.of[IO, UInt8](0x00)
+        loaded <- NesState.fromFile[IO](nestestRom, controller)
+      } yield loaded
+    ).unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState = NesState.reset.flatMap(_ => Cpu.setPc(0xC000)).runS(decodedNesRom.head).unsafeRunSync()
 

@@ -1,6 +1,7 @@
 package scalanes
 import java.nio.file.{Path, Paths}
 
+import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, IO}
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
@@ -20,7 +21,12 @@ object Console extends JFXApp {
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   val nestestRom: Path = Paths.get(getClass.getResource("/nestest.nes").toURI)
-  val loaded: List[NesState] = NesState.fromFile[IO](Paths.get("nestest.nes")).unsafeRunSync()
+  val (controller, loaded) = (
+    for {
+      controller <- Ref.of[IO, UInt8](0x00)
+      loaded <- NesState.fromFile[IO](Paths.get("screen.nes"), controller)
+    } yield (controller, loaded)
+  ).unsafeRunSync()
   require(loaded.size == 1)
   val nesState: ObjectProperty[NesState] = ObjectProperty(NesState.reset.runS(loaded.head).unsafeRunSync())
 
@@ -158,15 +164,32 @@ object Console extends JFXApp {
     title = "ScalaNES console"
     scene = new Scene(600, 400) {
       onKeyPressed = { event =>
-        if (event.getCode == KeyCode.SPACE) {
-          val start = System.currentTimeMillis()
-          nesState.value = NesState.executeFrame.runS(nesState.value).unsafeRunSync()
-          val duration = System.currentTimeMillis() - start
-          println(s"Frame generated in ${duration / 1000}s ${duration % 1000}ms")
-        } else if (event.getCode == KeyCode.N) {
-          nesState.value = NesState.clock.runS(nesState.value).unsafeRunSync()
-        } else if (event.getCode == KeyCode.R)
-          nesState.value = Cpu.reset.runS(nesState.value).unsafeRunSync()
+        event.getCode match {
+          case KeyCode.X =>
+            controller.modify(x => (x | 0x80, x)).unsafeRunSync()  // A
+          case KeyCode.Z =>
+            controller.modify(x => (x | 0x40, x)).unsafeRunSync()  // B
+          case KeyCode.A =>
+            controller.modify(x => (x | 0x20, x)).unsafeRunSync()  // Select
+          case KeyCode.S =>
+            controller.modify(x => (x | 0x10, x)).unsafeRunSync()  // Start
+          case KeyCode.UP =>
+            controller.modify(x => (x | 0x08, x)).unsafeRunSync()  // Up
+          case KeyCode.DOWN =>
+            controller.modify(x => (x | 0x04, x)).unsafeRunSync()  // Down
+          case KeyCode.LEFT =>
+            controller.modify(x => (x | 0x02, x)).unsafeRunSync()  // Left
+          case KeyCode.RIGHT =>
+            controller.modify(x => (x | 0x01, x)).unsafeRunSync()  // Right
+          case KeyCode.SPACE =>
+            val start = System.currentTimeMillis()
+            nesState.value = NesState.executeFrame.runS(nesState.value).unsafeRunSync()
+            val duration = System.currentTimeMillis() - start
+            println(s"Frame generated in ${duration / 1000}s ${duration % 1000}ms")
+          case KeyCode.R =>
+            nesState.value = Cpu.reset.runS(nesState.value).unsafeRunSync()
+          case _ =>
+        }
       }
       root = new HBox {
         style =

@@ -19,7 +19,8 @@ case class NesState(ram: Vector[UInt8],
                     cpuState: CpuState,
                     ppuState: PpuState,
                     cartridge: Cartridge,
-                    counter: Long) {
+                    counter: Long,
+                    controllerState: ControllerState) {
   def isFrameComplete: Boolean = ppuState.scanline == -1 && ppuState.cycle == 0
 }
 
@@ -36,6 +37,7 @@ object NesState {
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
   val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
   val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
+  val controllerState: Lens[NesState, ControllerState] = GenLens[NesState](_.controllerState)
 
   def dummy: State[NesState, Unit] = State.pure(())
 
@@ -67,25 +69,26 @@ object NesState {
   }
 
   val executeFrame: State[NesState, Unit] =
-    (1 until 262 * 340).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
+    (1 until 262 * 340 - 1000).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
 
-  def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
+  def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(
       Vector.fill(0x800)(0x00),
       CpuState.initial,
       PpuState.initial(mirroring),
       cartridge,
-      0
+      0,
+      ControllerState(ref)
     )
 
-  def fromString(program: String): NesState = {
+  def fromString(program: String, controllerState: ControllerRef): NesState = {
     val offset = 0x8000
     val cartridge = Cartridge.fromString(program, offset)
-    val s = initial(Mirroring.Horizontal, cartridge)
+    val s = initial(Mirroring.Horizontal, cartridge, controllerState)
     pc.set(offset)(s)
   }
 
-  private def nesFileDecoder: Decoder[NesState] = for {
+  private def nesFileDecoder(controllerState: ControllerRef): Decoder[NesState] = for {
     header <- ignore(4 * 8) :: uint8 :: uint8 :: uint8 :: uint8 :: uint8 :: ignore(7 * 8)
     _ :: prgRomBanks :: chrRomBanks :: flags6 :: flags7 :: prgRamBanks :: _ :: HNil = header
     prgRamSize = if (prgRamBanks) prgRamBanks * 0x2000 else 0x2000
@@ -105,11 +108,13 @@ object NesState {
         Decoder.point(Mapper001(prgRom, chrMem, prgRamSize))
       else
         Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
-  } yield NesState.initial(mirroring, cartridge)
+  } yield NesState.initial(mirroring, cartridge, controllerState)
 
-  def fromFile[F[_] : Sync : ContextShift](file: Path): F[List[NesState]] =
+  def fromFile[F[_] : Sync : ContextShift](file: Path, controllerState: ControllerRef): F[List[NesState]] =
     Stream.resource(Blocker[F]).flatMap { blocker =>
-      io.file.readAll[F](file, blocker, 4096).through(StreamDecoder.once(nesFileDecoder).toPipeByte)
+      io.file
+        .readAll[F](file, blocker, 4096)
+        .through(StreamDecoder.once(nesFileDecoder(controllerState)).toPipeByte)
     }.compile.toList
 
 }

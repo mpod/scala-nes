@@ -1,6 +1,7 @@
 import cats.Monoid
 import cats.data.{IndexedStateT, StateT}
 import cats.effect.IO
+import cats.effect.concurrent.Ref
 import eu.timepit.refined.W
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.collection.Size
@@ -19,6 +20,8 @@ package object scalanes {
   type UInt16 = Int
 
   type Cartridge = Mapper
+
+  type ControllerRef = Ref[IO, UInt8]
 
   // TODO: Explore later...
   type RAM = Vector[UInt8] Refined Size[Equal[W.`65536`.T]]
