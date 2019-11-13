@@ -69,7 +69,7 @@ object NesState {
   }
 
   val executeFrame: State[NesState, Unit] =
-    (1 until 262 * 340 - 1000).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
+    (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(

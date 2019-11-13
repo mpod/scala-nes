@@ -30,7 +30,6 @@ object Console extends JFXApp {
   }
   val hSpacer = new Region
   val vSpacer = new Region
-  var i = 0
 
   hSpacer.setPrefWidth(16)
   vSpacer.setPrefHeight(16)
@@ -40,9 +39,12 @@ object Console extends JFXApp {
       loaded <- NesState.fromFile2[IO](file, controller).take(1)
       initial <- Stream.eval(NesState.reset.runS(loaded))
       next <- Stream.unfoldEval(initial) { s =>
-        println(i)
-        i += 1
-        NesState.executeFrame.runS(s).map(nextState => Option(nextState, nextState))
+        val start = System.currentTimeMillis()
+        NesState.executeFrame.runS(s).map { nextState =>
+          val diff = System.currentTimeMillis() - start
+          println(s"Frame generated in ${diff / 1000}s and ${diff % 1000}ms")
+          Option(nextState, nextState)
+        }
       }
       _ <- Stream.eval(IO.async[Unit] { cb =>
         drawScreen(next, screenCanvas)

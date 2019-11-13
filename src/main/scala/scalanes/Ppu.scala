@@ -982,7 +982,7 @@ object Ppu {
         State.get
     }
 
-    foreground >> background
+    foreground *> background
   }
 
   def isVerticalBlankStarted: State[NesState, Boolean] =

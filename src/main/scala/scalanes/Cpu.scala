@@ -167,9 +167,9 @@ object Cpu extends LazyLogging {
       Ppu.cpuWrite(address, d)
     else if (address == 0x4014) {                       // OAM DMA
       val page = d << 8
-      incCycles(513) >> (0 until 256).map { oamAddress =>
+      incCycles(513) *> (0 until 256).map { oamAddress =>
         cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
-      }.reduce(_ >> _)
+      }.reduce(_ *> _)
     } else if (address == 0x4016 && (d & 0x01))         // Controller 1
       Controller.writeController1
     else if (address == 0x4017 && (d & 0x01))           // Controller 2
