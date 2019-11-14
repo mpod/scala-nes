@@ -5,7 +5,6 @@ import java.nio.file.Path
 import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, IO}
 import fs2.Stream
-import javafx.collections.ObservableList
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
 import scalafx.application.JFXApp.PrimaryStage
@@ -15,7 +14,6 @@ import scalafx.scene.image.PixelFormat
 import scalafx.scene.layout.{Region, VBox}
 import scalafx.scene.text.Text
 import scalafx.stage.FileChooser
-import scalafx.stage.FileChooser.ExtensionFilter
 
 import scala.concurrent.ExecutionContext
 
@@ -51,6 +49,30 @@ object Console extends JFXApp {
         cb(Right(()))
       })
     } yield next
+
+    loop.drain.compile.toVector.unsafeRunAsyncAndForget()
+  }
+
+  def runNesImagePipeline(file: Path): Unit = {
+    val loop: Stream[IO, NesState] = for {
+      loaded <- NesState.fromFile2[IO](file, controller).take(1)
+      initial <- Stream.eval(NesState.reset.runS(loaded))
+      next1 <- Stream.unfoldEval(initial) { s =>
+        val start = System.currentTimeMillis()
+        NesState.executeFrameCpu.runS(s).map { nextState =>
+          val diff = System.currentTimeMillis() - start
+          println(s"Frame generated in ${diff / 1000}s and ${diff % 1000}ms")
+          Option(nextState, nextState)
+        }
+      }
+      next2 <- Stream.eval {
+        NesState.executeFramePpu.runS(next1)
+      }
+      _ <- Stream.eval(IO.async[Unit] { cb =>
+        drawScreen(next2, screenCanvas)
+        cb(Right(()))
+      })
+    } yield next1
 
     loop.drain.compile.toVector.unsafeRunAsyncAndForget()
   }
@@ -111,7 +133,7 @@ object Console extends JFXApp {
 
   val file: File = fileChooser.showOpenDialog(stage)
   if (file != null) {
-    runNesImage(file.toPath)
+    runNesImagePipeline(file.toPath)
   } else
     System.exit(0)
 }

@@ -3,6 +3,7 @@ package scalanes
 import java.nio.file.Path
 
 import cats.effect.{Blocker, ContextShift, Sync}
+import cats.implicits._
 import fs2.{Stream, io}
 import monocle.Lens
 import monocle.macros.GenLens
@@ -39,7 +40,7 @@ object NesState {
   val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
   val controllerState: Lens[NesState, ControllerState] = GenLens[NesState](_.controllerState)
 
-  def dummy: State[NesState, Unit] = State.pure(())
+  def dummy: State[NesState, NesState] = State.get
 
   def incCounter: State[NesState, Long] = State { s =>
     val updated = NesState.counter.modify(_ + 1)(s)
@@ -56,7 +57,7 @@ object NesState {
     _ <- resetCounter
   } yield ()
 
-  val clock: State[NesState, Unit] = Ppu.clock.flatMap { ns =>
+  val clock: State[NesState, NesState] = Ppu.clock.flatMap { ns =>
     if ((ns.counter % 3) == 1)
       if (Ppu.isNmiReady(ns.ppuState))
         Cpu.clock.flatMap(_ => Cpu.nmi)
@@ -68,8 +69,52 @@ object NesState {
       dummy
   }
 
-  val executeFrame: State[NesState, Unit] =
-    (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s.flatMap(_ => clock))
+  val frameTicks: Seq[(Int, Int, Int)] = {
+    val a = for {
+      scanline <- -1 to 260
+      cycle    <-  0 to 340
+      if scanline != 0 || cycle != 0
+    } yield (scanline, cycle)
+    a.zipWithIndex.map { case ((scanline, cycle), counter) =>
+      (counter, scanline, cycle)
+    }
+  }
+
+  val executeFrameCpu: State[NesState, NesState] =
+    frameTicks.foldLeft(Cpu.clock) { (state, tick) =>
+      val (counter, scanline, cycle) = tick
+      val next = if (counter % 3 == 2)
+        if (scanline == 241 && cycle == 2)
+          state *> State.get.flatMap { ns =>
+            if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
+              Cpu.nmi
+            else
+              dummy
+          } *> Cpu.clock
+        else
+          state *> Cpu.clock
+      else if (scanline == 241 && cycle == 1) {
+        state *> Ppu.setVerticalBlankS(true)
+      } else if (scanline == -1 && cycle == 1) {
+        state *> Ppu.setVerticalBlankS(false)
+      } else
+        state
+      next *> State { ns =>
+        val updated = (
+          NesState.ppuState.modify(Ppu.advanceRenderer) andThen
+            NesState.counter.modify(_ + 1)
+          )(ns)
+        (updated, updated)
+      }
+    }
+
+  def executeFramePpu: State[NesState, NesState] =
+    frameTicks.foldLeft(State.get[NesState]) { (state, _) =>
+      state *> Ppu.clock
+    }
+
+  val executeFrame: State[NesState, NesState] =
+    (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s *> clock)
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(

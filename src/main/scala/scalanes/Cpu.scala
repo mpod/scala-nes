@@ -247,7 +247,7 @@ object Cpu extends LazyLogging {
     _ <- setCycles(7)
   } yield ()
 
-  def nmi: State[NesState, Unit] = for {
+  def nmi: State[NesState, NesState] = for {
     pc <- getPc
     pcHi = (pc >> 8) & 0xFF
     _ <- push(pcHi)
@@ -262,19 +262,23 @@ object Cpu extends LazyLogging {
     hi <- cpuRead(0xFFFA + 1)
     _ <- setPc(asUInt16(hi, lo))
     _ <- setCycles(8)
-  } yield ()
+    s <- State.get
+  } yield s
 
-  val clock: State[NesState, Unit] = State.get.flatMap { ns =>
+  val clock: State[NesState, NesState] = State.get.flatMap { ns =>
     if (ns.cpuState.cycles == 0)
       cpuRead(ns.cpuState.pc).flatMap { opCode =>
         val instr = lookup(opCode)
         State[NesState, Unit] { ns =>
           val updated = (NesState.cycles.set(instr.cycles) andThen NesState.pc.modify(_ + 1))(ns)
           (updated, ())
-        } >> instr.op >> setFlag(CpuFlags.U, value = true)
+        } >> instr.op >> setFlag(CpuFlags.U, value = true).get
       }
     else
-      State.modify(NesState.cycles.modify(_ - 1))
+      State { ns =>
+        val updated = NesState.cycles.modify(_ - 1)(ns)
+        (updated, updated)
+      }
   }
 
   def executeNextInstr: State[NesState, Unit] = for {

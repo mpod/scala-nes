@@ -429,6 +429,11 @@ object Ppu {
     )
   }
 
+  def setVerticalBlankS(d: Boolean): State[NesState, NesState] = State { ns =>
+    val updated = (NesState.ppuState composeLens statusRegister composeLens PpuStatus.verticalBlank).set(d)(ns)
+    (updated, updated)
+  }
+
   def setVerticalBlank(d: Boolean)(s: PpuState): PpuState =
     (statusRegister composeLens PpuStatus.verticalBlank).set(d)(s)
 
