@@ -3,7 +3,7 @@ import java.io.File
 import java.nio.file.Path
 
 import cats.effect.concurrent.Ref
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Timer}
 import fs2.Stream
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
@@ -16,10 +16,12 @@ import scalafx.scene.text.Text
 import scalafx.stage.FileChooser
 
 import scala.concurrent.ExecutionContext
+import scala.language.higherKinds
 
 object Console extends JFXApp {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
 
   val controller: Ref[IO, UInt8] = Ref.of[IO, UInt8](0x00).unsafeRunSync()
   val screenCanvas: Canvas = new Canvas(256 * 2, 240 * 2)
@@ -33,48 +35,68 @@ object Console extends JFXApp {
   vSpacer.setPrefHeight(16)
 
   def runNesImage(file: Path): Unit = {
-    val loop: Stream[IO, NesState] = for {
-      loaded <- NesState.fromFile2[IO](file, controller).take(1)
-      initial <- Stream.eval(NesState.reset.runS(loaded))
-      next <- Stream.unfoldEval(initial) { s =>
-        val start = System.currentTimeMillis()
-        NesState.executeFrame.runS(s).map { nextState =>
-          val diff = System.currentTimeMillis() - start
-          println(s"Frame generated in ${diff / 1000}s and ${diff % 1000}ms")
-          Option(nextState, nextState)
+    var frameStart = System.currentTimeMillis()
+    NesState.fromFile2[IO](file, controller).head.evalMap(NesState.reset.runS)
+      .flatMap { initial =>
+        Stream.unfoldEval(initial) { s =>
+          NesState.executeFrame.runS(s).map { next =>
+            Option(next, next)
+          }
         }
-      }
-      _ <- Stream.eval(IO.async[Unit] { cb =>
+      }.map { next =>
         drawScreen(next, screenCanvas)
-        cb(Right(()))
-      })
-    } yield next
-
-    loop.drain.compile.toVector.unsafeRunAsyncAndForget()
+        val diff = System.currentTimeMillis() - frameStart
+        println(s"Frame generated in $diff ms")
+        frameStart = System.currentTimeMillis()
+        next
+      }
+      .drain
+      .compile
+      .toVector
+      .unsafeRunAsyncAndForget()
   }
 
   def runNesImagePipeline(file: Path): Unit = {
-    val loop: Stream[IO, NesState] = for {
-      loaded <- NesState.fromFile2[IO](file, controller).take(1)
-      initial <- Stream.eval(NesState.reset.runS(loaded))
-      next1 <- Stream.unfoldEval(initial) { s =>
-        val start = System.currentTimeMillis()
-        NesState.executeFrameCpu.runS(s).map { nextState =>
-          val diff = System.currentTimeMillis() - start
-          println(s"Frame generated in ${diff / 1000}s and ${diff % 1000}ms")
-          Option(nextState, nextState)
+    var frameStart = System.currentTimeMillis()
+
+    NesState.fromFile2[IO](file, controller)
+      .head
+      .evalMap(NesState.reset.runS)
+      .flatMap { initial =>
+         Stream.unfoldEval(initial) { s =>
+          val start = System.currentTimeMillis()
+          NesState.executeFrameCpu.runS(s).map { nextState =>
+            val diff = System.currentTimeMillis() - start
+            println(s"CPU frame generated in $diff ms by ${Thread.currentThread().getName}")
+            Option(nextState, nextState)
+          }
         }
       }
-      next2 <- Stream.eval {
-        NesState.executeFramePpu.runS(next1)
+      .parEvalMap(3) { s =>
+        val ppuStart = System.currentTimeMillis()
+        val next = NesState.executeFramePpu
+          .runS(s)
+          .map { s =>
+            val diff = System.currentTimeMillis() - ppuStart
+            println(s"PPU frame generated in $diff ms by ${Thread.currentThread().getName}")
+            s
+          }
+        next
       }
-      _ <- Stream.eval(IO.async[Unit] { cb =>
-        drawScreen(next2, screenCanvas)
-        cb(Right(()))
-      })
-    } yield next1
+      .parEvalMap(1) { s =>
+        IO {
+          drawScreen(s, screenCanvas)
+          val diff = System.currentTimeMillis() - frameStart
+          println(s"Frame generated in $diff ms by ${Thread.currentThread().getName}")
+          frameStart = System.currentTimeMillis()
+          ()
+        }
+      }
+      .drain
+      .compile
+      .toVector
+      .unsafeRunAsyncAndForget()
 
-    loop.drain.compile.toVector.unsafeRunAsyncAndForget()
   }
 
   def drawScreen(nesState: NesState, canvas: Canvas): Unit = {

@@ -69,28 +69,28 @@ object NesState {
       dummy
   }
 
-  val frameTicks: Seq[(Int, Int, Int)] = {
-    val a = for {
-      scanline <- -1 to 260
-      cycle    <-  0 to 340
-      if scanline != 0 || cycle != 0
-    } yield (scanline, cycle)
-    a.zipWithIndex.map { case ((scanline, cycle), counter) =>
+  val frameTicks: Seq[(Int, Int, Int)] =
+    (
+      for {
+        scanline <- -1 to 260
+        cycle    <-  0 to 340
+        if scanline != 0 || cycle != 0
+      } yield (scanline, cycle)
+    ).zipWithIndex.map { case ((scanline, cycle), counter) =>
       (counter, scanline, cycle)
     }
-  }
 
   val executeFrameCpu: State[NesState, NesState] =
     frameTicks.foldLeft(Cpu.clock) { (state, tick) =>
       val (counter, scanline, cycle) = tick
-      val next = if (counter % 3 == 2)
+      if (counter % 3 == 2)
         if (scanline == 241 && cycle == 2)
-          state *> State.get.flatMap { ns =>
+          state.flatMap { ns =>
             if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
-              Cpu.nmi
+              Cpu.nmi *> Cpu.clock
             else
-              dummy
-          } *> Cpu.clock
+              Cpu.clock
+          }
         else
           state *> Cpu.clock
       else if (scanline == 241 && cycle == 1) {
@@ -99,13 +99,6 @@ object NesState {
         state *> Ppu.setVerticalBlankS(false)
       } else
         state
-      next *> State { ns =>
-        val updated = (
-          NesState.ppuState.modify(Ppu.advanceRenderer) andThen
-            NesState.counter.modify(_ + 1)
-          )(ns)
-        (updated, updated)
-      }
     }
 
   def executeFramePpu: State[NesState, NesState] =

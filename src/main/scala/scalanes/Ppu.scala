@@ -27,7 +27,7 @@ case class PpuState(nametables: Vector[UInt8],
                     pixels: Array[Int]) {
 
   def reset: PpuState =
-    copy(registers = registers.reset, scanline = 0, cycle = 0, bgRenderingState = bgRenderingState.reset)
+    copy(registers = registers.reset, scanline = -1, cycle = 0, bgRenderingState = bgRenderingState.reset)
 
 }
 
@@ -711,10 +711,11 @@ object Ppu {
       val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
       val (fgPixel, fgPalette, fgPriority, spriteZeroHit) = if (s.registers.mask.renderSprites) {
         s.spritesState.scanlineOam
-          .filter(e => (x - e.sprite.x) >= 0)
+          .filter(e => (x - e.sprite.x) >= 0 && (x - e.sprite.x) < 8)
           .map { e =>
-            val p0 = if (e.spriteShiftLo & 0x80) 0x01 else 0x00
-            val p1 = if (e.spriteShiftHi & 0x80) 0x02 else 0x00
+            val bitMux = 0x80 >> (x - e.sprite.x)
+            val p0 = if (e.spriteShiftLo & bitMux) 0x01 else 0x00
+            val p1 = if (e.spriteShiftHi & bitMux) 0x02 else 0x00
             val pixel = p1 | p0
             val palette = e.sprite.palette
             val priority = e.sprite.priority
@@ -979,9 +980,6 @@ object Ppu {
 
       case (scanline, 340) if isVisiblePart(scanline) =>
         loadSprites
-
-      case (scanline, cycle) if isFetch(scanline, cycle) && cycle < 258 =>
-        shiftSprites
 
       case _ =>
         State.get

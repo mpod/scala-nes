@@ -272,7 +272,7 @@ object Cpu extends LazyLogging {
         State[NesState, Unit] { ns =>
           val updated = (NesState.cycles.set(instr.cycles) andThen NesState.pc.modify(_ + 1))(ns)
           (updated, ())
-        } >> instr.op >> setFlag(CpuFlags.U, value = true).get
+        } *> instr.op *> setFlag(CpuFlags.U, value = true).get
       }
     else
       State { ns =>
@@ -411,20 +411,26 @@ object Cpu extends LazyLogging {
 
   def continue: Op = incPc.map(_ => Unit)
 
-  def BCC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.C))(
-    ifTrue = continue,
-    ifFalse = branch
-  )
+  val BCC: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.C))
+      continue
+    else
+      branch
+  }
 
-  def BCS: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.C))(
-    ifTrue = branch,
-    ifFalse = continue
-  )
+  val BCS: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.C))
+      branch
+    else
+      continue
+  }
 
-  def BEQ: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
-    ifTrue = branch,
-    ifFalse = continue
-  )
+  val BEQ: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.Z))
+      branch
+    else
+      continue
+  }
 
   def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val temp = cpuState.a & d
@@ -436,20 +442,26 @@ object Cpu extends LazyLogging {
     cpuState.copy(status = status)
   }
 
-  def BMI: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.N))(
-    ifTrue = branch,
-    ifFalse = continue
-  )
+  val BMI: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.N))
+      branch
+    else
+      continue
+  }
 
-  def BNE: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.Z))(
-    ifTrue = continue,
-    ifFalse = branch
-  )
+  val BNE: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.Z))
+      continue
+    else
+      branch
+  }
 
-  def BPL: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.N))(
-    ifTrue = continue,
-    ifFalse = branch
-  )
+  val BPL: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.N))
+      continue
+    else
+      branch
+  }
 
   def BRK: Op = for {
     pc1 <- incPc
@@ -466,15 +478,19 @@ object Cpu extends LazyLogging {
     _ <- setPc(pc2)
   } yield ()
 
-  def BVC: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.V))(
-    ifTrue = continue,
-    ifFalse = branch
-  )
+  val BVC: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.V))
+      continue
+    else
+      branch
+  }
 
-  def BVS: Op = Monad[State[NesState, *]].ifM(getFlag(CpuFlags.V))(
-    ifTrue = branch,
-    ifFalse = continue
-  )
+  val BVS: Op = State.get.flatMap { ns =>
+    if (ns.cpuState.getFlag(CpuFlags.V))
+      branch
+    else
+      continue
+  }
 
   def CLC: Op = setFlag(CpuFlags.C, value = false)
 
