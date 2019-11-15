@@ -16,6 +16,7 @@ import scalafx.scene.text.Text
 import scalafx.stage.FileChooser
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 import scala.language.higherKinds
 
 object Console extends JFXApp {
@@ -72,7 +73,9 @@ object Console extends JFXApp {
           }
         }
       }
-      .parEvalMap(3) { s =>
+      // CPU is currently faster, so skip some frames if needed
+      .debounce(30.millisecond)
+      .parEvalMap(6) { s =>
         val ppuStart = System.currentTimeMillis()
         val next = NesState.executeFramePpu
           .runS(s)
@@ -83,6 +86,7 @@ object Console extends JFXApp {
           }
         next
       }
+      .metered(20.millisecond)
       .parEvalMap(1) { s =>
         IO {
           drawScreen(s, screenCanvas)

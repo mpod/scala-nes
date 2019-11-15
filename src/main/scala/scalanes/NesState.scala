@@ -81,30 +81,36 @@ object NesState {
     }
 
   val executeFrameCpu: State[NesState, NesState] =
-    frameTicks.foldLeft(Cpu.clock) { (state, tick) =>
-      val (counter, scanline, cycle) = tick
-      if (counter % 3 == 2)
-        if (scanline == 241 && cycle == 2)
-          state.flatMap { ns =>
-            if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
-              Cpu.nmi *> Cpu.clock
-            else
-              Cpu.clock
-          }
-        else
-          state *> Cpu.clock
-      else if (scanline == 241 && cycle == 1) {
-        state *> Ppu.setVerticalBlankS(true)
-      } else if (scanline == -1 && cycle == 1) {
-        state *> Ppu.setVerticalBlankS(false)
-      } else
-        state
-    }
+    frameTicks
+      // Assumption is that CPU spend most of the time on waiting for vertical blank period
+      .filterNot { case (_, scanline, _) => scanline >= 0 && scanline < 100 }
+      .foldLeft(Cpu.clock) { (state, tick) =>
+        val (counter, scanline, cycle) = tick
+        if (counter % 3 == 2)
+          if (scanline == 241 && cycle == 2)
+            state.flatMap { ns =>
+              if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
+                Cpu.nmi *> Cpu.clock
+              else
+                Cpu.clock
+            }
+          else
+            state *> Cpu.clock
+        else if (scanline == 241 && cycle == 1) {
+          state *> Ppu.setVerticalBlankS(true)
+        } else if (scanline == -1 && cycle == 1) {
+          state *> Ppu.setVerticalBlankS(false)
+        } else
+          state
+      }
 
   def executeFramePpu: State[NesState, NesState] =
-    frameTicks.foldLeft(State.get[NesState]) { (state, _) =>
-      state *> Ppu.clock
-    }
+    frameTicks
+      // Skip PPU useless cycles
+      .filterNot { case (_, scanline, _) => scanline >= 240 && scanline <= 260 }
+      .foldLeft(State.get[NesState]) { (state, _) =>
+        state *> Ppu.clock
+      }
 
   val executeFrame: State[NesState, NesState] =
     (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s *> clock)
