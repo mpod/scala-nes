@@ -34,7 +34,7 @@ class ScalaNesTest extends AnyFlatSpec with Matchers {
     val decodedNesRom = (
       for {
         controller <- Ref.of[IO, UInt8](0x00)
-        loaded <- NesState.fromFile[IO](nestestRom, controller)
+        loaded <- NesState.fromFile[IO](nestestRom, controller).compile.toList
       } yield loaded
     ).unsafeRunSync()
     decodedNesRom should have size 1

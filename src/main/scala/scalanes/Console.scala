@@ -37,7 +37,7 @@ object Console extends JFXApp {
 
   def runNesImage(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
-    NesState.fromFile2[IO](file, controller).head.evalMap(NesState.reset.runS)
+    NesState.fromFile[IO](file, controller).head.evalMap(NesState.reset.runS)
       .flatMap { initial =>
         Stream.unfoldEval(initial) { s =>
           NesState.executeFrame.runS(s).map { next =>
@@ -60,7 +60,7 @@ object Console extends JFXApp {
   def runNesImagePipeline(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
 
-    NesState.fromFile2[IO](file, controller)
+    NesState.fromFile[IO](file, controller)
       .head
       .evalMap(NesState.reset.runS)
       .flatMap { initial =>
@@ -100,7 +100,6 @@ object Console extends JFXApp {
       .compile
       .toVector
       .unsafeRunAsyncAndForget()
-
   }
 
   def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
@@ -113,7 +112,7 @@ object Console extends JFXApp {
 
   stage = new PrimaryStage {
     title = "ScalaNES console"
-    scene = new Scene(600, 400) {
+    scene = new Scene(544, 650) {
       onKeyPressed = { event =>
         event.getCode match {
           case KeyCode.X =>
@@ -146,7 +145,8 @@ object Console extends JFXApp {
           vSpacer,
           new Text {
             text =
-              """X - A                       Up
+              """
+                |X - A                       Up
                 |Z - B                Left        Right
                 |A - Select                 Down
                 |S - Start
@@ -158,8 +158,8 @@ object Console extends JFXApp {
   }
 
   val file: File = fileChooser.showOpenDialog(stage)
-  if (file != null) {
+  if (file != null)
     runNesImagePipeline(file.toPath)
-  } else
+  else
     System.exit(0)
 }

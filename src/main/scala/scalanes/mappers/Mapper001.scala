@@ -1,6 +1,5 @@
 package scalanes.mappers
 
-import scalanes.Mirroring.Mirroring
 import scalanes._
 
 /**
@@ -55,7 +54,7 @@ case class Mapper001(prgRom: Vector[UInt8],
 
 object Mapper001 {
 
-  def apply(prgRom: Vector[UInt8], chrRom: Vector[UInt8], prgRamSize: Int) = {
+  def apply(prgRom: Vector[UInt8], chrRom: Vector[UInt8], prgRamSize: Int): Mapper001 = {
     val registers = Vector(0x0C, 0x00, 0x00, 0x00)
     new Mapper001(
       prgRom,
@@ -67,18 +66,6 @@ object Mapper001 {
       0x00,
       0
     )
-  }
-
-  private def extractMirroring(registers: Vector[UInt8]): Mirroring = {
-    val mode = registers(0) & 0x03
-    if (mode == 0)
-      Mirroring.OneScreenLowerBank
-    else if (mode == 1)
-      Mirroring.OneScreenUpperBank
-    else if (mode == 2)
-      Mirroring.Vertical
-    else
-      Mirroring.Horizontal
   }
 
   private def createPrgBankMaps(registers: Vector[UInt8]): List[BankMap] = {
