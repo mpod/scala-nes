@@ -4,9 +4,11 @@ libraries like Cats, Cats Effect, FS2, and Monocle.
 
 ## Screenshots
 
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="258"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="258"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="258"/>
+<p float="left">
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="256"/>
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="256"/>
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="256"/>
+</p>
 
 ## Running
 Make sure to have Java and SBT in your PATH environment variable.
