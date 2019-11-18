@@ -84,7 +84,7 @@ object NesState {
       .filterNot { case (_, scanline, _) => scanline >= 0 && scanline < 100 }
       .foldLeft(Cpu.clock) { (state, tick) =>
         val (counter, scanline, cycle) = tick
-        if (counter % 3 == 2)
+        if (counter != 0 && counter % 3 == 0)
           if (scanline == 241 && cycle == 2)
             state.flatMap { ns =>
               if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
@@ -94,6 +94,13 @@ object NesState {
             }
           else
             state *> Cpu.clock
+        else if (scanline == 241 && cycle == 2)
+          state.flatMap { ns =>
+            if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
+              Cpu.nmi
+            else
+              State.get
+          }
         else if (scanline == 241 && cycle == 1) {
           state *> Ppu.setVerticalBlankS(true)
         } else if (scanline == -1 && cycle == 1) {

@@ -701,7 +701,7 @@ object Ppu {
         val pixel = p1 | p0
         val pal0  = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
         val pal1  = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
-        val palette = pal1 | pal0
+        val palette = if (pixel) pal1 | pal0 else 0x00
         (pixel, palette)
       } else
         (0x00, 0x00)
@@ -739,7 +739,10 @@ object Ppu {
       s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 0) = color
       s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 1) = color
 
-      setSpriteZeroHit(verifiedSpriteZeroHit)(s)
+      if (verifiedSpriteZeroHit)
+        setSpriteZeroHit(verifiedSpriteZeroHit)(s)
+      else
+        s
     } else
       s
   }

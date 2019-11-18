@@ -8,6 +8,7 @@ import fs2.Stream
 import javafx.scene.input.KeyCode
 import scalafx.application.JFXApp
 import scalafx.application.JFXApp.PrimaryStage
+import scalafx.geometry.Pos
 import scalafx.scene.Scene
 import scalafx.scene.canvas.Canvas
 import scalafx.scene.image.PixelFormat
@@ -69,6 +70,7 @@ object Console extends JFXApp {
           NesState.executeFrameCpu.runS(s).map { nextState =>
             val diff = System.currentTimeMillis() - start
             println(s"CPU frame generated in $diff ms by ${Thread.currentThread().getName}")
+            println("CPU", hex(nextState.ppuState.registers.loopy.t.asUInt16, 4))
             Option(nextState, nextState)
           }
         }
@@ -112,7 +114,7 @@ object Console extends JFXApp {
 
   stage = new PrimaryStage {
     title = "ScalaNES console"
-    scene = new Scene(544, 650) {
+    scene = new Scene(256 * 2, 240 * 2 + 4 * 12) {
       onKeyPressed = { event =>
         event.getCode match {
           case KeyCode.X =>
@@ -135,18 +137,16 @@ object Console extends JFXApp {
         }
       }
       root = new VBox {
+        alignment = Pos.Center
         style =
-          """-fx-font-size: 16pt;
+          """-fx-font-size: 12px;
             |-fx-font-family: monospace;
-            |-fx-padding: 1em;
             |""".stripMargin
         children = Seq(
           screenCanvas,
-          vSpacer,
           new Text {
             text =
-              """
-                |X - A                       Up
+              """X - A                       Up
                 |Z - B                Left        Right
                 |A - Select                 Down
                 |S - Start
@@ -159,7 +159,7 @@ object Console extends JFXApp {
 
   val file: File = fileChooser.showOpenDialog(stage)
   if (file != null)
-    runNesImagePipeline(file.toPath)
+    runNesImage(file.toPath)
   else
     System.exit(0)
 }
