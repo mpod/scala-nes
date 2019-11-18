@@ -5,9 +5,9 @@ libraries like Cats, Cats Effect, FS2, and Monocle.
 ## Screenshots
 
 <p float="left">
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="256"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="256"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="256"/>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="256"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="256"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="256"/></kbd>
 </p>
 
 ## Running
