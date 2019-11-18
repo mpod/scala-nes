@@ -4,9 +4,9 @@ libraries like Cats, Cats Effect, FS2, and Monocle.
 
 ## Screenshots
 
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png"/>
-<img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png"/>
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="258"/>
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="258"/>
+<img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="258"/>
 
 ## Running
 Make sure to have Java and SBT in your PATH environment variable.
@@ -15,5 +15,5 @@ Make sure to have Java and SBT in your PATH environment variable.
     
 ## Issues
 Current version is extremely slow, it generates around 10 frames per second. Bad performance is caused by functional 
-programming approach, which generates too many intermediate state objects. However, there are many ideas for 
-optimisation.
+programming approach, which generates too many intermediate state objects. However, there is plenty of room for 
+improvements.
