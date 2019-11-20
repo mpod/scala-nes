@@ -107,12 +107,18 @@ object Console extends JFXApp {
   }
 
   def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
+    def asInt(rgb: Rgb): Int = (rgb.b & 0xFF) | ((rgb.g & 0xFF) << 8) | ((rgb.r & 0xFF) << 16) | (0xFF << 24)
     val gc = canvas.graphicsContext2D
     val pw = gc.pixelWriter
     val pixelFormat = PixelFormat.getIntArgbInstance
-    val pixels = nesState.ppuState.pixels.map(_.asInt).toArray
-
-    pw.setPixels(0, 0, 256, 240, pixelFormat, pixels, 0, 256)
+    val pixelArray = Array.fill(240 * 2 * 256 * 2)(0)
+    val pixelVector = nesState.ppuState.pixels
+    for (i <- pixelArray.indices) {
+      val row = (i / (256 * 2)) / 2
+      val col = (i % (256 * 2)) / 2
+      pixelArray(i) = asInt(pixelVector(row * 256 + col))
+    }
+    pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, pixelArray, 0, 256 * 2)
   }
 
   stage = new PrimaryStage {

@@ -263,9 +263,7 @@ object Mirroring extends Enumeration {
   val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
 }
 
-case class Rgb(r: Int, g: Int, b: Int) {
-  def asInt: Int = (b & 0xFF) | ((g & 0xFF) << 8) | ((r & 0xFF) << 16) | (0xFF << 24)
-}
+case class Rgb(r: Int, g: Int, b: Int)
 
 object Rgb {
   val palette: Vector[Rgb] = Vector(
@@ -765,8 +763,7 @@ object Ppu {
   }
 
   def updatePixels(x: Int, y: Int, tileHi: UInt8, tileLo: UInt8, tileAttr: UInt2)(ppu: PpuState): PpuState = {
-    println(x, y)
-    if (y >= 0 && y < (240 - 8) && x >= 0 && x < (256 - 8)) {
+    if (y >= 0 && y <= 239 && x >= 0 && x <= 249) {
       val sprites = ppu.spritesState.scanlineOam.filter(e => e.sprite.x >= x && e.sprite.x < (x + 8))
       val startCol = if (x == 0) ppu.registers.loopy.x else 0
       val (pixels, spriteZeroHit) = (startCol until 8).foldLeft((ppu.pixels, false)) { case ((pixels, hit), col) =>
@@ -790,7 +787,10 @@ object Ppu {
       scanline >= -1 && scanline < 240
 
     def isFetch(scanline: Int, cycle: Int): Boolean =
-      isVisiblePart(scanline) && ((cycle >= 1 && cycle < 258) || (cycle >= 321 && cycle < 338))
+      isVisiblePart(scanline) && (cycle >= 1 && cycle < 257)
+
+    def isDrawing(scanline: Int, cycle: Int): Boolean =
+      isVisiblePart(scanline) && cycle >= 1 && cycle < 257
 
     def modifyState(f: PpuState => PpuState): State[NesState, NesState] = State { ns =>
       val updated = NesState.ppuState.modify(f)(ns)
@@ -811,7 +811,7 @@ object Ppu {
           clearScanlineOam
         )
 
-      case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 1) =>
+      case (scanline, cycle) if isDrawing(scanline, cycle) && (cycle % 8 == 1) =>
         val v = getLoopyV(ppu)
 
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
@@ -819,7 +819,7 @@ object Ppu {
 
         val attributeAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
         val shift = (if (v.coarseY & 0x02) 4 else 0) + (if (v.coarseX & 0x02) 2 else 0)
-        val attr = (readNametables(attributeAddress)(ppu) >> shift) & 0x03
+        val tileAttr = (readNametables(attributeAddress)(ppu) >> shift) & 0x03
 
         val tileAddress = ppu.registers.ctrl.backgroundTableAddress.address + (tileId << 4) + v.fineY
         val tile = for {
@@ -827,23 +827,30 @@ object Ppu {
           tileHi <- ppuRead(tileAddress + 8)
         } yield (tileHi, tileLo)
 
+        println(y, x, tileId, tileAttr)
+
         tile.transform { case (ns, (tileLo, tileHi)) =>
           val updated = NesState.ppuState.modify(
-            updatePixels(x, y, tileHi, tileLo, attr) _ andThen
-            incScrollX andThen
-            (if (cycle == 256) incScrollY else identity)
+            updatePixels(x, y, tileHi, tileLo, tileAttr)
           )(ns)
           (updated, updated)
         }
+
+      case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 0) =>
+        val update = if (cycle == 256) incScrollY _ else incScrollX _
+        modifyState(update)
+
+      case (scanline, cycle) if isVisiblePart(scanline) && cycle == 257 =>
+        modifyState(transferAddressX)
+
+      case (scanline, cycle) if isVisiblePart(scanline) && cycle == 258 =>
+        evaluateSprites(scanline, cycle)
 
       case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
         modifyState(transferAddressY)
 
       case (241, 1) =>
         modifyState(setVerticalBlank(true))
-
-      case (scanline, 257) if isVisiblePart(scanline) =>
-        evaluateSprites(scanline, cycle)
 
       case (scanline, 340) if isVisiblePart(scanline) =>
         loadSprites(scanline, cycle)
