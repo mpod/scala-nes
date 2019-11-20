@@ -721,15 +721,19 @@ object Ppu {
   private def modifyNesState(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
 
-  private def pixel(col: Int,
+  private def pixel(x: Int,
                     tileHi: UInt8,
                     tileLo: UInt8,
                     tileAttr: UInt2,
                     sprites: Vector[ScanlineOamEntry]
                    )(ppu: PpuState): (Rgb, Boolean) = {
 
+    val fineX = ppu.registers.loopy.x
     val (bgPixel, bgPalette) = if (ppu.registers.mask.renderBackground) {
-      val bitSel  = 0x80 >> col
+      val bitSel  = if (x >= (8 - fineX))
+        0x80 >> (math.abs(x - (8 - fineX)) % 8)
+      else
+        0x80 >> (fineX + x)
       val p0      = if (tileLo & bitSel) 0x01 else 0x00
       val p1      = if (tileHi & bitSel) 0x02 else 0x00
       val pixel   = p1 | p0
@@ -741,9 +745,9 @@ object Ppu {
     val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
     val (fgPixel, fgPalette, fgPriority, spriteZeroHit) = if (ppu.registers.mask.renderSprites) {
       sprites.map { e =>
-          val bitMux = 0x80 >> col
-          val p0     = if (e.spriteLo & bitMux) 0x01 else 0x00
-          val p1     = if (e.spriteHi & bitMux) 0x02 else 0x00
+          val bitSel = 0x80 >> (x - e.sprite.x)
+          val p0     = if (e.spriteLo & bitSel) 0x01 else 0x00
+          val p1     = if (e.spriteHi & bitSel) 0x02 else 0x00
           val pixel  = p1 | p0
           (pixel, e.sprite.palette, e.sprite.priority, e.isSpriteZero)
         }
@@ -762,18 +766,19 @@ object Ppu {
     (color, spriteZeroHit)
   }
 
-  def updatePixels(x: Int, y: Int, tileHi: UInt8, tileLo: UInt8, tileAttr: UInt2)(ppu: PpuState): PpuState = {
-    if (y >= 0 && y <= 239 && x >= 0 && x <= 249) {
-      val sprites = ppu.spritesState.scanlineOam.filter(e => e.sprite.x >= x && e.sprite.x < (x + 8))
-      val startCol = if (x == 0) ppu.registers.loopy.x else 0
-      val (pixels, spriteZeroHit) = (startCol until 8).foldLeft((ppu.pixels, false)) { case ((pixels, hit), col) =>
-        val pixelSprites = sprites.filter(e => (x + col) >= e.sprite.x && (x + col) < (e.sprite.x + 8))
-        val (color, possibleSpriteZeroHit) = pixel(col, tileHi, tileLo, tileAttr, pixelSprites)(ppu)
+  def updatePixels(x0: Int, y: Int, tileHi: UInt8, tileLo: UInt8, tileAttr: UInt2)(ppu: PpuState): PpuState = {
+    if (y >= 0 && y < 240 && x0 >= 0 && x0 < 256) {
+      val startCol = if (x0 == 0) ppu.registers.loopy.x else 0
+      val endCol = math.min(8, 256 - x0)
+      val (pixels, spriteZeroHit) = (startCol until endCol).foldLeft((ppu.pixels, false)) { case ((pixels, hit), col) =>
+        val x = x0 + (col - startCol)
+        val pixelSprites = ppu.spritesState.scanlineOam.filter(e => x >= e.sprite.x && x < (e.sprite.x + 8))
+        val (color, possibleSpriteZeroHit) = pixel(x, tileHi, tileLo, tileAttr, pixelSprites)(ppu)
 
         val spriteZeroHit = possibleSpriteZeroHit && isRendering(ppu) && y < 258 && x != 255 &&
           ((ppu.registers.mask.renderSpritesLeft || ppu.registers.mask.renderBackgroundLeft) && x > 7)
 
-        (pixels.updated(y * 256 + x + (col - startCol), color), hit || spriteZeroHit)
+        (pixels.updated(y * 256 + x, color), hit || spriteZeroHit)
       }
 
       val update = PpuState.pixels.set(pixels) andThen (if (spriteZeroHit) setSpriteZeroHit else identity)
@@ -800,6 +805,7 @@ object Ppu {
     val ppu = ns.ppuState
     val x = cycle - 1
     val y = scanline
+    val fineX = ppu.registers.loopy.x
 
     (scanline, cycle) match {
 
@@ -811,7 +817,7 @@ object Ppu {
           clearScanlineOam
         )
 
-      case (scanline, cycle) if isDrawing(scanline, cycle) && (cycle % 8 == 1) =>
+      case (scanline, cycle) if isDrawing(scanline, cycle) && (cycle == 1 || (x % 8) == ((8 - fineX) % 8)) =>
         val v = getLoopyV(ppu)
 
         val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
@@ -829,17 +835,17 @@ object Ppu {
 
         tile.transform { case (ns, (tileHi, tileLo)) =>
           val updated = NesState.ppuState.modify(
-            updatePixels(x, y, tileHi, tileLo, tileAttr)
+            updatePixels(x, y, tileHi, tileLo, tileAttr) _ andThen incScrollX
           )(ns)
           (updated, updated)
         }
 
-      case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 0) =>
-        val update = if (cycle == 256) incScrollY _ else incScrollX _
-        modifyState(update)
+//      case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 0) =>
+//        val update = if (cycle == 256) incScrollY _ else incScrollX _
+//        modifyState(update)
 
       case (scanline, cycle) if isVisiblePart(scanline) && cycle == 257 =>
-        modifyState(transferAddressX)
+        modifyState(incScrollY _ andThen transferAddressX)
 
       case (scanline, cycle) if isVisiblePart(scanline) && cycle == 258 =>
         evaluateSprites(scanline, cycle)
