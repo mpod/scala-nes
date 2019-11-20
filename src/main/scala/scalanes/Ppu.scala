@@ -827,9 +827,7 @@ object Ppu {
           tileHi <- ppuRead(tileAddress + 8)
         } yield (tileHi, tileLo)
 
-        println(y, x, tileId, tileAttr)
-
-        tile.transform { case (ns, (tileLo, tileHi)) =>
+        tile.transform { case (ns, (tileHi, tileLo)) =>
           val updated = NesState.ppuState.modify(
             updatePixels(x, y, tileHi, tileLo, tileAttr)
           )(ns)
