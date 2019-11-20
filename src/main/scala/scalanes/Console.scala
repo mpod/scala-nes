@@ -45,12 +45,14 @@ object Console extends JFXApp {
             Option(next, next)
           }
         }
-      }.map { next =>
-        drawScreen(next, screenCanvas)
-        val diff = System.currentTimeMillis() - frameStart
-        println(s"Frame generated in $diff ms")
-        frameStart = System.currentTimeMillis()
-        next
+      }.parEvalMap(1) { next =>
+        IO {
+          drawScreen(next, screenCanvas)
+          val diff = System.currentTimeMillis() - frameStart
+          println(s"Frame generated in $diff ms")
+          frameStart = System.currentTimeMillis()
+          next
+        }
       }
       .drain
       .compile
@@ -108,8 +110,9 @@ object Console extends JFXApp {
     val gc = canvas.graphicsContext2D
     val pw = gc.pixelWriter
     val pixelFormat = PixelFormat.getIntArgbInstance
+    val pixels = nesState.ppuState.pixels.map(_.asInt).toArray
 
-    pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, nesState.ppuState.pixels, 0, 256 * 2)
+    pw.setPixels(0, 0, 256, 240, pixelFormat, pixels, 0, 256)
   }
 
   stage = new PrimaryStage {

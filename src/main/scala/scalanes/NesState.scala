@@ -20,7 +20,6 @@ case class NesState(ram: Vector[UInt8],
                     cpuState: CpuState,
                     ppuState: PpuState,
                     cartridge: Cartridge,
-                    counter: Long,
                     controllerState: ControllerState)
 
 object NesState {
@@ -35,37 +34,28 @@ object NesState {
   val cycles: Lens[NesState, Int] = cpuState composeLens GenLens[CpuState](_.cycles)
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
   val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
-  val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
   val controllerState: Lens[NesState, ControllerState] = GenLens[NesState](_.controllerState)
 
   def dummy: State[NesState, NesState] = State.get
-
-  def incCounter: State[NesState, Long] = State { s =>
-    val updated = NesState.counter.modify(_ + 1)(s)
-    (updated, NesState.counter.get(updated))
-  }
-
-  def resetCounter: State[NesState, Unit] =
-    State.modify(counter.set(0))
 
   def reset: State[NesState, Unit] = for {
     _ <- Cpu.reset
     _ <- Ppu.reset
     _ <- Cartridge.reset
-    _ <- resetCounter
   } yield ()
 
-  val clock: State[NesState, NesState] = Ppu.clock.flatMap { ns =>
-    if ((ns.counter % 3) == 1)
-      if (Ppu.isNmiReady(ns.ppuState))
-        Cpu.clock *> Cpu.nmi
+  def clock(counter: Int, scanline: Int, cycle: Int): State[NesState, NesState] =
+    Ppu.clock(scanline, cycle).flatMap { nes =>
+      if ((counter % 3) == 1)
+        if (Ppu.isNmiReady(scanline, cycle, nes.ppuState))
+          Cpu.nmi *> Cpu.clock
+        else
+          Cpu.clock
+      else if (Ppu.isNmiReady(scanline, cycle, nes.ppuState))
+        Cpu.nmi
       else
-        Cpu.clock
-    else if (Ppu.isNmiReady(ns.ppuState))
-      Cpu.nmi
-    else
-      dummy
-  }
+        dummy
+    }
 
   val frameTicks: Seq[(Int, Int, Int)] =
     (
@@ -113,12 +103,14 @@ object NesState {
     frameTicks
       // Skip PPU useless cycles
       .filterNot { case (_, scanline, _) => scanline >= 240 && scanline <= 260 }
-      .foldLeft(State.get[NesState]) { (state, _) =>
-        state *> Ppu.clock
+      .foldLeft(State.get[NesState]) { case (state, (_, scanline, cycle)) =>
+        state *> Ppu.clock(scanline, cycle)
       }
 
   val executeFrame: State[NesState, NesState] =
-    (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s *> clock)
+    frameTicks.foldLeft(State.get[NesState]) { case (ppu, (counter, scanline, cycle)) =>
+      ppu *> clock(counter, scanline, cycle)
+    }
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(
@@ -126,7 +118,6 @@ object NesState {
       CpuState.initial,
       PpuState.initial(mirroring),
       cartridge,
-      0,
       ControllerState(ref)
     )
 
