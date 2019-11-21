@@ -1,7 +1,7 @@
 package scalanes
 
 import cats.implicits._
-import monocle.{Lens, Traversal}
+import monocle.Lens
 import monocle.function.Index._
 import monocle.macros.GenLens
 import scalanes.AddressIncrementMode.AddressIncrementMode
@@ -10,7 +10,6 @@ import scalanes.MasterSlaveMode.MasterSlaveMode
 import scalanes.Mirroring.Mirroring
 import scalanes.NametableAddress.NametableAddress
 import scalanes.NmiMode.NmiMode
-import scalanes.Ppu.updatePixels
 import scalanes.SpritePriority.SpritePriority
 import scalanes.SpriteSize.SpriteSize
 import scalanes.SpriteTableAddress.SpriteTableAddress
@@ -583,8 +582,7 @@ object Ppu {
     modifyNesState(update)
   }
 
-  def evaluateSprites(scanline: Int): State[NesState, NesState] = State { nes =>
-    val ppu = nes.ppuState
+  def evaluateSprites(scanline: Int)(ppu: PpuState): PpuState = {
     val spriteSize = ppu.registers.ctrl.spriteSize
     val affectedSprites = ppu
       .spritesState
@@ -599,11 +597,12 @@ object Ppu {
       }
     val spriteOverflow = affectedSprites.size > 8
     val scanlineSprites = affectedSprites.take(8)
-    val updated = NesState.ppuState.modify(
+
+    val update =
       (PpuState.spritesState composeLens SpritesState.scanlineOam).set(scanlineSprites) andThen
       (statusRegister composeLens PpuStatus.spriteOverflow).set(spriteOverflow)
-    )(nes)
-    (updated, updated)
+
+    update(ppu)
   }
 
   private def flipByte(d: UInt8): UInt8 = {
@@ -634,12 +633,12 @@ object Ppu {
         hi <- ppuRead(addr + 8)
         spriteLo = if (e.sprite.flipHorizontally) flipByte(lo) else lo
         spriteHi = if (e.sprite.flipHorizontally) flipByte(hi) else hi
-        s <- State { p: NesState =>
+        s <- State { nes: NesState =>
           val scanlineEntry = SpritesState.scanlineOam composeOptional index(i)
           val updated = (NesState.ppuState composeLens PpuState.spritesState).modify(
             (scanlineEntry composeLens ScanlineOamEntry.spriteLo).set(spriteLo) andThen
             (scanlineEntry composeLens ScanlineOamEntry.spriteHi).set(spriteHi)
-          )(p)
+          )(nes)
           (updated, updated)
         }
       } yield s
@@ -798,7 +797,9 @@ object Ppu {
     val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
     val (fgPixel, fgPalette, fgPriority, spriteZeroHit) =
       if (ppu.registers.mask.renderSprites) {
-        ppu.spritesState.scanlineOam.map { e =>
+        ppu.spritesState.scanlineOam
+          .filter(e => x >= e.sprite.x && x < (e.sprite.x + 8))
+          .map { e =>
             val bitSel = 0x80 >> (x - e.sprite.x)
             val p0     = if (e.spriteLo & bitSel) 0x01 else 0x00
             val p1     = if (e.spriteHi & bitSel) 0x02 else 0x00
@@ -862,82 +863,85 @@ object Ppu {
       ppu
   }
 
-  def isVisiblePart(scanline: Int): Boolean =
-    scanline >= -1 && scanline < 240
+  def clock(scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
 
-  def isFetch(scanline: Int, cycle: Int): Boolean =
-    isVisiblePart(scanline) && ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336))
+    def isRenderingPart(scanline: Int): Boolean =
+      scanline >= -1 && scanline < 240
 
-  def modifyState(f: PpuState => PpuState): Option[State[NesState, NesState]] =
-    Option(
-      State { nes =>
-        val updated = NesState.ppuState.modify(f)(nes)
-        (updated, updated)
-      }
-    )
+    def isFetch(scanline: Int, cycle: Int): Boolean =
+      isRenderingPart(scanline) && ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336))
 
-  def clock(scanline: Int, cycle: Int): Option[State[NesState, NesState]] = (scanline, cycle) match {
-    case (-1, 1) =>
-      modifyState(
-        setVerticalBlank(false) _ andThen
-        setSpriteOverflow(false) andThen
-        clearSpriteZeroHit andThen
-        clearScanlineOam
-      )
-
-    case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 1) =>
-      val f = State.get[NesState].flatMap { nes =>
-        val ppu = nes.ppuState
-        val v = getLoopyV(ppu)
-        val x = cycle - 1
-        val y = scanline
-
-        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
-        val nextTileId = readNametables(nametableAddress)(ppu)
-
-        val attrAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
-        val shift = (if (v.coarseY & 0x02) 4 else 0) + (if (v.coarseX & 0x02) 2 else 0)
-        val nextTileAttr = (readNametables(attrAddress)(ppu) >> shift) & 0x03
-
-        val patternAddress = ppu.registers.ctrl.backgroundTableAddress.address + (nextTileId << 4) + v.fineY
-        val nextTile = for {
-          nextTileLo <- ppuRead(patternAddress)
-          nextTileHi <- ppuRead(patternAddress + 8)
-        } yield (nextTileHi, nextTileLo)
-
-        nextTile.transform { case (nes, (nextTileHi, nextTileLo)) =>
-          val ppu = nes.ppuState
-          val bg = ppu.bgRenderingState
-            .loadRegisters
-            .setNextTileHi(nextTileHi)
-            .setNextTileLo(nextTileLo)
-            .setNextTileAttr(nextTileAttr)
-          val updated = NesState.ppuState.modify(
-            updatePixels(x, y) _ andThen incScrollX andThen setBgRenderingState(bg)
-          )(nes)
+    def lift(f: PpuState => PpuState): Option[State[NesState, NesState]] =
+      Option(
+        State { nes =>
+          val updated = NesState.ppuState.modify(f)(nes)
           (updated, updated)
         }
-      }
-      Option(f)
+      )
 
-    case (scanline, cycle) if isFetch(scanline, cycle) && cycle == 256 =>
-      modifyState(incScrollY)
+    (scanline, cycle) match {
+      case (-1, 1) =>
+        lift(
+          setVerticalBlank(false) _ andThen
+            setSpriteOverflow(false) andThen
+            clearSpriteZeroHit andThen
+            clearScanlineOam
+        )
 
-    case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
-      modifyState(transferAddressY)
+      case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 1) =>
+        val op = State.get[NesState].flatMap { nes =>
+          val ppu = nes.ppuState
+          val v = getLoopyV(ppu)
+          val x = cycle - 1
+          val y = scanline
 
-    case (241, 1) =>
-      modifyState(setVerticalBlank(true))
+          val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
+          val nextTileId = readNametables(nametableAddress)(ppu)
 
-    case (scanline, 257) if isVisiblePart(scanline) =>
-      Option(evaluateSprites(scanline))
+          val attrAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
+          val shift = (if (v.coarseY & 0x02) 4 else 0) + (if (v.coarseX & 0x02) 2 else 0)
+          val nextTileAttr = (readNametables(attrAddress)(ppu) >> shift) & 0x03
 
-    case (scanline, 340) if isVisiblePart(scanline) =>
-      Option(loadSprites(scanline))
+          val patternAddress = ppu.registers.ctrl.backgroundTableAddress.address + (nextTileId << 4) + v.fineY
+          val nextTile = for {
+            nextTileLo <- ppuRead(patternAddress)
+            nextTileHi <- ppuRead(patternAddress + 8)
+          } yield (nextTileHi, nextTileLo)
 
-    case _ =>
-      None
+          nextTile.transform { case (nes, (nextTileHi, nextTileLo)) =>
+            val ppu = nes.ppuState
+            val bg = ppu.bgRenderingState
+              .loadRegisters
+              .setNextTileHi(nextTileHi)
+              .setNextTileLo(nextTileLo)
+              .setNextTileAttr(nextTileAttr)
+            val updated = NesState.ppuState.modify(
+              updatePixels(x, y) _ andThen incScrollX andThen setBgRenderingState(bg)
+            )(nes)
+            (updated, updated)
+          }
+        }
+        Option(op)
 
+      case (scanline, cycle) if isFetch(scanline, cycle) && cycle == 256 =>
+        lift(incScrollY)
+
+      case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
+        lift(transferAddressY)
+
+      case (241, 1) =>
+        lift(setVerticalBlank(true))
+
+      case (scanline, 257) if isRenderingPart(scanline) =>
+        lift(transferAddressX _ andThen evaluateSprites(scanline))
+
+      case (scanline, 340) if isRenderingPart(scanline) =>
+        Option(loadSprites(scanline))
+
+      case _ =>
+        None
+
+    }
   }
 
   def isNmiReady(scanline: Int, cycle: Int, s: PpuState): Boolean =
