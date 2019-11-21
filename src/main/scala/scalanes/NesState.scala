@@ -182,11 +182,13 @@ object NesState {
   } yield NesState.initial(mirroring, cartridge, controllerRef)
 
   def fromFile[F[_]: Sync: ContextShift](file: Path, controllerState: ControllerRef): Stream[F, NesState] =
-    Stream.resource(Blocker[F]).flatMap { blocker =>
-      io.file
-        .readAll[F](file, blocker, 4096)
-        .through(StreamDecoder.once(nesFileDecoder(controllerState)).toPipeByte)
-    }
+    Stream
+      .resource(Blocker[F])
+      .flatMap { blocker =>
+        io.file
+          .readAll[F](file, blocker, 4096)
+          .through(StreamDecoder.once(nesFileDecoder(controllerState)).toPipeByte)
+      }
 
 }
 

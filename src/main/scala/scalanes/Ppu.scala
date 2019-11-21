@@ -301,9 +301,7 @@ object Mirroring extends Enumeration {
   val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
 }
 
-case class Rgb(r: Int, g: Int, b: Int) {
-  def asInt: Int = (b & 0xFF) | ((g & 0xFF) << 8) | ((r & 0xFF) << 16) | (0xFF << 24)
-}
+case class Rgb(r: Int, g: Int, b: Int)
 
 object Rgb {
   val palette: Vector[Rgb] = Vector(

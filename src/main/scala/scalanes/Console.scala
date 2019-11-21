@@ -63,7 +63,6 @@ object Console extends JFXApp {
       .unsafeRunAsyncAndForget()
   }
 
-  /*
   def runNesImagePipeline(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
 
@@ -109,7 +108,6 @@ object Console extends JFXApp {
       .toVector
       .unsafeRunAsyncAndForget()
   }
-   */
 
   def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
     def asInt(rgb: Rgb): Int = (rgb.b & 0xFF) | ((rgb.g & 0xFF) << 8) | ((rgb.r & 0xFF) << 16) | (0xFF << 24)
