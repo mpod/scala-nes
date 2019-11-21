@@ -20,7 +20,6 @@ case class NesState(ram: Vector[UInt8],
                     cpuState: CpuState,
                     ppuState: PpuState,
                     cartridge: Cartridge,
-                    counter: Long,
                     controllerState: ControllerState)
 
 object NesState {
@@ -35,36 +34,65 @@ object NesState {
   val cycles: Lens[NesState, Int] = cpuState composeLens GenLens[CpuState](_.cycles)
   val cartridge: Lens[NesState, Cartridge] = GenLens[NesState](_.cartridge)
   val ppuState: Lens[NesState, PpuState] = GenLens[NesState](_.ppuState)
-  val counter: Lens[NesState, Long] = GenLens[NesState](_.counter)
   val controllerState: Lens[NesState, ControllerState] = GenLens[NesState](_.controllerState)
 
   def dummy: State[NesState, NesState] = State.get
-
-  def incCounter: State[NesState, Long] = State { s =>
-    val updated = NesState.counter.modify(_ + 1)(s)
-    (updated, NesState.counter.get(updated))
-  }
-
-  def resetCounter: State[NesState, Unit] =
-    State.modify(counter.set(0))
 
   def reset: State[NesState, Unit] = for {
     _ <- Cpu.reset
     _ <- Ppu.reset
     _ <- Cartridge.reset
-    _ <- resetCounter
   } yield ()
 
-  val clock: State[NesState, NesState] = Ppu.clock.flatMap { ns =>
-    if ((ns.counter % 3) == 1)
-      if (Ppu.isNmiReady(ns.ppuState))
-        Cpu.clock *> Cpu.nmi
-      else
-        Cpu.clock
-    else if (Ppu.isNmiReady(ns.ppuState))
-      Cpu.nmi
-    else
-      dummy
+  def clock(counter: Int, scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
+    val ppuClock = Ppu.clock(scanline, cycle)
+    val ppuReady = ppuClock.nonEmpty
+    val cpuReady = (counter % 3) == 1
+    val nmiReady = scanline == 241 && cycle == 2
+
+    (ppuReady, cpuReady, nmiReady) match {
+      case (true, true, true) =>
+        Option(
+          ppuClock.get.flatMap { nes =>
+            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
+            else dummy
+          }.flatMap(_ => Cpu.clock)
+        )
+
+      case (true, true, false) =>
+        Option(ppuClock.get *> Cpu.clock)
+
+      case (true, false, true) =>
+        Option(
+          ppuClock.get.flatMap { nes =>
+            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
+            else dummy
+          }
+        )
+
+      case (_, false, false) =>
+        ppuClock
+
+      case (false, true, true) =>
+        Option(
+          Cpu.clock.flatMap { nes =>
+            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
+            else dummy
+          }
+        )
+
+      case (false, true, false) =>
+        Option(Cpu.clock)
+
+      case (false, false, true) =>
+        Option(
+          State.get[NesState].flatMap { nes =>
+            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
+            else dummy
+          }
+        )
+
+    }
   }
 
   val frameTicks: Seq[(Int, Int, Int)] =
@@ -109,16 +137,18 @@ object NesState {
           state
       }
 
-  val executeFramePpu: State[NesState, NesState] =
+  def executeFramePpu: State[NesState, NesState] =
     frameTicks
       // Skip PPU useless cycles
       .filterNot { case (_, scanline, _) => scanline >= 240 && scanline <= 260 }
-      .foldLeft(State.get[NesState]) { (state, _) =>
-        state *> Ppu.clock
+      .foldLeft(State.get[NesState]) { case (state, (_, scanline, cycle)) =>
+        state *> Ppu.clock(scanline, cycle).get
       }
 
   val executeFrame: State[NesState, NesState] =
-    (1 until 262 * 340 - 100).foldLeft(clock)((s, _) => s *> clock)
+    frameTicks
+      .flatMap { case (counter, scanline, cycle) => clock(counter, scanline, cycle) }
+      .foldLeft(State.get[NesState])(_ *> _)
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(
@@ -126,7 +156,6 @@ object NesState {
       CpuState.initial,
       PpuState.initial(mirroring),
       cartridge,
-      0,
       ControllerState(ref)
     )
 

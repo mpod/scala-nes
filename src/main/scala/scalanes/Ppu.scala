@@ -10,6 +10,7 @@ import scalanes.MasterSlaveMode.MasterSlaveMode
 import scalanes.Mirroring.Mirroring
 import scalanes.NametableAddress.NametableAddress
 import scalanes.NmiMode.NmiMode
+import scalanes.Ppu.updatePixels
 import scalanes.SpritePriority.SpritePriority
 import scalanes.SpriteSize.SpriteSize
 import scalanes.SpriteTableAddress.SpriteTableAddress
@@ -20,14 +21,12 @@ case class PpuState(nametables: Vector[UInt8],
                     palettes: Vector[UInt8],
                     registers: PpuRegisters,
                     mirroring: Mirroring,
-                    scanline: Int,
-                    cycle: Int,
                     bgRenderingState: BgRenderingState,
                     spritesState: SpritesState,
-                    pixels: Array[Int]) {
+                    pixels: Vector[Rgb]) {
 
   def reset: PpuState =
-    copy(registers = registers.reset, scanline = -1, cycle = 0, bgRenderingState = bgRenderingState.reset)
+    copy(registers = registers.reset, bgRenderingState = bgRenderingState.reset)
 
 }
 
@@ -36,22 +35,18 @@ object PpuState {
   val palettes: Lens[PpuState, Vector[UInt8]]            = GenLens[PpuState](_.palettes)
   val registers: Lens[PpuState, PpuRegisters]            = GenLens[PpuState](_.registers)
   val mirroring: Lens[PpuState, Mirroring]               = GenLens[PpuState](_.mirroring)
-  val scanline: Lens[PpuState, Int]                      = GenLens[PpuState](_.scanline)
-  val cycle: Lens[PpuState, Int]                         = GenLens[PpuState](_.cycle)
   val bgRenderingState: Lens[PpuState, BgRenderingState] = GenLens[PpuState](_.bgRenderingState)
   val spritesState: Lens[PpuState, SpritesState]         = GenLens[PpuState](_.spritesState)
-  val pixels: Lens[PpuState, Array[Int]]                 = GenLens[PpuState](_.pixels)
+  val pixels: Lens[PpuState, Vector[Rgb]]                = GenLens[PpuState](_.pixels)
 
   def initial(mirroring: Mirroring): PpuState = PpuState(
     Vector.fill(2 * 1024)(0x00),
     Vector.fill(32)(0x00),
     PpuRegisters.initial,
     mirroring,
-    0,
-    0,
     BgRenderingState.initial,
     SpritesState.initial,
-    Array.fill(240 * 2 * 256 * 2)(0)
+    Vector.fill(240 * 256)(Rgb.initial)
   )
 }
 
@@ -267,50 +262,39 @@ object LoopyAddress {
   def initial: LoopyAddress = LoopyAddress(0)
 }
 
-case class BgRenderingState(patternShiftLo: UInt16,
-                            patternShiftHi: UInt16,
-                            attributeShiftLo: UInt8,
-                            attributeShiftHi: UInt8,
-                            nextTileId: UInt8,
-                            nextTileAttribute: UInt8,
-                            nextTileLsb: UInt8,
-                            nextTileMsb: UInt8) {
+case class BgRenderingState(tileLo: UInt8,
+                            tileHi: UInt8,
+                            tileAttr: UInt8,
+                            nextTileLo: UInt8,
+                            nextTileHi: UInt8,
+                            nextTileAttr: UInt8) {
 
-  require((nextTileId & 0xFF) == nextTileId)
-  require((nextTileLsb & 0xFF) == nextTileLsb)
-  require((nextTileMsb & 0xFF) == nextTileMsb)
-  require((nextTileAttribute & 0xFF) == nextTileAttribute)
-
-  def shiftRegisters: BgRenderingState =
-    copy(
-      patternShiftLo   = patternShiftLo << 1,
-      patternShiftHi   = patternShiftHi << 1,
-      attributeShiftLo = attributeShiftLo << 1,
-      attributeShiftHi = attributeShiftHi << 1
-    )
+  require((tileLo & 0xFF) == tileLo)
+  require((tileHi & 0xFF) == tileHi)
+  require((tileAttr & 0xFF) == tileAttr)
+  require((nextTileLo & 0xFF) == nextTileLo)
+  require((nextTileHi & 0xFF) == nextTileHi)
+  require((nextTileAttr & 0xFF) == nextTileAttr)
 
   def loadRegisters: BgRenderingState = {
     copy(
-      patternShiftLo   = (patternShiftLo & 0xFF00) | nextTileLsb,
-      patternShiftHi   = (patternShiftHi & 0xFF00) | nextTileMsb,
-      attributeShiftLo = (attributeShiftLo & 0xFF00) | (if (nextTileAttribute & 0x01) 0xFF else 0x00),
-      attributeShiftHi = (attributeShiftHi & 0xFF00) | (if (nextTileAttribute & 0x02) 0xFF else 0x00)
+      tileLo   = nextTileLo,
+      tileHi   = nextTileHi,
+      tileAttr = nextTileAttr
     )
   }
 
-  def setNextTileId(d: UInt8): BgRenderingState = copy(nextTileId = d)
+  def setNextTileAttr(d: UInt8): BgRenderingState = copy(nextTileAttr = d)
 
-  def setNextTileAttribute(d: UInt8): BgRenderingState = copy(nextTileAttribute = d)
+  def setNextTileLo(d: UInt8): BgRenderingState = copy(nextTileLo = d)
 
-  def setNextTileLsb(d: UInt8): BgRenderingState = copy(nextTileLsb = d)
-
-  def setNextTileMsb(d: UInt8): BgRenderingState = copy(nextTileMsb = d)
+  def setNextTileHi(d: UInt8): BgRenderingState = copy(nextTileHi = d)
 
   def reset: BgRenderingState = BgRenderingState.initial
 }
 
 object BgRenderingState {
-  def initial: BgRenderingState = BgRenderingState(0, 0, 0, 0, 0, 0, 0, 0)
+  def initial: BgRenderingState = BgRenderingState(0, 0, 0, 0, 0, 0)
 }
 
 object Mirroring extends Enumeration {
@@ -382,19 +366,19 @@ object OamEntry {
   val initial: OamEntry        = OamEntry(0x00, 0x00, 0x00, 0x00)
 }
 
-case class ScanlineOamEntry(sprite: OamEntry, spriteShiftLo: UInt8, spriteShiftHi: UInt8, isSpriteZero: Boolean) {
-  require((spriteShiftLo & 0xFF) == spriteShiftLo)
-  require((spriteShiftHi & 0xFF) == spriteShiftHi)
+case class ScanlineOamEntry(sprite: OamEntry, spriteLo: UInt8, spriteHi: UInt8, isSpriteZero: Boolean) {
+  require((spriteLo & 0xFF) == spriteLo)
+  require((spriteHi & 0xFF) == spriteHi)
 
   def shiftRegisters: ScanlineOamEntry =
-    copy(spriteShiftLo = (spriteShiftLo << 1) & 0xFF, spriteShiftHi = (spriteShiftHi << 1) & 0xFF)
+    copy(spriteLo = (spriteLo << 1) & 0xFF, spriteHi = (spriteHi << 1) & 0xFF)
 
 }
 
 object ScanlineOamEntry {
-  val sprite: Lens[ScanlineOamEntry, OamEntry]     = GenLens[ScanlineOamEntry](_.sprite)
-  val spriteShiftLo: Lens[ScanlineOamEntry, UInt8] = GenLens[ScanlineOamEntry](_.spriteShiftLo)
-  val spriteShiftHi: Lens[ScanlineOamEntry, UInt8] = GenLens[ScanlineOamEntry](_.spriteShiftHi)
+  val sprite: Lens[ScanlineOamEntry, OamEntry] = GenLens[ScanlineOamEntry](_.sprite)
+  val spriteLo: Lens[ScanlineOamEntry, UInt8]  = GenLens[ScanlineOamEntry](_.spriteLo)
+  val spriteHi: Lens[ScanlineOamEntry, UInt8]  = GenLens[ScanlineOamEntry](_.spriteHi)
 
   def apply(sprite: OamEntry, isZeroSprite: Boolean): ScanlineOamEntry =
     new ScanlineOamEntry(sprite, 0x00, 0x00, isZeroSprite)
@@ -437,8 +421,11 @@ object Ppu {
   def setVerticalBlank(d: Boolean)(s: PpuState): PpuState =
     (statusRegister composeLens PpuStatus.verticalBlank).set(d)(s)
 
-  def setSpriteZeroHit(d: Boolean)(s: PpuState): PpuState =
-    (statusRegister composeLens PpuStatus.spriteZeroHit).set(d)(s)
+  def setSpriteZeroHit(s: PpuState): PpuState =
+    (statusRegister composeLens PpuStatus.spriteZeroHit).set(true)(s)
+
+  def clearSpriteZeroHit(s: PpuState): PpuState =
+    (statusRegister composeLens PpuStatus.spriteZeroHit).set(false)(s)
 
   def setSpriteOverflow(d: Boolean)(s: PpuState): PpuState =
     (statusRegister composeLens PpuStatus.spriteOverflow).set(d)(s)
@@ -521,13 +508,6 @@ object Ppu {
     } else
       s
 
-  def loadBgRegisters(s: PpuState): PpuState =
-    PpuState.bgRenderingState.modify(_.loadRegisters)(s)
-
-  def shiftBgRegisters(s: PpuState): PpuState =
-    if (isRenderingBackground(s)) PpuState.bgRenderingState.modify(_.shiftRegisters)(s)
-    else s
-
   private def mapToNametableIndex(address: UInt16, mirroring: Mirroring): UInt16 = {
     val addr = address & 0x0FFF
     if (mirroring == Mirroring.Vertical) addr & 0x07FF
@@ -603,13 +583,15 @@ object Ppu {
     modifyNesState(update)
   }
 
-  def evaluateSprites: State[NesState, NesState] = State { ns =>
-    val ps = ns.ppuState
-    val s = ps.spritesState
-    val spriteSize = ps.registers.ctrl.spriteSize
-    val affectedSprites = s.oam.zipWithIndex
+  def evaluateSprites(scanline: Int): State[NesState, NesState] = State { nes =>
+    val ppu = nes.ppuState
+    val spriteSize = ppu.registers.ctrl.spriteSize
+    val affectedSprites = ppu
+      .spritesState
+      .oam
+      .zipWithIndex
       .filter { case (e, _) =>
-        val diff = ps.scanline - e.y
+        val diff = scanline - e.y
         diff >= 0 && diff < spriteSize.height
       }
       .map { case (e, i) =>
@@ -620,26 +602,7 @@ object Ppu {
     val updated = NesState.ppuState.modify(
       (PpuState.spritesState composeLens SpritesState.scanlineOam).set(scanlineSprites) andThen
       (statusRegister composeLens PpuStatus.spriteOverflow).set(spriteOverflow)
-    )(ns)
-    (updated, updated)
-  }
-
-  def shiftSprites: State[NesState, NesState] = State { ns =>
-    val ps = ns.ppuState
-    val x = ps.cycle - 1
-
-    val each = NesState.ppuState composeLens
-      PpuState.spritesState composeLens
-      SpritesState.scanlineOam composeTraversal
-      Traversal.fromTraverse[Vector, ScanlineOamEntry]
-
-    val updated = if (ps.registers.mask.renderSprites)
-      each.modify { e =>
-        if (x > e.sprite.x) e.shiftRegisters
-        else e
-      }(ns)
-    else
-      ns
+    )(nes)
     (updated, updated)
   }
 
@@ -650,18 +613,20 @@ object Ppu {
     d3
   }
 
-  def loadSprites: State[NesState, NesState] = State.get[NesState].flatMap { ns =>
-    val ps = ns.ppuState
-    ps.spritesState.scanlineOam.zipWithIndex.map { case (e, i) =>
-      val spriteSize = ps.registers.ctrl.spriteSize
-      val addrBase = if (spriteSize == SpriteSize.Small)
-        ps.registers.ctrl.spriteTableAddress.address | (e.sprite.id << 4)
-      else
-        ((e.sprite.id & 0x01) << 12) | ((e.sprite.id & 0xFE) << 4)
-      val row = if (e.sprite.flipVertically)
-        spriteSize.height - 1 - (ps.scanline - e.sprite.y) % spriteSize.height
-      else
-        (ps.scanline - e.sprite.y) % spriteSize.height
+  def loadSprites(scanline: Int): State[NesState, NesState] = State.get[NesState].flatMap { nes =>
+    val ppu = nes.ppuState
+    ppu.spritesState.scanlineOam.zipWithIndex.map { case (e, i) =>
+      val spriteSize = ppu.registers.ctrl.spriteSize
+      val addrBase =
+        if (spriteSize == SpriteSize.Small)
+          ppu.registers.ctrl.spriteTableAddress.address | (e.sprite.id << 4)
+        else
+          ((e.sprite.id & 0x01) << 12) | ((e.sprite.id & 0xFE) << 4)
+      val row =
+        if (e.sprite.flipVertically)
+          spriteSize.height - 1 - (scanline - e.sprite.y) % spriteSize.height
+        else
+          (scanline - e.sprite.y) % spriteSize.height
       val addr = addrBase + row
 
       for {
@@ -672,79 +637,14 @@ object Ppu {
         s <- State { p: NesState =>
           val scanlineEntry = SpritesState.scanlineOam composeOptional index(i)
           val updated = (NesState.ppuState composeLens PpuState.spritesState).modify(
-            (scanlineEntry composeLens ScanlineOamEntry.spriteShiftLo).set(spriteLo) andThen
-            (scanlineEntry composeLens ScanlineOamEntry.spriteShiftHi).set(spriteHi)
+            (scanlineEntry composeLens ScanlineOamEntry.spriteLo).set(spriteLo) andThen
+            (scanlineEntry composeLens ScanlineOamEntry.spriteHi).set(spriteHi)
           )(p)
           (updated, updated)
         }
       } yield s
     }
     .foldLeft(State.get[NesState]) { case (acc, a) => acc >> a }
-  }
-
-  def advanceRenderer(s: PpuState): PpuState = {
-    val (cycle, scanline) = if (s.cycle >= 340)
-      (0, if (s.scanline >= 260) -1 else s.scanline + 1)
-    else
-      (s.cycle + 1, s.scanline)
-    (PpuState.cycle.set(cycle) andThen PpuState.scanline.set(scanline))(s)
-  }
-
-  def pixel(s: PpuState): PpuState = {
-    val scanline = s.scanline
-    val x = s.cycle - 1
-    if (scanline >= 0 && scanline < 240 && x >= 0 && x < 256) {
-      val (bgPixel, bgPalette) = if (s.registers.mask.renderBackground) {
-        val bitMux = 0x8000 >> s.registers.loopy.x
-        val p0    = if (s.bgRenderingState.patternShiftLo & bitMux) 0x01 else 0x00
-        val p1    = if (s.bgRenderingState.patternShiftHi & bitMux) 0x02 else 0x00
-        val pixel = p1 | p0
-        val pal0  = if (s.bgRenderingState.attributeShiftLo & bitMux) 0x01 else 0x00
-        val pal1  = if (s.bgRenderingState.attributeShiftHi & bitMux) 0x02 else 0x00
-        val palette = if (pixel) pal1 | pal0 else 0x00
-        (pixel, palette)
-      } else
-        (0x00, 0x00)
-
-      val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
-      val (fgPixel, fgPalette, fgPriority, spriteZeroHit) = if (s.registers.mask.renderSprites) {
-        s.spritesState.scanlineOam
-          .filter(e => (x - e.sprite.x) >= 0 && (x - e.sprite.x) < 8)
-          .map { e =>
-            val bitMux = 0x80 >> (x - e.sprite.x)
-            val p0       = if (e.spriteShiftLo & bitMux) 0x01 else 0x00
-            val p1       = if (e.spriteShiftHi & bitMux) 0x02 else 0x00
-            val pixel    = p1 | p0
-            val palette  = e.sprite.palette
-            val priority = e.sprite.priority
-            (pixel, palette, priority, e.isSpriteZero)
-          }
-          .find { case (pixel, _, _, _) => pixel != 0x00 }
-          .getOrElse(defaultFg)
-      } else
-        defaultFg
-
-      val (pixel, palette) = if (fgPixel != 0 && (bgPixel == 0 || fgPriority == SpritePriority.InFrontOfBackground))
-        (fgPixel, fgPalette)
-      else
-        (bgPixel, bgPalette)
-
-      val color = getColor(palette, pixel)(s).asInt
-
-      val verifiedSpriteZeroHit = spriteZeroHit && isRendering(s) && s.cycle < 258 && x != 255 &&
-        ((s.registers.mask.renderSpritesLeft || s.registers.mask.renderBackgroundLeft) && x > 7)
-
-      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 0 + 2 * x + 0) = color
-      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 0 + 2 * x + 1) = color
-      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 0) = color
-      s.pixels(2 * scanline * 2 * 256 + 2 * 256 * 1 + 2 * x + 1) = color
-
-      if (verifiedSpriteZeroHit)
-        setSpriteZeroHit(verifiedSpriteZeroHit)(s)
-      else
-        s
-    } else
-      s
   }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = State.get.flatMap { ns =>
@@ -876,121 +776,172 @@ object Ppu {
   private def modifyNesState(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
 
-  val clock: State[NesState, NesState] = State.get[NesState].flatMap { ns =>
-    def isVisiblePart(scanline: Int): Boolean =
-      scanline >= -1 && scanline < 240
+  private def pixel(x: Int,
+                    tileHi: UInt8,
+                    tileLo: UInt8,
+                    tileAttr: UInt2,
+                    ppu: PpuState): (Rgb, Boolean) = {
 
-    def isFetch(scanline: Int, cycle: Int): Boolean =
-      isVisiblePart(scanline) && ((cycle >= 2 && cycle < 258) || (cycle >= 321 && cycle < 338))
+    val fineX = ppu.registers.loopy.x
 
-    def modifyState(f: PpuState => PpuState): State[NesState, NesState] = State { ns =>
-      val updated = (
-        NesState.ppuState.modify(f andThen pixel andThen advanceRenderer) andThen
-        NesState.counter.modify(_ + 1)
-      )(ns)
-      (updated, updated)
-    }
+    val (bgPixel, bgPalette) =
+      if (ppu.registers.mask.renderBackground) {
+        val bitSel  = 0x80 >> ((x + fineX) % 8)
+        val p0      = if (tileLo & bitSel) 0x01 else 0x00
+        val p1      = if (tileHi & bitSel) 0x02 else 0x00
+        val pixel   = p1 | p0
+        val palette = if (pixel) tileAttr else 0x00
+        (pixel, palette)
+      } else
+        (0x00, 0x00)
 
-    val s = ns.ppuState
-    val background = (ns.ppuState.scanline, ns.ppuState.cycle) match {
-      case (0, 0) =>
-        modifyState(PpuState.cycle.set(1))
+    val defaultFg = (0x00, 0x00, SpritePriority.BehindBackground, false)
+    val (fgPixel, fgPalette, fgPriority, spriteZeroHit) =
+      if (ppu.registers.mask.renderSprites) {
+        ppu.spritesState.scanlineOam.map { e =>
+            val bitSel = 0x80 >> (x - e.sprite.x)
+            val p0     = if (e.spriteLo & bitSel) 0x01 else 0x00
+            val p1     = if (e.spriteHi & bitSel) 0x02 else 0x00
+            val pixel  = p1 | p0
+            (pixel, e.sprite.palette, e.sprite.priority, e.isSpriteZero)
+          }
+          .find { case (pixel, _, _, _) => pixel != 0x00 }
+          .getOrElse(defaultFg)
+      } else
+        defaultFg
 
-      case (-1, 1) =>
-        modifyState(
-          setVerticalBlank(false) _ andThen
-          setSpriteOverflow(false) andThen
-          setSpriteZeroHit(false) andThen
-          clearScanlineOam
-        )
+    val (pixel, palette) =
+      if (fgPixel != 0 && (bgPixel == 0 || fgPriority == SpritePriority.InFrontOfBackground))
+        (fgPixel, fgPalette)
+      else
+        (bgPixel, bgPalette)
 
-      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 0) =>
-        val v = getLoopyV(s)
-        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
-        val nextTileId = readNametables(nametableAddress)(s)
-        val bg = s.bgRenderingState.shiftRegisters.loadRegisters.setNextTileId(nextTileId)
-        val update = setBgRenderingState(bg) _ andThen (if (cycle == 257) transferAddressX else identity)
-        modifyState(update)
+    val color = getColor(palette, pixel)(ppu)
 
-      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 2) =>
-        val v = getLoopyV(s)
-        val attributeAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
-        val attr1 = readNametables(attributeAddress)(s)
-        val attr2 = if (v.coarseY & 0x02) attr1 >> 4 else attr1
-        val attr3 = if (v.coarseX & 0x02) attr2 >> 2 else attr2
-        val attr4 = attr3 & 0x03
-        val bg = s.bgRenderingState.shiftRegisters.setNextTileAttribute(attr4)
-        modifyState(setBgRenderingState(bg))
-
-      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 4) =>
-        val ctrl = s.registers.ctrl
-        val v = getLoopyV(s)
-        val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 0
-        ppuRead(address).transform { (ns, tile) =>
-          val bg = s.bgRenderingState.shiftRegisters.setNextTileLsb(tile)
-          val updated = (
-            NesState.ppuState.modify(setBgRenderingState(bg) _ andThen pixel andThen advanceRenderer) andThen
-            NesState.counter.modify(_ + 1)
-          )(ns)
-          (updated, updated)
-        }
-
-      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 6) =>
-        val ctrl = s.registers.ctrl
-        val v = getLoopyV(s)
-        val address = ctrl.backgroundTableAddress.address + (s.bgRenderingState.nextTileId << 4) + v.fineY + 8
-        ppuRead(address).transform { (ns, tile) =>
-          val bg = s.bgRenderingState.shiftRegisters.setNextTileMsb(tile)
-          val updated = (
-            NesState.ppuState.modify(setBgRenderingState(bg) _ andThen pixel andThen advanceRenderer) andThen
-            NesState.counter.modify(_ + 1)
-          )(ns)
-          (updated, updated)
-        }
-
-      case (scanline, cycle) if isFetch(scanline, cycle) && ((cycle - 1) % 8 == 7) =>
-        val bg = s.bgRenderingState.shiftRegisters
-        val update = setBgRenderingState(bg) _ andThen incScrollX andThen (if (cycle == 256) incScrollY else identity)
-        modifyState(update)
-
-      case (scanline, cycle) if isFetch(scanline, cycle) =>
-        val bg = s.bgRenderingState.shiftRegisters
-        modifyState(setBgRenderingState(bg))
-
-      case (scanline, cycle) if isVisiblePart(scanline) && (cycle == 338 || cycle == 340) =>
-        val v = getLoopyV(s)
-        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
-        val nextTileId = readNametables(nametableAddress)(s)
-        val bgUpdated = s.bgRenderingState.setNextTileId(nextTileId)
-        modifyState(setBgRenderingState(bgUpdated))
-
-      case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
-        modifyState(transferAddressY)
-
-      case (241, 1) =>
-        modifyState(setVerticalBlank(true))
-
-      case _ =>
-        modifyState(identity)
-
-    }
-
-    val foreground: State[NesState, NesState] = (ns.ppuState.scanline, ns.ppuState.cycle) match {
-      case (scanline, 257) if isVisiblePart(scanline) =>
-        evaluateSprites
-
-      case (scanline, 340) if isVisiblePart(scanline) =>
-        loadSprites
-
-      case _ =>
-        State.get
-    }
-
-    foreground *> background
+    (color, spriteZeroHit)
   }
 
-  def isNmiReady(s: PpuState): Boolean =
-    s.scanline == 241 && s.cycle == 2 && s.registers.ctrl.nmiMode == NmiMode.On
+  def updatePixels(x0: Int, y: Int)(ppu: PpuState): PpuState = {
+    if (y >= 0 && y < 240 && x0 >= 0 && x0 < 256) {
+      val fineX = ppu.registers.loopy.x
+      val bg = ppu.bgRenderingState
+
+      val r1 = fineX until 8
+      val r2 = 0 until fineX
+
+      val (pixels1, spriteZeroHit1) =
+        r1.foldLeft((ppu.pixels, false)) { case ((pixels, hit), col) =>
+          val x = x0 + (col - fineX)
+          val (color, possibleSpriteZeroHit) = pixel(x, bg.tileHi, bg.tileLo, bg.tileAttr, ppu)
+
+          val spriteZeroHit = possibleSpriteZeroHit && isRendering(ppu) && y < 258 && x != 255 &&
+            ((ppu.registers.mask.renderSpritesLeft || ppu.registers.mask.renderBackgroundLeft) && x > 7)
+
+          (pixels.updated(y * 256 + x, color), hit || spriteZeroHit)
+        }
+
+      val (pixels2, spriteZeroHit2) =
+        r2.foldLeft((pixels1, spriteZeroHit1)) { case ((pixels, hit), col) =>
+          val x = x0 + (8 - fineX) + col
+          val (color, possibleSpriteZeroHit) = pixel(x, bg.nextTileHi, bg.nextTileLo, bg.nextTileAttr, ppu)
+
+          val spriteZeroHit = possibleSpriteZeroHit && isRendering(ppu) && y < 258 && x != 255 &&
+            ((ppu.registers.mask.renderSpritesLeft || ppu.registers.mask.renderBackgroundLeft) && x > 7)
+
+          (pixels.updated(y * 256 + x, color), hit || spriteZeroHit)
+        }
+
+      val update =
+        if (spriteZeroHit2)
+          PpuState.pixels.set(pixels2) andThen setSpriteZeroHit
+        else
+          PpuState.pixels.set(pixels2)
+
+      update(ppu)
+    } else
+      ppu
+  }
+
+  def isVisiblePart(scanline: Int): Boolean =
+    scanline >= -1 && scanline < 240
+
+  def isFetch(scanline: Int, cycle: Int): Boolean =
+    isVisiblePart(scanline) && ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336))
+
+  def modifyState(f: PpuState => PpuState): Option[State[NesState, NesState]] =
+    Option(
+      State { nes =>
+        val updated = NesState.ppuState.modify(f)(nes)
+        (updated, updated)
+      }
+    )
+
+  def clock(scanline: Int, cycle: Int): Option[State[NesState, NesState]] = (scanline, cycle) match {
+    case (-1, 1) =>
+      modifyState(
+        setVerticalBlank(false) _ andThen
+        setSpriteOverflow(false) andThen
+        clearSpriteZeroHit andThen
+        clearScanlineOam
+      )
+
+    case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 1) =>
+      val f = State.get[NesState].flatMap { nes =>
+        val ppu = nes.ppuState
+        val v = getLoopyV(ppu)
+        val x = cycle - 1
+        val y = scanline
+
+        val nametableAddress = 0x2000 | (v.asUInt16 & 0x0FFF)
+        val nextTileId = readNametables(nametableAddress)(ppu)
+
+        val attrAddress = 0x23C0 | (v.nametables << 10) | ((v.coarseY >> 2) << 3) | (v.coarseX >> 2)
+        val shift = (if (v.coarseY & 0x02) 4 else 0) + (if (v.coarseX & 0x02) 2 else 0)
+        val nextTileAttr = (readNametables(attrAddress)(ppu) >> shift) & 0x03
+
+        val patternAddress = ppu.registers.ctrl.backgroundTableAddress.address + (nextTileId << 4) + v.fineY
+        val nextTile = for {
+          nextTileLo <- ppuRead(patternAddress)
+          nextTileHi <- ppuRead(patternAddress + 8)
+        } yield (nextTileHi, nextTileLo)
+
+        nextTile.transform { case (nes, (nextTileHi, nextTileLo)) =>
+          val ppu = nes.ppuState
+          val bg = ppu.bgRenderingState
+            .loadRegisters
+            .setNextTileHi(nextTileHi)
+            .setNextTileLo(nextTileLo)
+            .setNextTileAttr(nextTileAttr)
+          val updated = NesState.ppuState.modify(
+            updatePixels(x, y) _ andThen incScrollX andThen setBgRenderingState(bg)
+          )(nes)
+          (updated, updated)
+        }
+      }
+      Option(f)
+
+    case (scanline, cycle) if isFetch(scanline, cycle) && cycle == 256 =>
+      modifyState(incScrollY)
+
+    case (scanline, cycle) if scanline == -1 && cycle >= 280 && cycle < 305 =>
+      modifyState(transferAddressY)
+
+    case (241, 1) =>
+      modifyState(setVerticalBlank(true))
+
+    case (scanline, 257) if isVisiblePart(scanline) =>
+      Option(evaluateSprites(scanline))
+
+    case (scanline, 340) if isVisiblePart(scanline) =>
+      Option(loadSprites(scanline))
+
+    case _ =>
+      None
+
+  }
+
+  def isNmiReady(scanline: Int, cycle: Int, s: PpuState): Boolean =
+    scanline == 241 && cycle == 2 && s.registers.ctrl.nmiMode == NmiMode.On
 
   def reset: State[NesState, Unit] = State.modify[PpuState](_.reset).toNesState
 
