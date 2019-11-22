@@ -288,25 +288,33 @@ object Cpu extends LazyLogging {
     _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
   } yield ()
 
+  // Implicit
+  // Operates on the accumulator.
   val IMP: AccAddressMode = State.pure(AccAddress)
 
+  // Immediate - #v
+  // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
   val IMM: AbsAddressMode = State { nesState =>
     val pc      = nesState.cpuState.pc
     val updated = NesState.pc.modify(_ + 1)(nesState)
     (updated, AbsAddress(pc))
   }
 
+  // Zero page - d
+  // Fetches the value from an 8-bit address on the zero page.
   val ZP0: AbsAddressMode = for {
     pc      <- IMM
     address <- pc.read()
   } yield AbsAddress(address)
 
+  // Zero page indexed - d,x
   val ZPX: AbsAddressMode = for {
     pc      <- IMM
     address <- pc.read()
     x       <- getX
   } yield AbsAddress((address + x) & 0xFF)
 
+  // Zero page indexed - d,y
   val ZPY: AbsAddressMode = for {
     pc      <- IMM
     address <- pc.read()
@@ -320,6 +328,8 @@ object Cpu extends LazyLogging {
     r       = address.toByte
   } yield r
 
+  // Absolute - a
+  // Fetches the value from a 16-bit address anywhere in memory.
   val ABS: AbsAddressMode = for {
     pc1     <- IMM
     lo      <- pc1.read()
@@ -328,6 +338,7 @@ object Cpu extends LazyLogging {
     address = asUInt16(hi, lo)
   } yield AbsAddress(address)
 
+  // Absolute indexed - a,x
   val ABX: AbsAddressMode = for {
     abs     <- ABS
     address =  abs.address
@@ -336,6 +347,7 @@ object Cpu extends LazyLogging {
     _       <- incCycles(c)
   } yield AbsAddress((address + x) & 0xFFFF)
 
+  // Absolute indexed - a,y
   val ABY: AbsAddressMode = for {
     abs     <- ABS
     address =  abs.address
@@ -344,6 +356,9 @@ object Cpu extends LazyLogging {
     _       <- incCycles(c)
   } yield AbsAddress((address + y) & 0xFFFF)
 
+  // Indirect - (a)
+  // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a
+  // 16-bit pointer anywhere in memory.
   val IND: AbsAddressMode = for {
     abs     <- ABS
     ptr     =  abs.address
@@ -355,6 +370,7 @@ object Cpu extends LazyLogging {
     address =  asUInt16(hi, lo)
   } yield AbsAddress(address)
 
+  // Indexed indirect - (d,x)
   val IZX: AbsAddressMode = for {
     pc      <- IMM
     t       <- pc.read()
@@ -364,6 +380,7 @@ object Cpu extends LazyLogging {
     address =  asUInt16(hi, lo)
   } yield AbsAddress(address)
 
+  // Indirect indexed - (d),y
   val IZY: AbsAddressMode = for {
     pc      <- IMM
     t       <- pc.read()
@@ -375,6 +392,7 @@ object Cpu extends LazyLogging {
     _       <- incCycles(c)
   } yield AbsAddress((address + y) & 0xFFFF)
 
+  // Add with carry
   def ADC(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val c      = cpuState.getFlag(CpuFlags.C)
     val lsb    = if (c) 1 else 0
@@ -388,12 +406,14 @@ object Cpu extends LazyLogging {
     cpuState.copy(a = temp & 0xFF, status = status)
   }
 
+  // Logical AND
   def AND(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val r = cpuState.a & d & 0xFF
     val status = setZnFlags(r)(cpuState.status)
     cpuState.copy(a = r, status = status)
   }
 
+  // Arithmetic shift left
   def ASL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val temp   = d << 1
     val status = setFlags(
@@ -414,6 +434,7 @@ object Cpu extends LazyLogging {
 
   def continue: Op = incPc.map(_ => Unit)
 
+  // Branch if carry clear
   val BCC: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.C))
       continue
@@ -421,6 +442,7 @@ object Cpu extends LazyLogging {
       branch
   }
 
+  // Branch if carry set
   val BCS: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.C))
       branch
@@ -428,6 +450,7 @@ object Cpu extends LazyLogging {
       continue
   }
 
+  // Branch if equal
   val BEQ: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.Z))
       branch
@@ -435,6 +458,7 @@ object Cpu extends LazyLogging {
       continue
   }
 
+  // Bit test
   def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val temp   = cpuState.a & d
     val status = setFlags(
@@ -445,6 +469,7 @@ object Cpu extends LazyLogging {
     cpuState.copy(status = status)
   }
 
+  // Branch if minus
   val BMI: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.N))
       branch
@@ -452,6 +477,7 @@ object Cpu extends LazyLogging {
       continue
   }
 
+  // Branch if not equal
   val BNE: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.Z))
       continue
@@ -459,6 +485,7 @@ object Cpu extends LazyLogging {
       branch
   }
 
+  // Branch if positive
   val BPL: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.N))
       continue
@@ -466,6 +493,7 @@ object Cpu extends LazyLogging {
       branch
   }
 
+  // Force interrupt
   def BRK: Op = for {
     pc1    <- incPc
     _      <- setFlag(CpuFlags.I, value = true)
@@ -481,6 +509,7 @@ object Cpu extends LazyLogging {
     _      <- setPc(pc2)
   } yield ()
 
+  // Branch if overflow clear
   val BVC: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.V))
       continue
@@ -488,6 +517,7 @@ object Cpu extends LazyLogging {
       branch
   }
 
+  // Branch if overflow set
   val BVS: Op = State.get.flatMap { ns =>
     if (ns.cpuState.getFlag(CpuFlags.V))
       branch
@@ -495,12 +525,16 @@ object Cpu extends LazyLogging {
       continue
   }
 
+  // Clear carry flag
   def CLC: Op = setFlag(CpuFlags.C, value = false)
 
+  // Clear decimal mode
   def CLD: Op = setFlag(CpuFlags.D, value = false)
 
+  // Clear interrupt disable
   def CLI: Op = setFlag(CpuFlags.I, value = false)
 
+  // Clear overflow flag
   def CLV: Op = setFlag(CpuFlags.V, value = false)
 
   def compareS(getter1: State[NesState, UInt8], getter2: State[NesState, UInt8]): Op = for {
@@ -523,18 +557,23 @@ object Cpu extends LazyLogging {
     cpuState.copy(status = status)
   }
 
+  // Compare
   def CMP(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.a))
 
+  // Compare X register
   def CPX(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.x))
 
+  // Compare Y register
   def CPY(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.y))
 
+  // Decrement memory
   def DEC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val temp   = (d - 1) & 0xFF
     val status = setZnFlags(temp)(cpuState.status)
     (cpuState.copy(status = status), temp)
   }
 
+  // Decrement X register
   def DEX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.x - 1) & 0xFF
@@ -543,6 +582,7 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Decrement Y register
   def DEY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.y - 1) & 0xFF
@@ -551,18 +591,21 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Exclusive OR
   def EOR(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val temp   = (cpuState.a ^ d) & 0xFF
     val status = setZnFlags(temp)(cpuState.status)
     cpuState.copy(a = temp, status = status)
   }
 
+  // Increment memory
   def INC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val temp   = (d + 1) & 0xFF
     val status = setZnFlags(temp)(cpuState.status)
     (cpuState.copy(status = status), temp)
   }
 
+  // Increment X register
   def INX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.x + 1) & 0xFF
@@ -571,6 +614,7 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Increment Y register
   def INY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.y + 1) & 0xFF
@@ -579,11 +623,13 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Jump
   def JMP(addressMode: AbsAddressMode): Op = for {
     address <- addressMode
     _       <- setPc(address.address)
   } yield ()
 
+  // Jump to subroutine
   def JSR(addressMode: AbsAddressMode): Op = for {
     address <- addressMode
     pc      <- decPc
@@ -592,21 +638,25 @@ object Cpu extends LazyLogging {
     _       <- setPc(address.address)
   } yield ()
 
+  // Load accumulator
   def LDA(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val status = setZnFlags(d)(cpuState.status)
     cpuState.copy(a = d, status = status)
   }
 
+  // Load X register
   def LDX(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val status = setZnFlags(d)(cpuState.status)
     cpuState.copy(x = d, status = status)
   }
 
+  // Load Y register
   def LDY(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val status = setZnFlags(d)(cpuState.status)
     cpuState.copy(y = d, status = status)
   }
 
+  // Logical shift right
   def LSR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val temp   = (d >> 1) & 0xFF
     val status = setFlags(
@@ -617,22 +667,26 @@ object Cpu extends LazyLogging {
     (cpuState.copy(status = status), temp)
   }
 
+  // No operation
   def NOP(addressMode: AddressMode): Op = for {
     address <- addressMode
     _       <- address.read()
   } yield ()
 
+  // Logical inclusive OR
   def ORA(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val temp   = (cpuState.a | d) & 0xFF
     val status = setZnFlags(temp)(cpuState.status)
     cpuState.copy(a = temp, status = status)
   }
 
+  // Push accumulator
   def PHA: Op = for {
     a <- getA
     _ <- push(a)
   } yield ()
 
+  // Push processor status
   def PHP: Op = for {
     status <- getStatus
     _      <- push(status | CpuFlags.B.bit | CpuFlags.U.bit)
@@ -640,6 +694,7 @@ object Cpu extends LazyLogging {
     _      <- setFlag(CpuFlags.U, value = false)
   } yield ()
 
+  // Pull accumulator
   def PLA: Op = for {
     d <- pop
     _ <- setA(d)
@@ -647,12 +702,14 @@ object Cpu extends LazyLogging {
     _ <- setFlag(CpuFlags.N, d & 0x80)
   } yield ()
 
+  // Pull processor status
   def PLP: Op = for {
     status <- pop
     _      <- setStatus(status)
     _      <- setFlag(CpuFlags.U, value = true)
   } yield ()
 
+  // Rotate left
   def ROL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val c      = cpuState.getFlag(CpuFlags.C)
     val lsb    = if (c) 1 else 0
@@ -665,6 +722,7 @@ object Cpu extends LazyLogging {
     (cpuState.copy(status = status), temp & 0xFF)
   }
 
+  // Rotate right
   def ROR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
     val c      = cpuState.getFlag(CpuFlags.C)
     val msb    = if (c) 1 << 7 else 0
@@ -677,6 +735,7 @@ object Cpu extends LazyLogging {
     (cpuState.copy(status = status), temp & 0xFF)
   }
 
+  // Return from interrupt
   def RTI: Op = for {
     status1 <- pop
     status2 =  status1 & ~CpuFlags.B.bit & ~CpuFlags.U.bit
@@ -687,6 +746,7 @@ object Cpu extends LazyLogging {
     _       <- setPc(pc)
   } yield ()
 
+  // Return from subroutine
   def RTS: Op = for {
     pc1 <- pop
     pc2 <- pop
@@ -695,6 +755,7 @@ object Cpu extends LazyLogging {
     _   <- incPc
   } yield ()
 
+  // Subtract with carry
   def SBC(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
     val value  = d ^ 0x00FF
     val c      = cpuState.getFlag(CpuFlags.C)
@@ -709,24 +770,31 @@ object Cpu extends LazyLogging {
     cpuState.copy(a = temp & 0xFF, status = status)
   }
 
+  // Set carry flag
   def SEC: Op = setFlag(CpuFlags.C, value = true)
 
+  // Set decimal flag
   def SED: Op = setFlag(CpuFlags.D, value = true)
 
+  // Set interrupt disable
   def SEI: Op = setFlag(CpuFlags.I, value = true)
 
+  // Store accumulator
   def STA(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
     (cpuState, cpuState.a)
   }
 
+  // Store X register
   def STX(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
     (cpuState, cpuState.x)
   }
 
+  // Store Y register
   def STY(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
     (cpuState, cpuState.y)
   }
 
+  // Transfer accumulator to X
   def TAX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.a)(cpuState.status)
@@ -734,6 +802,7 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Transfer accumulator to Y
   def TAY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.a)(cpuState.status)
@@ -741,6 +810,7 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Transfer accumulator to X
   def TSX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.stkp)(cpuState.status)
@@ -748,6 +818,7 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Transfer X to accumulator
   def TXA: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.x)(cpuState.status)
@@ -755,12 +826,14 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
+  // Transfer X to stack pointer
   def TXS: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val updated  = cpuState.copy(stkp = cpuState.x)
     nesState.copy(cpuState = updated)
   }
 
+  // Transfer Y to accumulator
   def TYA: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.y)(cpuState.status)
@@ -768,13 +841,15 @@ object Cpu extends LazyLogging {
     nesState.copy(cpuState = updated)
   }
 
-  // Unofficial instructions
+  // *** Unofficial instructions ***
 
+  // Shortcut for LDA value then TAX
   def LAX(addressMode: AddressMode): Op = for {
     _ <- LDA(addressMode)
     _ <- TAX
   } yield ()
 
+  // Stores the bitwise AND of A and X. As with STA and STX, no flags are affected.
   def SAX(addressMode: AddressMode): Op = for {
     address <- addressMode
     a       <- getA
@@ -783,6 +858,7 @@ object Cpu extends LazyLogging {
     _       <- address.write(d)
   } yield ()
 
+  // Equivalent to DEC value then CMP value
   def DCP(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
@@ -793,6 +869,7 @@ object Cpu extends LazyLogging {
     _       <- compareS(address.read(), getA)
   } yield ()
 
+  // Equivalent to INC value then SBC value
   def ISC(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
@@ -810,6 +887,7 @@ object Cpu extends LazyLogging {
     _       <- setA(temp2 & 0xFF)
   } yield ()
 
+  // Equivalent to ASL value then ORA value
   def SLO(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
@@ -823,6 +901,7 @@ object Cpu extends LazyLogging {
     _       <- setFlag(CpuFlags.N, temp2 & 0x80)
   } yield ()
 
+  // Equivalent to ROL value then AND value
   def RLA(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
@@ -838,6 +917,7 @@ object Cpu extends LazyLogging {
     _       <- setFlag(CpuFlags.N, r & 0x80)
   } yield ()
 
+  // Equivalent to LSR value then EOR value
   def SRE(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
@@ -851,6 +931,7 @@ object Cpu extends LazyLogging {
     _       <- setFlag(CpuFlags.N, temp2 & 0x80)
   } yield ()
 
+  // Equivalent to ROR value then ADC value
   def RRA(addressMode: AddressMode): Op = for {
     address <- addressMode
     d       <- address.read()
