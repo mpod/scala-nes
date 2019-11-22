@@ -7,13 +7,19 @@ import monocle.Lens
 import monocle.macros.GenLens
 import scalanes.CpuFlags.CpuFlags
 
-case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int) {
+case class CpuState(a: UInt8,
+                    x: UInt8,
+                    y: UInt8,
+                    stkp: UInt8,
+                    pc: UInt16,
+                    status: UInt8,
+                    cycles: Int,
+                    haltAt: UInt16) {
+
   def getFlag(flag: CpuFlags): Boolean = status & flag.bit
 }
 
 object CpuState {
-  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0)
-
   val a: Lens[CpuState, UInt8] = GenLens[CpuState](_.a)
   val x: Lens[CpuState, UInt8] = GenLens[CpuState](_.x)
   val y: Lens[CpuState, UInt8] = GenLens[CpuState](_.y)
@@ -21,6 +27,9 @@ object CpuState {
   val pc: Lens[CpuState, UInt16] = GenLens[CpuState](_.pc)
   val status: Lens[CpuState, UInt8] = GenLens[CpuState](_.status)
   val cycles: Lens[CpuState, Int] = GenLens[CpuState](_.cycles)
+  val haltAt: Lens[CpuState, UInt16] = GenLens[CpuState](_.haltAt)
+
+  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0, 0xFFFF)
 }
 
 object CpuFlags extends Enumeration {
@@ -151,6 +160,9 @@ object Cpu extends LazyLogging {
     (updated, updated.cpuState.cycles)
   }
 
+  def setHaltAt(address: UInt16): State[NesState, Unit] =
+    State.modify((NesState.cpuState composeLens CpuState.haltAt).set(address))
+
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
 
@@ -240,6 +252,7 @@ object Cpu extends LazyLogging {
     _  <- setStkp(0xFD)
     _  <- setStatus(0x00 | CpuFlags.U.bit | CpuFlags.I.bit)
     _  <- setCycles(0)
+    _  <- setHaltAt(0xFFFF)
   } yield ()
 
   def irq: State[NesState, Unit] = for {
@@ -278,7 +291,12 @@ object Cpu extends LazyLogging {
   } yield s
 
   val clock: State[NesState, NesState] = State.get.flatMap { nes =>
-    if (nes.cpuState.cycles == 0)
+    if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc) {
+      State { nes =>
+        val updated = (NesState.cpuState composeLens CpuState.cycles).set(10)(nes)
+        (updated, updated)
+      }
+    } else if (nes.cpuState.cycles == 0)
       cpuRead(nes.cpuState.pc).flatMap { opCode =>
         val instr = lookup(opCode)
         State[NesState, Unit] { nes =>
@@ -293,13 +311,13 @@ object Cpu extends LazyLogging {
       }
   }
 
-  val executeNextInstr: State[NesState, Unit] = for {
+    val executeNextInstr: State[NesState, Unit] = for {
     _ <- clock
     _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
   } yield ()
 
   // Implicit
-  // Operates on the accumulator.
+  // It may operate on the accumulator.
   val IMP: AccAddressMode = State.pure(AccAddress)
 
   // Immediate - #v
@@ -635,8 +653,14 @@ object Cpu extends LazyLogging {
 
   // Jump
   def JMP(addressMode: AbsAddressMode): Op = for {
+    pc      <- getPc
     address <- addressMode
     _       <- setPc(address.address)
+    _       <- if (pc == address.address + 1)
+                 // Detect a jump to itself
+                 setHaltAt(address.address)
+               else
+                 State.get[NesState]
   } yield ()
 
   // Jump to subroutine

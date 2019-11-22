@@ -458,14 +458,8 @@ object Ppu {
   def isRendering(ppu: PpuState): Boolean =
     ppu.registers.mask.renderBackground || ppu.registers.mask.renderSprites
 
-  def isRenderingBackground(ppu: PpuState): Boolean =
-    ppu.registers.mask.renderBackground
-
   def setBgRenderingState(d: BgRenderingState)(ppu: PpuState): PpuState =
     PpuState.bgRenderingState.set(d)(ppu)
-
-  def modifyBgRenderingState(f: BgRenderingState => BgRenderingState)(ppu: PpuState): PpuState =
-    PpuState.bgRenderingState.modify(f)(ppu)
 
   def incScrollX(ppu: PpuState): PpuState =
     if (isRendering(ppu)) {
@@ -537,6 +531,7 @@ object Ppu {
   def getColor(palette: Int, pixel: Int)(ppu: PpuState): Rgb = {
     require(palette >= 0 && palette < 8)
     require(pixel >= 0 && pixel < 4)
+
     val colorAddress = 0x3F00 + (palette << 2) + pixel
     val colorValue = if (ppu.registers.mask.renderBackground)
       ppu.palettes(mapToPalettesIndex(colorAddress))
