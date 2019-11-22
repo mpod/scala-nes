@@ -3,16 +3,24 @@ package scalanes
 import cats.Monad
 import cats.implicits._
 import com.typesafe.scalalogging.LazyLogging
+import monocle.Lens
+import monocle.macros.GenLens
 import scalanes.CpuFlags.CpuFlags
 
 case class CpuState(a: UInt8, x: UInt8, y: UInt8, stkp: UInt8, pc: UInt16, status: UInt8, cycles: Int) {
-
   def getFlag(flag: CpuFlags): Boolean = status & flag.bit
-
 }
 
 object CpuState {
   val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0)
+
+  val a: Lens[CpuState, UInt8] = GenLens[CpuState](_.a)
+  val x: Lens[CpuState, UInt8] = GenLens[CpuState](_.x)
+  val y: Lens[CpuState, UInt8] = GenLens[CpuState](_.y)
+  val stkp: Lens[CpuState, UInt8] = GenLens[CpuState](_.stkp)
+  val pc: Lens[CpuState, UInt16] = GenLens[CpuState](_.pc)
+  val status: Lens[CpuState, UInt8] = GenLens[CpuState](_.status)
+  val cycles: Lens[CpuState, Int] = GenLens[CpuState](_.cycles)
 }
 
 object CpuFlags extends Enumeration {
@@ -78,68 +86,70 @@ object Cpu extends LazyLogging {
     _ <- address.write(dOut)
   } yield ()
 
-  def incPc: State[NesState, UInt16] = State { s =>
-    val updated = NesState.pc.modify(pc => (pc + 1) & 0xFFFF)(s)
-    (updated, NesState.pc.get(updated))
+  val incPc: State[NesState, UInt16] = State { nes =>
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(pc => (pc + 1) & 0xFFFF)(nes)
+    (updated, updated.cpuState.pc)
   }
 
-  def decPc: State[NesState, UInt16] = State { s =>
-    val updated = NesState.pc.modify(pc => (pc - 1) & 0xFFFF)(s)
-    (updated, NesState.pc.get(updated))
+  val decPc: State[NesState, UInt16] = State { nes =>
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(pc => (pc - 1) & 0xFFFF)(nes)
+    (updated, updated.cpuState.pc)
   }
 
-  def getPc: State[NesState, UInt16] = State.inspect(NesState.pc.get)
+  val getPc: State[NesState, UInt16] = State.inspect(_.cpuState.pc)
 
   def setPc(d: UInt16): State[NesState, Unit] = {
     require((d & 0xFFFF) == d)
-    State.modify(NesState.pc.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.pc).set(d))
   }
 
-  def getX: State[NesState, UInt8] = State.inspect(NesState.x.get)
+  val getX: State[NesState, UInt8] = State.inspect(_.cpuState.x)
 
   def setX(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify(NesState.x.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.x).set(d))
   }
 
-  def getY: State[NesState, UInt8] = State.inspect(NesState.y.get)
+  val getY: State[NesState, UInt8] = State.inspect(_.cpuState.y)
 
   def setY(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify(NesState.y.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.y).set(d))
   }
 
-  def getA: State[NesState, UInt8] = State.inspect(NesState.a.get)
+  val getA: State[NesState, UInt8] = State.inspect(_.cpuState.a)
 
   def setA(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify(NesState.a.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.a).set(d))
   }
 
-  def getStkp: State[NesState, UInt8] = State.inspect(NesState.stkp.get)
+  val getStkp: State[NesState, UInt8] = State.inspect(_.cpuState.stkp)
 
   def setStkp(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify(NesState.stkp.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.stkp).set(d))
   }
 
-  def decStkp: State[NesState, UInt8] = State { s =>
-    val updated = NesState.stkp.modify(stkp => (stkp - 1) & 0xFF)(s)
-    (updated, NesState.stkp.get(updated))
+  val decStkp: State[NesState, UInt8] = State { nes =>
+    val updated = (NesState.cpuState composeLens CpuState.stkp).modify(stkp => (stkp - 1) & 0xFF)(nes)
+    (updated, updated.cpuState.stkp)
   }
 
-  def incStkp: State[NesState, UInt8] = State { s =>
-    val updated = NesState.stkp.modify(stkp => (stkp + 1) & 0xFF)(s)
-    (updated, NesState.stkp.get(updated))
+  val incStkp: State[NesState, UInt8] = State { nes =>
+    val updated = (NesState.cpuState composeLens CpuState.stkp).modify(stkp => (stkp + 1) & 0xFF)(nes)
+    (updated, updated.cpuState.stkp)
   }
 
-  def getCycles: State[NesState, Int] = State.inspect(NesState.cycles.get)
+  val getCycles: State[NesState, Int] = State.inspect(_.cpuState.cycles)
 
-  def setCycles(d: Int): State[NesState, Unit] = State.modify(NesState.cycles.set(d))
+  def setCycles(d: Int): State[NesState, Unit] =
+    State.modify((NesState.cpuState composeLens CpuState.cycles).set(d))
 
-  def incCycles(n: Int): State[NesState, Int] = State.modify(NesState.cycles.modify(_ + 1)).get.map(NesState.cycles.get)
-
-  def decCycles(n: Int): State[NesState, Int] = State.modify(NesState.cycles.modify(_ - 1)).get.map(NesState.cycles.get)
+  def incCycles(n: Int): State[NesState, Int] = State { nes =>
+    val updated = (NesState.cpuState composeLens CpuState.cycles).modify(_ + 1)(nes)
+    (updated, updated.cpuState.cycles)
+  }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
@@ -181,15 +191,15 @@ object Cpu extends LazyLogging {
       State.pure(())
   }
 
-  def getStatus: State[NesState, UInt8] = State.inspect(_.cpuState.status)
+  val getStatus: State[NesState, UInt8] = State.inspect(_.cpuState.status)
 
   def setStatus(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify(NesState.status.set(d))
+    State.modify((NesState.cpuState composeLens CpuState.status).set(d))
   }
 
   def setFlag(flag: CpuFlags, value: Boolean): State[NesState, Unit] = State.modify(
-    NesState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit)
+    (NesState.cpuState composeLens CpuState.status).modify(s => if (value) s | flag.bit else s & ~flag.bit)
   )
 
   def setFlags(flags: (CpuFlags, Boolean)*)(s: UInt8): UInt8 =
@@ -200,18 +210,18 @@ object Cpu extends LazyLogging {
 
   def getFlag(flag: CpuFlags): State[NesState, Boolean] = State.inspect(flag.bit & _.cpuState.status)
 
-  def pop: State[NesState, UInt8] = for {
+  val pop: State[NesState, UInt8] = for {
     stkp <- incStkp
-    d <- cpuRead((0x0100 + stkp) & 0xFFFF)
+    d    <- cpuRead((0x0100 + stkp) & 0xFFFF)
   } yield d
 
   def push(d: UInt8): State[NesState, Unit] = for {
     stkp <- getStkp
-    _ <- cpuWrite((0x0100 + stkp) & 0xFFFF, d)
-    _ <- decStkp
+    _    <- cpuWrite((0x0100 + stkp) & 0xFFFF, d)
+    _    <- decStkp
   } yield ()
 
-  def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xFF00) != (a & 0xFF00)
+  private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xFF00) != (a & 0xFF00)
 
   private def asUInt16(hi: UInt8, lo: UInt8): UInt16 = {
     require((hi & 0xFF) == hi)
@@ -223,67 +233,67 @@ object Cpu extends LazyLogging {
   def reset: State[NesState, Unit] = for {
     lo <- cpuRead(0xFFFC)
     hi <- cpuRead(0xFFFD)
-    _ <- setPc(asUInt16(hi, lo))
-    _ <- setA(0)
-    _ <- setX(0)
-    _ <- setY(0)
-    _ <- setStkp(0xFD)
-    _ <- setStatus(0x00 | CpuFlags.U.bit | CpuFlags.I.bit)
-    _ <- setCycles(0)
+    _  <- setPc(asUInt16(hi, lo))
+    _  <- setA(0)
+    _  <- setX(0)
+    _  <- setY(0)
+    _  <- setStkp(0xFD)
+    _  <- setStatus(0x00 | CpuFlags.U.bit | CpuFlags.I.bit)
+    _  <- setCycles(0)
   } yield ()
 
   def irq: State[NesState, Unit] = for {
-    pc <- getPc
-    pcHi = (pc >> 8) & 0xFF
-    _ <- push(pcHi)
-    pcLo = pc & 0xFF
-    _ <- push(pcLo)
-    _ <- setFlag(CpuFlags.B, value = false)
-    _ <- setFlag(CpuFlags.U, value = true)
-    _ <- setFlag(CpuFlags.I, value = true)
+    pc     <- getPc
+    pcHi   =  (pc >> 8) & 0xFF
+    _      <- push(pcHi)
+    pcLo   =  pc & 0xFF
+    _      <- push(pcLo)
+    _      <- setFlag(CpuFlags.B, value = false)
+    _      <- setFlag(CpuFlags.U, value = true)
+    _      <- setFlag(CpuFlags.I, value = true)
     status <- getStatus
-    _ <- push(status)
-    lo <- cpuRead(0xFFFE)
-    hi <- cpuRead(0xFFFE+ 1)
-    _ <- setPc(asUInt16(hi, lo))
-    _ <- setCycles(7)
+    _      <- push(status)
+    lo     <- cpuRead(0xFFFE)
+    hi     <- cpuRead(0xFFFE+ 1)
+    _      <- setPc(asUInt16(hi, lo))
+    _      <- setCycles(7)
   } yield ()
 
   def nmi: State[NesState, NesState] = for {
-    pc <- getPc
-    pcHi = (pc >> 8) & 0xFF
-    _ <- push(pcHi)
-    pcLo = pc & 0xFF
-    _ <- push(pcLo)
-    _ <- setFlag(CpuFlags.B, value = false)
-    _ <- setFlag(CpuFlags.U, value = true)
-    _ <- setFlag(CpuFlags.I, value = true)
+    pc     <- getPc
+    pcHi   =  (pc >> 8) & 0xFF
+    _      <- push(pcHi)
+    pcLo   =  pc & 0xFF
+    _      <- push(pcLo)
+    _      <- setFlag(CpuFlags.B, value = false)
+    _      <- setFlag(CpuFlags.U, value = true)
+    _      <- setFlag(CpuFlags.I, value = true)
     status <- getStatus
-    _ <- push(status)
-    lo <- cpuRead(0xFFFA)
-    hi <- cpuRead(0xFFFA + 1)
-    _ <- setPc(asUInt16(hi, lo))
-    _ <- setCycles(8)
-    s <- State.get
+    _      <- push(status)
+    lo     <- cpuRead(0xFFFA)
+    hi     <- cpuRead(0xFFFA + 1)
+    _      <- setPc(asUInt16(hi, lo))
+    _      <- setCycles(8)
+    s      <- State.get
   } yield s
 
-  val clock: State[NesState, NesState] = State.get.flatMap { ns =>
-    if (ns.cpuState.cycles == 0)
-      cpuRead(ns.cpuState.pc).flatMap { opCode =>
+  val clock: State[NesState, NesState] = State.get.flatMap { nes =>
+    if (nes.cpuState.cycles == 0)
+      cpuRead(nes.cpuState.pc).flatMap { opCode =>
         val instr = lookup(opCode)
-        State[NesState, Unit] { ns =>
-          val updated = (NesState.cycles.set(instr.cycles) andThen NesState.pc.modify(_ + 1))(ns)
+        State[NesState, Unit] { nes =>
+          val updated = NesState.cpuState.modify(cpu => cpu.copy(cycles = instr.cycles, pc = cpu.pc + 1))(nes)
           (updated, ())
         } *> instr.op *> setFlag(CpuFlags.U, value = true).get
       }
     else
-      State { ns =>
-        val updated = NesState.cycles.modify(_ - 1)(ns)
+      State { nes =>
+        val updated = (NesState.cpuState composeLens CpuState.cycles).modify(_ - 1)(nes)
         (updated, updated)
       }
   }
 
-  def executeNextInstr: State[NesState, Unit] = for {
+  val executeNextInstr: State[NesState, Unit] = for {
     _ <- clock
     _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
   } yield ()
@@ -294,9 +304,9 @@ object Cpu extends LazyLogging {
 
   // Immediate - #v
   // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
-  val IMM: AbsAddressMode = State { nesState =>
-    val pc      = nesState.cpuState.pc
-    val updated = NesState.pc.modify(_ + 1)(nesState)
+  val IMM: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
     (updated, AbsAddress(pc))
   }
 
@@ -435,24 +445,24 @@ object Cpu extends LazyLogging {
   def continue: Op = incPc.map(_ => Unit)
 
   // Branch if carry clear
-  val BCC: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.C))
+  val BCC: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.C))
       continue
     else
       branch
   }
 
   // Branch if carry set
-  val BCS: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.C))
+  val BCS: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.C))
       branch
     else
       continue
   }
 
   // Branch if equal
-  val BEQ: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.Z))
+  val BEQ: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.Z))
       branch
     else
       continue
@@ -470,24 +480,24 @@ object Cpu extends LazyLogging {
   }
 
   // Branch if minus
-  val BMI: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.N))
+  val BMI: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.N))
       branch
     else
       continue
   }
 
   // Branch if not equal
-  val BNE: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.Z))
+  val BNE: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.Z))
       continue
     else
       branch
   }
 
   // Branch if positive
-  val BPL: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.N))
+  val BPL: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.N))
       continue
     else
       branch
@@ -510,32 +520,32 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Branch if overflow clear
-  val BVC: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.V))
+  val BVC: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.V))
       continue
     else
       branch
   }
 
   // Branch if overflow set
-  val BVS: Op = State.get.flatMap { ns =>
-    if (ns.cpuState.getFlag(CpuFlags.V))
+  val BVS: Op = State.get.flatMap { nes =>
+    if (nes.cpuState.getFlag(CpuFlags.V))
       branch
     else
       continue
   }
 
   // Clear carry flag
-  def CLC: Op = setFlag(CpuFlags.C, value = false)
+  val CLC: Op = setFlag(CpuFlags.C, value = false)
 
   // Clear decimal mode
-  def CLD: Op = setFlag(CpuFlags.D, value = false)
+  val CLD: Op = setFlag(CpuFlags.D, value = false)
 
   // Clear interrupt disable
-  def CLI: Op = setFlag(CpuFlags.I, value = false)
+  val CLI: Op = setFlag(CpuFlags.I, value = false)
 
   // Clear overflow flag
-  def CLV: Op = setFlag(CpuFlags.V, value = false)
+  val CLV: Op = setFlag(CpuFlags.V, value = false)
 
   def compareS(getter1: State[NesState, UInt8], getter2: State[NesState, UInt8]): Op = for {
     d1   <- getter1
@@ -574,7 +584,7 @@ object Cpu extends LazyLogging {
   }
 
   // Decrement X register
-  def DEX: Op = State.modify { nesState =>
+  val DEX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.x - 1) & 0xFF
     val status   = setZnFlags(temp)(cpuState.status)
@@ -583,7 +593,7 @@ object Cpu extends LazyLogging {
   }
 
   // Decrement Y register
-  def DEY: Op = State.modify { nesState =>
+  val DEY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.y - 1) & 0xFF
     val status   = setZnFlags(temp)(cpuState.status)
@@ -606,7 +616,7 @@ object Cpu extends LazyLogging {
   }
 
   // Increment X register
-  def INX: Op = State.modify { nesState =>
+  val INX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.x + 1) & 0xFF
     val status   = setZnFlags(temp)(cpuState.status)
@@ -615,7 +625,7 @@ object Cpu extends LazyLogging {
   }
 
   // Increment Y register
-  def INY: Op = State.modify { nesState =>
+  val INY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val temp     = (cpuState.y + 1) & 0xFF
     val status   = setZnFlags(temp)(cpuState.status)
@@ -681,13 +691,13 @@ object Cpu extends LazyLogging {
   }
 
   // Push accumulator
-  def PHA: Op = for {
+  val PHA: Op = for {
     a <- getA
     _ <- push(a)
   } yield ()
 
   // Push processor status
-  def PHP: Op = for {
+  val PHP: Op = for {
     status <- getStatus
     _      <- push(status | CpuFlags.B.bit | CpuFlags.U.bit)
     _      <- setFlag(CpuFlags.B, value = false)
@@ -695,7 +705,7 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Pull accumulator
-  def PLA: Op = for {
+  val PLA: Op = for {
     d <- pop
     _ <- setA(d)
     _ <- setFlag(CpuFlags.Z, d == 0x00)
@@ -703,7 +713,7 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Pull processor status
-  def PLP: Op = for {
+  val PLP: Op = for {
     status <- pop
     _      <- setStatus(status)
     _      <- setFlag(CpuFlags.U, value = true)
@@ -736,7 +746,7 @@ object Cpu extends LazyLogging {
   }
 
   // Return from interrupt
-  def RTI: Op = for {
+  val RTI: Op = for {
     status1 <- pop
     status2 =  status1 & ~CpuFlags.B.bit & ~CpuFlags.U.bit
     _       <- setStatus(status2)
@@ -747,7 +757,7 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Return from subroutine
-  def RTS: Op = for {
+  val RTS: Op = for {
     pc1 <- pop
     pc2 <- pop
     pc  =  asUInt16(pc2, pc1)
@@ -771,13 +781,13 @@ object Cpu extends LazyLogging {
   }
 
   // Set carry flag
-  def SEC: Op = setFlag(CpuFlags.C, value = true)
+  val SEC: Op = setFlag(CpuFlags.C, value = true)
 
   // Set decimal flag
-  def SED: Op = setFlag(CpuFlags.D, value = true)
+  val SED: Op = setFlag(CpuFlags.D, value = true)
 
   // Set interrupt disable
-  def SEI: Op = setFlag(CpuFlags.I, value = true)
+  val SEI: Op = setFlag(CpuFlags.I, value = true)
 
   // Store accumulator
   def STA(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
@@ -795,7 +805,7 @@ object Cpu extends LazyLogging {
   }
 
   // Transfer accumulator to X
-  def TAX: Op = State.modify { nesState =>
+  val TAX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.a)(cpuState.status)
     val updated  = cpuState.copy(x = cpuState.a, status = status)
@@ -803,7 +813,7 @@ object Cpu extends LazyLogging {
   }
 
   // Transfer accumulator to Y
-  def TAY: Op = State.modify { nesState =>
+  val TAY: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.a)(cpuState.status)
     val updated  = cpuState.copy(y = cpuState.a, status = status)
@@ -811,7 +821,7 @@ object Cpu extends LazyLogging {
   }
 
   // Transfer accumulator to X
-  def TSX: Op = State.modify { nesState =>
+  val TSX: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.stkp)(cpuState.status)
     val updated  = cpuState.copy(x = cpuState.stkp, status = status)
@@ -819,7 +829,7 @@ object Cpu extends LazyLogging {
   }
 
   // Transfer X to accumulator
-  def TXA: Op = State.modify { nesState =>
+  val TXA: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.x)(cpuState.status)
     val updated  = cpuState.copy(a = cpuState.x, status = status)
@@ -827,14 +837,14 @@ object Cpu extends LazyLogging {
   }
 
   // Transfer X to stack pointer
-  def TXS: Op = State.modify { nesState =>
+  val TXS: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val updated  = cpuState.copy(stkp = cpuState.x)
     nesState.copy(cpuState = updated)
   }
 
   // Transfer Y to accumulator
-  def TYA: Op = State.modify { nesState =>
+  val TYA: Op = State.modify { nesState =>
     val cpuState = nesState.cpuState
     val status   = setZnFlags(cpuState.y)(cpuState.status)
     val updated  = cpuState.copy(a = cpuState.y, status = status)

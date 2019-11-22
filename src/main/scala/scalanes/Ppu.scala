@@ -881,9 +881,9 @@ object Ppu {
       case (-1, 1) =>
         lift(
           setVerticalBlank(false) _ andThen
-            setSpriteOverflow(false) andThen
-            clearSpriteZeroHit andThen
-            clearScanlineOam
+          setSpriteOverflow(false) andThen
+          clearSpriteZeroHit andThen
+          clearScanlineOam
         )
 
       case (scanline, cycle) if isFetch(scanline, cycle) && (cycle % 8 == 1) =>

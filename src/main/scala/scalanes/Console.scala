@@ -72,7 +72,8 @@ object Console extends JFXApp {
     for (i <- pixelArray.indices) {
       val row = (i / (256 * 2)) / 2
       val col = (i % (256 * 2)) / 2
-      pixelArray(i) = asInt(pixelVector(row * 256 + col))
+      val color = asInt(pixelVector(row * 256 + col))
+      pixelArray(i) = color
     }
     pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, pixelArray, 0, 256 * 2)
   }
