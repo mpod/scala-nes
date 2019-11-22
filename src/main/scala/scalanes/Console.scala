@@ -17,7 +17,6 @@ import scalafx.scene.text.Text
 import scalafx.stage.FileChooser
 
 import scala.concurrent.ExecutionContext
-import scala.concurrent.duration._
 import scala.language.higherKinds
 
 object Console extends JFXApp {
@@ -55,52 +54,6 @@ object Console extends JFXApp {
           println(s"Frame generated in $diff ms")
           frameStart = System.currentTimeMillis()
           next
-        }
-      }
-      .drain
-      .compile
-      .toVector
-      .unsafeRunAsyncAndForget()
-  }
-
-  def runNesImagePipeline(file: Path): Unit = {
-    var frameStart = System.currentTimeMillis()
-
-    NesState.fromFile[IO](file, controller)
-      .head
-      .evalMap(NesState.reset.runS)
-      .flatMap { initial =>
-         Stream.unfoldEval(initial) { s =>
-          val start = System.currentTimeMillis()
-          NesState.executeFrameCpu.runS(s).map { nextState =>
-            val diff = System.currentTimeMillis() - start
-            println(s"CPU frame generated in $diff ms by ${Thread.currentThread().getName}")
-            println("CPU", hex(nextState.ppuState.registers.loopy.t.asUInt16, 4))
-            Option(nextState, nextState)
-          }
-        }
-      }
-      // CPU is currently faster, so skip some frames if needed
-      .debounce(30.millisecond)
-      .parEvalMap(6) { s =>
-        val ppuStart = System.currentTimeMillis()
-        val next = NesState.executeFramePpu
-          .runS(s)
-          .map { s =>
-            val diff = System.currentTimeMillis() - ppuStart
-            println(s"PPU frame generated in $diff ms by ${Thread.currentThread().getName}")
-            s
-          }
-        next
-      }
-      .metered(20.millisecond)
-      .parEvalMap(1) { s =>
-        IO {
-          drawScreen(s, screenCanvas)
-          val diff = System.currentTimeMillis() - frameStart
-          println(s"Frame generated in $diff ms by ${Thread.currentThread().getName}")
-          frameStart = System.currentTimeMillis()
-          ()
         }
       }
       .drain

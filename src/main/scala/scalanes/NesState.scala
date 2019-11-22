@@ -106,49 +106,13 @@ object NesState {
       (counter, scanline, cycle)
     }
 
-  val executeFrameCpu: State[NesState, NesState] =
-    frameTicks
-      // Assumption is that CPU spends most of its time on waiting for vertical blank period
-      .filterNot { case (_, scanline, _) => scanline >= 0 && scanline < 100 }
-      .foldLeft(Cpu.clock) { (state, tick) =>
-        val (counter, scanline, cycle) = tick
-        if (counter != 0 && counter % 3 == 0)
-          if (scanline == 241 && cycle == 2)
-            state.flatMap { ns =>
-              if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
-                Cpu.nmi *> Cpu.clock
-              else
-                Cpu.clock
-            }
-          else
-            state *> Cpu.clock
-        else if (scanline == 241 && cycle == 2)
-          state.flatMap { ns =>
-            if (ns.ppuState.registers.ctrl.nmiMode == NmiMode.On)
-              Cpu.nmi
-            else
-              State.get
-          }
-        else if (scanline == 241 && cycle == 1) {
-          state *> Ppu.setVerticalBlankS(true)
-        } else if (scanline == -1 && cycle == 1) {
-          state *> Ppu.setVerticalBlankS(false)
-        } else
-          state
-      }
-
-  def executeFramePpu: State[NesState, NesState] =
-    frameTicks
-      // Skip PPU useless cycles
-      .filterNot { case (_, scanline, _) => scanline >= 240 && scanline <= 260 }
-      .foldLeft(State.get[NesState]) { case (state, (_, scanline, cycle)) =>
-        state *> Ppu.clock(scanline, cycle).get
-      }
-
   val executeFrame: State[NesState, NesState] =
-    frameTicks
-      .flatMap { case (counter, scanline, cycle) => clock(counter, scanline, cycle) }
-      .foldLeft(State.get[NesState])(_ *> _)
+    frameTicks.foldLeft(State.get[NesState]) { case (nes, (counter, scanline, cycle)) =>
+        clock(counter, scanline, cycle) match {
+          case None => nes
+          case Some(op) => nes *> op
+        }
+    }
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(
