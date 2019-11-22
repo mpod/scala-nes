@@ -410,8 +410,8 @@ object Ppu {
     )
   }
 
-  def setVerticalBlankS(d: Boolean): State[NesState, NesState] = State { ns =>
-    val updated = (NesState.ppuState composeLens statusRegister composeLens PpuStatus.verticalBlank).set(d)(ns)
+  def setVerticalBlankS(d: Boolean): State[NesState, NesState] = State { nes =>
+    val updated = (NesState.ppuState composeLens statusRegister composeLens PpuStatus.verticalBlank).set(d)(nes)
     (updated, updated)
   }
 
@@ -564,11 +564,11 @@ object Ppu {
     PpuState.palettes.modify(_.updated(addr, d))(ppu)
   }
 
-  def readOam: State[NesState, UInt8] = State.inspect { ns =>
-    val oamAddress = ns.ppuState.spritesState.oamAddress
+  def readOam: State[NesState, UInt8] = State.inspect { nes =>
+    val oamAddress = nes.ppuState.spritesState.oamAddress
     val entryIndex = oamAddress / 4
     val field      = oamAddress % 4
-    ns.ppuState.spritesState.oam(entryIndex).readField(field)
+    nes.ppuState.spritesState.oam(entryIndex).readField(field)
   }
 
   def writeOam(oamAddress: UInt8, d: UInt8): State[NesState, Unit] = {
@@ -662,8 +662,8 @@ object Ppu {
         val status = ppu.registers.status.asUInt8
         val update = clearLoopyW _ andThen setVerticalBlank(false)
         val d      = (status & 0xE0) | (data & 0x1F)
-        State { ns =>
-          (NesState.ppuState.modify(update)(ns), d)
+        State { nes =>
+          (NesState.ppuState.modify(update)(nes), d)
         }
 
       case 0x0003 => // OAMADDR
@@ -754,9 +754,9 @@ object Ppu {
     if (address >= 0x0000 && address <= 0x1FFF)
       Cartridge.ppuRead(address)
     else if (address >= 0x2000 && address <= 0x3EFF)
-      State.inspect(ns => readNametables(address)(ns.ppuState))
+      State.inspect(nes => readNametables(address)(nes.ppuState))
     else
-      State.inspect(ns => readPalettes(address)(ns.ppuState))
+      State.inspect(nes => readPalettes(address)(nes.ppuState))
   }
 
   def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = State.get.flatMap { _ =>

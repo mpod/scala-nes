@@ -69,21 +69,21 @@ object Cpu extends LazyLogging {
 
   private def readExecute(addressMode: AddressMode)(op: UInt8 => CpuState => CpuState): Op = for {
     address <- addressMode
-    d <- address.read()
-    _ <- State.modify(NesState.cpuState.modify(op(d)))
+    d       <- address.read()
+    _       <- State.modify(NesState.cpuState.modify(op(d)))
   } yield ()
 
   private def readExecuteWrite(addressMode: AddressMode)(op: UInt8 => CpuState => (CpuState, UInt8)): Op = for {
     address <- addressMode
-    dIn <- address.read()
-    dOut <- State(op(dIn)).toNesState
-    _ <- address.write(dOut)
+    dIn     <- address.read()
+    dOut    <- State(op(dIn)).toNesState
+    _       <- address.write(dOut)
   } yield ()
 
   private def executeWrite(addressMode: AddressMode)(op: CpuState => (CpuState, UInt8)): Op = for {
     address <- addressMode
-    dOut <- State(op).toNesState
-    _ <- address.write(dOut)
+    dOut    <- State(op).toNesState
+    _       <- address.write(dOut)
   } yield ()
 
   val incPc: State[NesState, UInt16] = State { nes =>
