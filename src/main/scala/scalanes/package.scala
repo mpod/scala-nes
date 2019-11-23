@@ -38,7 +38,7 @@ package object scalanes {
     def empty[S, A](implicit A: Monoid[A]): State[S, A] = pure(A.empty)
     def modify[S](f: S => S): State[S, Unit] = State(s => (f(s), ()))
     def inspect[S, T](f: S => T): State[S, T] = State(s => (s, f(s)))
-    def get[S]: State[S, S] = inspect(identity)
+    def get[S]: State[S, S] = State(s => (s, s))
     def set[S](s: S): State[S, Unit] = State(_ => (s, ()))
   }
 }

@@ -66,7 +66,7 @@ object Cpu extends LazyLogging {
   type AddressMode = State[NesState, _ <: Address]
   type AbsAddressMode = State[NesState, AbsAddress]
   type AccAddressMode = State[NesState, AccAddress.type]
-  type RelAddressMode = State[NesState, UInt16]
+  type RelAddressMode = State[NesState, Byte]
   type Op = State[NesState, Unit]
 
   implicit class CpuStateOps[A](val a: State[CpuState, A]) extends AnyVal {
@@ -291,18 +291,21 @@ object Cpu extends LazyLogging {
   } yield s
 
   val clock: State[NesState, NesState] = State.get.flatMap { nes =>
-    if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc) {
+    if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc)
       State { nes =>
         val updated = (NesState.cpuState composeLens CpuState.cycles).set(10)(nes)
         (updated, updated)
       }
-    } else if (nes.cpuState.cycles == 0)
+    else if (nes.cpuState.cycles == 0)
       cpuRead(nes.cpuState.pc).flatMap { opCode =>
         val instr = lookup(opCode)
         State[NesState, Unit] { nes =>
           val updated = NesState.cpuState.modify(cpu => cpu.copy(cycles = instr.cycles, pc = cpu.pc + 1))(nes)
           (updated, ())
-        } *> instr.op *> setFlag(CpuFlags.U, value = true).get
+        } *> instr.op *> State { nes =>
+          val updated = (NesState.cpuState composeLens CpuState.status).modify(setFlags((CpuFlags.U, true)))(nes)
+          (updated, updated)
+        }
       }
     else
       State { nes =>
@@ -311,7 +314,7 @@ object Cpu extends LazyLogging {
       }
   }
 
-    val executeNextInstr: State[NesState, Unit] = for {
+  val executeNextInstr: State[NesState, Unit] = for {
     _ <- clock
     _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
   } yield ()
@@ -349,12 +352,11 @@ object Cpu extends LazyLogging {
     y       <- getY
   } yield AbsAddress((address + y) & 0xFF)
 
-  val REL: RelAddressMode = for {
-    pc      <- IMM
-    address <- pc.read()
-    // Preserve sign
-    r       = address.toByte
-  } yield r
+  val REL: RelAddressMode = State[NesState, UInt16] { nes =>
+    val pc      = nes.cpuState.pc
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    (updated, pc)
+  }.flatMap(cpuRead).map(_.toByte)
 
   // Absolute - a
   // Fetches the value from a 16-bit address anywhere in memory.
@@ -452,39 +454,30 @@ object Cpu extends LazyLogging {
     (cpuState.copy(status = status), temp & 0xFF)
   }
 
-  def branch: Op = REL.transform { (nesState, relAddress) =>
-    val cpuState   = nesState.cpuState
-    val absAddress = (cpuState.pc + relAddress) & 0xFFFF
-    val cycles     = cpuState.cycles + (if (isPageChange(cpuState.pc, relAddress)) 2 else 1)
-    val updated    = cpuState.copy(pc = absAddress, cycles = cycles)
-    (nesState.copy(cpuState = updated), ())
+  def branchIf(p: NesState => Boolean): Op = State.get[NesState].flatMap { nes =>
+    if (p(nes))
+      REL.transform { (nes, relAddress) =>
+        val cpu = nes.cpuState
+        val absAddress = (cpu.pc + relAddress) & 0xFFFF
+        val cycles = cpu.cycles + (if (isPageChange(cpu.pc, relAddress)) 2 else 1)
+        val updated = cpu.copy(pc = absAddress, cycles = cycles)
+        (nes.copy(cpuState = updated), ())
+      }
+    else {
+      val cpu = nes.cpuState
+      val updated = nes.copy(cpuState = cpu.copy(pc = cpu.pc + 1))
+      State.set(updated)
+    }
   }
-
-  def continue: Op = incPc.map(_ => Unit)
 
   // Branch if carry clear
-  val BCC: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.C))
-      continue
-    else
-      branch
-  }
+  val BCC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.C))
 
   // Branch if carry set
-  val BCS: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.C))
-      branch
-    else
-      continue
-  }
+  val BCS: Op = branchIf(_.cpuState.getFlag(CpuFlags.C))
 
   // Branch if equal
-  val BEQ: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.Z))
-      branch
-    else
-      continue
-  }
+  val BEQ: Op = branchIf(_.cpuState.getFlag(CpuFlags.Z))
 
   // Bit test
   def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
@@ -498,28 +491,13 @@ object Cpu extends LazyLogging {
   }
 
   // Branch if minus
-  val BMI: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.N))
-      branch
-    else
-      continue
-  }
+  val BMI: Op = branchIf(_.cpuState.getFlag(CpuFlags.N))
 
   // Branch if not equal
-  val BNE: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.Z))
-      continue
-    else
-      branch
-  }
+  val BNE: Op = branchIf(!_.cpuState.getFlag(CpuFlags.Z))
 
   // Branch if positive
-  val BPL: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.N))
-      continue
-    else
-      branch
-  }
+  val BPL: Op = branchIf(!_.cpuState.getFlag(CpuFlags.N))
 
   // Force interrupt
   def BRK: Op = for {
@@ -538,20 +516,10 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Branch if overflow clear
-  val BVC: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.V))
-      continue
-    else
-      branch
-  }
+  val BVC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.V))
 
   // Branch if overflow set
-  val BVS: Op = State.get.flatMap { nes =>
-    if (nes.cpuState.getFlag(CpuFlags.V))
-      branch
-    else
-      continue
-  }
+  val BVS: Op = branchIf(_.cpuState.getFlag(CpuFlags.V))
 
   // Clear carry flag
   val CLC: Op = setFlag(CpuFlags.C, value = false)

@@ -48,7 +48,7 @@ object Console extends JFXApp {
           }
         }
       }
-      .parEvalMap(1) { next =>
+      .parEvalMap(2) { next =>
         IO {
           drawScreen(next, screenCanvas)
           val diff = System.currentTimeMillis() - frameStart
