@@ -180,6 +180,17 @@ object Cpu extends LazyLogging {
       State.pure(0x00)
   }
 
+  def fastCpuRead(address: UInt16)(nes: NesState): UInt8 = {
+    require((address & 0xFFFF) == address)
+
+    if (address >= 0x0000 && address <= 0x1FFF)
+      nes.ram(address % 0x800)
+    else if (address >= 0x6000 && address <= 0xFFFF)
+      Cartridge.fastCpuRead(address)(nes)
+    else
+      throw new RuntimeException(s"Invalid address $address for fast cpu read.")
+  }
+
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
     require((address & 0xFFFF) == address)
     require((d & 0xFF) == d)
@@ -296,18 +307,17 @@ object Cpu extends LazyLogging {
         val updated = (NesState.cpuState composeLens CpuState.cycles).set(10)(nes)
         (updated, updated)
       }
-    else if (nes.cpuState.cycles == 0)
-      cpuRead(nes.cpuState.pc).flatMap { opCode =>
-        val instr = lookup(opCode)
-        State[NesState, Unit] { nes =>
-          val updated = NesState.cpuState.modify(cpu => cpu.copy(cycles = instr.cycles, pc = cpu.pc + 1))(nes)
-          (updated, ())
-        } *> instr.op *> State { nes =>
-          val updated = (NesState.cpuState composeLens CpuState.status).modify(setFlags((CpuFlags.U, true)))(nes)
-          (updated, updated)
-        }
+    else if (nes.cpuState.cycles == 0) {
+      val opCode = fastCpuRead(nes.cpuState.pc)(nes)
+      val instr = lookup(opCode)
+      State[NesState, Unit] { nes =>
+        val updated = NesState.cpuState.modify(cpu => cpu.copy(cycles = instr.cycles, pc = cpu.pc + 1))(nes)
+        (updated, ())
+      } *> instr.op *> State { nes =>
+        val updated = (NesState.cpuState composeLens CpuState.status).modify(setFlags((CpuFlags.U, true)))(nes)
+        (updated, updated)
       }
-    else
+    } else
       State { nes =>
         val updated = (NesState.cpuState composeLens CpuState.cycles).modify(_ - 1)(nes)
         (updated, updated)
@@ -333,58 +343,68 @@ object Cpu extends LazyLogging {
 
   // Zero page - d
   // Fetches the value from an 8-bit address on the zero page.
-  val ZP0: AbsAddressMode = for {
-    pc      <- IMM
-    address <- pc.read()
-  } yield AbsAddress(address)
+  val ZP0: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val address = fastCpuRead(pc)(nes)
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    (updated, AbsAddress(address))
+  }
 
   // Zero page indexed - d,x
-  val ZPX: AbsAddressMode = for {
-    pc      <- IMM
-    address <- pc.read()
-    x       <- getX
-  } yield AbsAddress((address + x) & 0xFF)
+  val ZPX: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val address = (fastCpuRead(pc)(nes) + nes.cpuState.x) & 0xFF
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    (updated, AbsAddress(address))
+  }
 
   // Zero page indexed - d,y
-  val ZPY: AbsAddressMode = for {
-    pc      <- IMM
-    address <- pc.read()
-    y       <- getY
-  } yield AbsAddress((address + y) & 0xFF)
-
-  val REL: RelAddressMode = State[NesState, UInt16] { nes =>
+  val ZPY: AbsAddressMode = State { nes =>
     val pc      = nes.cpuState.pc
+    val address = (fastCpuRead(pc)(nes) + nes.cpuState.y) & 0xFF
     val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
-    (updated, pc)
-  }.flatMap(cpuRead).map(_.toByte)
+    (updated, AbsAddress(address))
+  }
+
+  val REL: RelAddressMode = State { nes =>
+    val pc         = nes.cpuState.pc
+    val updated    = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val relAddress = fastCpuRead(pc)(nes).toByte
+    (updated, relAddress)
+  }
 
   // Absolute - a
   // Fetches the value from a 16-bit address anywhere in memory.
-  val ABS: AbsAddressMode = for {
-    pc1     <- IMM
-    lo      <- pc1.read()
-    pc2     <- IMM
-    hi      <- pc2.read()
-    address = asUInt16(hi, lo)
-  } yield AbsAddress(address)
+  val ABS: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val lo      = fastCpuRead(pc)(nes)
+    val hi      = fastCpuRead(pc + 1)(nes)
+    val address = asUInt16(hi, lo)
+    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 2)(nes)
+    (updated, AbsAddress(address))
+  }
 
   // Absolute indexed - a,x
-  val ABX: AbsAddressMode = for {
-    abs     <- ABS
-    address =  abs.address
-    x       <- getX
-    c       =  if (isPageChange(address, x)) 1 else 0
-    _       <- incCycles(c)
-  } yield AbsAddress((address + x) & 0xFFFF)
+  val ABX: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val lo      = fastCpuRead(pc)(nes)
+    val hi      = fastCpuRead(pc + 1)(nes)
+    val address = asUInt16(hi, lo)
+    val c       = if (isPageChange(address, nes.cpuState.x)) 1 else 0
+    val updated = NesState.cpuState.modify(CpuState.pc.modify(_ + 2) andThen CpuState.cycles.modify(_ + c))(nes)
+    (updated, AbsAddress((address + nes.cpuState.x) & 0xFFFF))
+  }
 
   // Absolute indexed - a,y
-  val ABY: AbsAddressMode = for {
-    abs     <- ABS
-    address =  abs.address
-    y       <- getY
-    c       =  if (isPageChange(address, y)) 1 else 0
-    _       <- incCycles(c)
-  } yield AbsAddress((address + y) & 0xFFFF)
+  val ABY: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val lo      = fastCpuRead(pc)(nes)
+    val hi      = fastCpuRead(pc + 1)(nes)
+    val address = asUInt16(hi, lo)
+    val c       = if (isPageChange(address, nes.cpuState.y)) 1 else 0
+    val updated = NesState.cpuState.modify(CpuState.pc.modify(_ + 2) andThen CpuState.cycles.modify(_ + c))(nes)
+    (updated, AbsAddress((address + nes.cpuState.y) & 0xFFFF))
+  }
 
   // Indirect - (a)
   // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a

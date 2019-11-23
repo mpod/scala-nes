@@ -19,6 +19,9 @@ object Cartridge {
   def cpuRead(address: UInt16): State[NesState, UInt8] =
     State.inspect(_.cartridge.prgRead(address))
 
+  def fastCpuRead(address: UInt16)(nes: NesState): UInt8 =
+    nes.cartridge.prgRead(address)
+
   def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
     State.modify[Cartridge](_.prgWrite(address, d)).toNesState
 
