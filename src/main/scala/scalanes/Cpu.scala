@@ -76,16 +76,16 @@ object Cpu extends LazyLogging {
     )
   }
 
-  private def readExecute(addressMode: AddressMode)(op: UInt8 => CpuState => CpuState): Op = for {
+  private def readExecute(addressMode: AddressMode)(op: (UInt8, CpuState) => CpuState): Op = for {
     address <- addressMode
     d       <- address.read()
-    _       <- State.modify(NesState.cpuState.modify(op(d)))
+    _       <- State.modify(NesState.cpuState.modify(op(d, _)))
   } yield ()
 
-  private def readExecuteWrite(addressMode: AddressMode)(op: UInt8 => CpuState => (CpuState, UInt8)): Op = for {
+  private def readExecuteWrite(addressMode: AddressMode)(op: (UInt8, CpuState) => (CpuState, UInt8)): Op = for {
     address <- addressMode
     dIn     <- address.read()
-    dOut    <- State(op(dIn)).toNesState
+    dOut    <- State(op(dIn, _)).toNesState
     _       <- address.write(dOut)
   } yield ()
 
@@ -95,13 +95,19 @@ object Cpu extends LazyLogging {
     _       <- address.write(dOut)
   } yield ()
 
+  private def lift(f: CpuState => CpuState): NesState => NesState =
+    NesState.cpuState.modify(f)
+
+  private def liftS(f: CpuState => CpuState): State[NesState, Unit] =
+    State.modify(lift(f))
+
   val incPc: State[NesState, UInt16] = State { nes =>
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(pc => (pc + 1) & 0xFFFF)(nes)
+    val updated = lift(CpuState.pc.modify(pc => (pc + 1) & 0xFFFF))(nes)
     (updated, updated.cpuState.pc)
   }
 
   val decPc: State[NesState, UInt16] = State { nes =>
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(pc => (pc - 1) & 0xFFFF)(nes)
+    val updated = lift(CpuState.pc.modify(pc => (pc - 1) & 0xFFFF))(nes)
     (updated, updated.cpuState.pc)
   }
 
@@ -109,59 +115,59 @@ object Cpu extends LazyLogging {
 
   def setPc(d: UInt16): State[NesState, Unit] = {
     require((d & 0xFFFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.pc).set(d))
+    liftS(CpuState.pc.set(d))
   }
 
   val getX: State[NesState, UInt8] = State.inspect(_.cpuState.x)
 
   def setX(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.x).set(d))
+    liftS(CpuState.x.set(d))
   }
 
   val getY: State[NesState, UInt8] = State.inspect(_.cpuState.y)
 
   def setY(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.y).set(d))
+    liftS(CpuState.y.set(d))
   }
 
   val getA: State[NesState, UInt8] = State.inspect(_.cpuState.a)
 
   def setA(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.a).set(d))
+    liftS(CpuState.a.set(d))
   }
 
   val getStkp: State[NesState, UInt8] = State.inspect(_.cpuState.stkp)
 
   def setStkp(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.stkp).set(d))
+    liftS(CpuState.stkp.set(d))
   }
 
   val decStkp: State[NesState, UInt8] = State { nes =>
-    val updated = (NesState.cpuState composeLens CpuState.stkp).modify(stkp => (stkp - 1) & 0xFF)(nes)
+    val updated = lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xFF))(nes)
     (updated, updated.cpuState.stkp)
   }
 
   val incStkp: State[NesState, UInt8] = State { nes =>
-    val updated = (NesState.cpuState composeLens CpuState.stkp).modify(stkp => (stkp + 1) & 0xFF)(nes)
+    val updated = lift(CpuState.stkp.modify(stkp => (stkp + 1) & 0xFF))(nes)
     (updated, updated.cpuState.stkp)
   }
 
   val getCycles: State[NesState, Int] = State.inspect(_.cpuState.cycles)
 
   def setCycles(d: Int): State[NesState, Unit] =
-    State.modify((NesState.cpuState composeLens CpuState.cycles).set(d))
+    liftS(CpuState.cycles.set(d))
 
   def incCycles(n: Int): State[NesState, Int] = State { nes =>
-    val updated = (NesState.cpuState composeLens CpuState.cycles).modify(_ + 1)(nes)
+    val updated = lift(CpuState.cycles.modify(_ + 1))(nes)
     (updated, updated.cpuState.cycles)
   }
 
   def setHaltAt(address: UInt16): State[NesState, Unit] =
-    State.modify((NesState.cpuState composeLens CpuState.haltAt).set(address))
+    liftS(CpuState.haltAt.set(address))
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xFFFF) == address)
@@ -218,12 +224,11 @@ object Cpu extends LazyLogging {
 
   def setStatus(d: UInt8): State[NesState, Unit] = {
     require((d & 0xFF) == d)
-    State.modify((NesState.cpuState composeLens CpuState.status).set(d))
+    liftS(CpuState.status.set(d))
   }
 
-  def setFlag(flag: CpuFlags, value: Boolean): State[NesState, Unit] = State.modify(
-    (NesState.cpuState composeLens CpuState.status).modify(s => if (value) s | flag.bit else s & ~flag.bit)
-  )
+  def setFlag(flag: CpuFlags, value: Boolean): State[NesState, Unit] =
+    liftS(CpuState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit))
 
   def setFlags(flags: (CpuFlags, Boolean)*)(s: UInt8): UInt8 =
     flags.foldLeft(s) { case (acc, (f, v)) => if (v) acc | f.bit else acc & ~f.bit }
@@ -337,7 +342,7 @@ object Cpu extends LazyLogging {
   // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
   val IMM: AbsAddressMode = State { nes =>
     val pc      = nes.cpuState.pc
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
     (updated, AbsAddress(pc))
   }
 
@@ -346,7 +351,7 @@ object Cpu extends LazyLogging {
   val ZP0: AbsAddressMode = State { nes =>
     val pc      = nes.cpuState.pc
     val address = fastCpuRead(pc)(nes)
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
     (updated, AbsAddress(address))
   }
 
@@ -354,7 +359,7 @@ object Cpu extends LazyLogging {
   val ZPX: AbsAddressMode = State { nes =>
     val pc      = nes.cpuState.pc
     val address = (fastCpuRead(pc)(nes) + nes.cpuState.x) & 0xFF
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
     (updated, AbsAddress(address))
   }
 
@@ -362,13 +367,13 @@ object Cpu extends LazyLogging {
   val ZPY: AbsAddressMode = State { nes =>
     val pc      = nes.cpuState.pc
     val address = (fastCpuRead(pc)(nes) + nes.cpuState.y) & 0xFF
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
     (updated, AbsAddress(address))
   }
 
   val REL: RelAddressMode = State { nes =>
     val pc         = nes.cpuState.pc
-    val updated    = (NesState.cpuState composeLens CpuState.pc).modify(_ + 1)(nes)
+    val updated    = lift(CpuState.pc.modify(_ + 1))(nes)
     val relAddress = fastCpuRead(pc)(nes).toByte
     (updated, relAddress)
   }
@@ -380,7 +385,7 @@ object Cpu extends LazyLogging {
     val lo      = fastCpuRead(pc)(nes)
     val hi      = fastCpuRead(pc + 1)(nes)
     val address = asUInt16(hi, lo)
-    val updated = (NesState.cpuState composeLens CpuState.pc).modify(_ + 2)(nes)
+    val updated = lift(CpuState.pc.modify(_ + 2))(nes)
     (updated, AbsAddress(address))
   }
 
@@ -391,7 +396,10 @@ object Cpu extends LazyLogging {
     val hi      = fastCpuRead(pc + 1)(nes)
     val address = asUInt16(hi, lo)
     val c       = if (isPageChange(address, nes.cpuState.x)) 1 else 0
-    val updated = NesState.cpuState.modify(CpuState.pc.modify(_ + 2) andThen CpuState.cycles.modify(_ + c))(nes)
+    val updated = lift(
+      CpuState.pc.modify(_ + 2) andThen
+      CpuState.cycles.modify(_ + c)
+    )(nes)
     (updated, AbsAddress((address + nes.cpuState.x) & 0xFFFF))
   }
 
@@ -402,7 +410,10 @@ object Cpu extends LazyLogging {
     val hi      = fastCpuRead(pc + 1)(nes)
     val address = asUInt16(hi, lo)
     val c       = if (isPageChange(address, nes.cpuState.y)) 1 else 0
-    val updated = NesState.cpuState.modify(CpuState.pc.modify(_ + 2) andThen CpuState.cycles.modify(_ + c))(nes)
+    val updated = lift(
+      CpuState.pc.modify(_ + 2) andThen
+      CpuState.cycles.modify(_ + c)
+    )(nes)
     (updated, AbsAddress((address + nes.cpuState.y) & 0xFFFF))
   }
 
@@ -443,35 +454,39 @@ object Cpu extends LazyLogging {
   } yield AbsAddress((address + y) & 0xFFFF)
 
   // Add with carry
-  def ADC(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val c      = cpuState.getFlag(CpuFlags.C)
+  def ADC(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val c      = cpu.getFlag(CpuFlags.C)
     val lsb    = if (c) 1 else 0
-    val temp   = cpuState.a + d + lsb
-    val status = setFlags(
-      (CpuFlags.C, temp & 0xFF00),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.V, (~(cpuState.a ^ d) & (cpuState.a ^ temp)) & 0x80),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    cpuState.copy(a = temp & 0xFF, status = status)
+    val temp   = cpu.a + d + lsb
+    val update =
+      CpuState.a.set(temp & 0xFF) andThen
+      CpuState.status.modify(setFlags(
+        CpuFlags.C -> (temp & 0xFF00),
+        CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
+        CpuFlags.V -> ((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
+        CpuFlags.N -> (temp & 0x80)
+      ))
+    update(cpu)
   }
 
   // Logical AND
-  def AND(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val r = cpuState.a & d & 0xFF
-    val status = setZnFlags(r)(cpuState.status)
-    cpuState.copy(a = r, status = status)
+  def AND(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val r      = cpu.a & d & 0xFF
+    val update =
+      CpuState.a.set(r) andThen
+      CpuState.status.modify(setZnFlags(r))
+    update(cpu)
   }
 
   // Arithmetic shift left
-  def ASL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
+  def ASL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
     val temp   = d << 1
-    val status = setFlags(
-      (CpuFlags.C, temp & 0xFF00),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    (cpuState.copy(status = status), temp & 0xFF)
+    val update = CpuState.status.modify(setFlags(
+      CpuFlags.C -> (temp & 0xFF00),
+      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
+      CpuFlags.N -> (temp & 0x80)
+    ))
+    (update(cpu), temp & 0xFF)
   }
 
   def branchIf(p: NesState => Boolean): Op = State.get[NesState].flatMap { nes =>
@@ -500,14 +515,14 @@ object Cpu extends LazyLogging {
   val BEQ: Op = branchIf(_.cpuState.getFlag(CpuFlags.Z))
 
   // Bit test
-  def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val temp   = cpuState.a & d
-    val status = setFlags(
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.N, d & (1 << 7)),
-      (CpuFlags.V, d & (1 << 6))
-    )(cpuState.status)
-    cpuState.copy(status = status)
+  def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val temp   = cpu.a & d
+    val update = CpuState.status.modify(setFlags(
+      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
+      CpuFlags.N -> (d & (1 << 7)),
+      CpuFlags.V -> (d & (1 << 6))
+    ))
+    update(cpu)
   }
 
   // Branch if minus
@@ -562,15 +577,16 @@ object Cpu extends LazyLogging {
     _    <- setFlag(CpuFlags.N, temp & 0x0080)
   } yield ()
 
-  def compare(getter: CpuState => UInt8): UInt8 => CpuState => CpuState = { d1 => cpuState =>
-    val d2     = getter(cpuState)
-    val temp   = d2 - d1
-    val status = setFlags(
-      (CpuFlags.C, d2 >= d1),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x0000),
-      (CpuFlags.N, temp & 0x0080)
-    )(cpuState.status)
-    cpuState.copy(status = status)
+  def compare(getter: CpuState => UInt8): (UInt8, CpuState) => CpuState = {
+    (d1, cpu) =>
+      val d2     = getter(cpu)
+      val temp   = d2 - d1
+      val update = CpuState.status.modify(setFlags(
+        CpuFlags.C -> (d2 >= d1),
+        CpuFlags.Z -> ((temp & 0x00FF) == 0x0000),
+        CpuFlags.N -> (temp & 0x0080)
+      ))
+      update(cpu)
   }
 
   // Compare
@@ -583,60 +599,62 @@ object Cpu extends LazyLogging {
   def CPY(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.y))
 
   // Decrement memory
-  def DEC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
+  def DEC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
     val temp   = (d - 1) & 0xFF
-    val status = setZnFlags(temp)(cpuState.status)
-    (cpuState.copy(status = status), temp)
+    val update = CpuState.status.modify(setZnFlags(temp))
+    (update(cpu), temp)
   }
 
   // Decrement X register
-  val DEX: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val temp     = (cpuState.x - 1) & 0xFF
-    val status   = setZnFlags(temp)(cpuState.status)
-    val updated  = cpuState.copy(status = status, x = temp)
-    nesState.copy(cpuState = updated)
+  val DEX: Op = liftS { cpu =>
+    val temp   = (cpu.x - 1) & 0xFF
+    val update =
+      CpuState.x.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Decrement Y register
-  val DEY: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val temp     = (cpuState.y - 1) & 0xFF
-    val status   = setZnFlags(temp)(cpuState.status)
-    val updated  = cpuState.copy(status = status, y = temp)
-    nesState.copy(cpuState = updated)
+  val DEY: Op = liftS { cpu =>
+    val temp   = (cpu.y - 1) & 0xFF
+    val update =
+      CpuState.y.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Exclusive OR
-  def EOR(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val temp   = (cpuState.a ^ d) & 0xFF
-    val status = setZnFlags(temp)(cpuState.status)
-    cpuState.copy(a = temp, status = status)
+  def EOR(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val temp   = (cpu.a ^ d) & 0xFF
+    val update =
+      CpuState.a.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Increment memory
-  def INC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
+  def INC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
     val temp   = (d + 1) & 0xFF
-    val status = setZnFlags(temp)(cpuState.status)
-    (cpuState.copy(status = status), temp)
+    val update = CpuState.status.modify(setZnFlags(temp))
+    (update(cpu), temp)
   }
 
   // Increment X register
-  val INX: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val temp     = (cpuState.x + 1) & 0xFF
-    val status   = setZnFlags(temp)(cpuState.status)
-    val updated  = cpuState.copy(status = status, x = temp)
-    nesState.copy(cpuState = updated)
+  val INX: Op = liftS { cpu =>
+    val temp   = (cpu.x + 1) & 0xFF
+    val update =
+      CpuState.x.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Increment Y register
-  val INY: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val temp     = (cpuState.y + 1) & 0xFF
-    val status   = setZnFlags(temp)(cpuState.status)
-    val updated  = cpuState.copy(status = status, y = temp)
-    nesState.copy(cpuState = updated)
+  val INY: Op = liftS { cpu =>
+    val temp   = (cpu.y + 1) & 0xFF
+    val update =
+      CpuState.y.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Jump
@@ -661,32 +679,38 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Load accumulator
-  def LDA(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val status = setZnFlags(d)(cpuState.status)
-    cpuState.copy(a = d, status = status)
+  def LDA(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val update =
+      CpuState.a.set(d) andThen
+      CpuState.status.modify(setZnFlags(d))
+    update(cpu)
   }
 
   // Load X register
-  def LDX(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val status = setZnFlags(d)(cpuState.status)
-    cpuState.copy(x = d, status = status)
+  def LDX(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val update =
+      CpuState.x.set(d) andThen
+      CpuState.status.modify(setZnFlags(d))
+    update(cpu)
   }
 
   // Load Y register
-  def LDY(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val status = setZnFlags(d)(cpuState.status)
-    cpuState.copy(y = d, status = status)
+  def LDY(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val update =
+      CpuState.y.set(d) andThen
+      CpuState.status.modify(setZnFlags(d))
+    update(cpu)
   }
 
   // Logical shift right
-  def LSR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
+  def LSR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
     val temp   = (d >> 1) & 0xFF
-    val status = setFlags(
-      (CpuFlags.C, d & 0x01),
-      (CpuFlags.Z, (temp & 0xFF) == 0x00),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    (cpuState.copy(status = status), temp)
+    val update = CpuState.status.modify(setFlags(
+      CpuFlags.C -> (d & 0x01),
+      CpuFlags.Z -> ((temp & 0xFF) == 0x00),
+      CpuFlags.N -> (temp & 0x80)
+    ))
+    (update(cpu), temp)
   }
 
   // No operation
@@ -696,10 +720,12 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Logical inclusive OR
-  def ORA(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
-    val temp   = (cpuState.a | d) & 0xFF
-    val status = setZnFlags(temp)(cpuState.status)
-    cpuState.copy(a = temp, status = status)
+  def ORA(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
+    val temp   = (cpu.a | d) & 0xFF
+    val update =
+      CpuState.a.set(temp) andThen
+      CpuState.status.modify(setZnFlags(temp))
+    update(cpu)
   }
 
   // Push accumulator
@@ -732,29 +758,29 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Rotate left
-  def ROL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
-    val c      = cpuState.getFlag(CpuFlags.C)
+  def ROL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
+    val c      = cpu.getFlag(CpuFlags.C)
     val lsb    = if (c) 1 else 0
     val temp   = (d << 1) | lsb
-    val status = setFlags(
-      (CpuFlags.C, temp & 0xFF00),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    (cpuState.copy(status = status), temp & 0xFF)
+    val update = CpuState.status.modify(setFlags(
+      CpuFlags.C -> (temp & 0xFF00),
+      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
+      CpuFlags.N -> (temp & 0x80)
+    ))
+    (update(cpu), temp & 0xFF)
   }
 
   // Rotate right
-  def ROR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { d => cpuState =>
-    val c      = cpuState.getFlag(CpuFlags.C)
+  def ROR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
+    val c      = cpu.getFlag(CpuFlags.C)
     val msb    = if (c) 1 << 7 else 0
     val temp   = (d >> 1) | msb
-    val status = setFlags(
-      (CpuFlags.C, d & 0x01),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    (cpuState.copy(status = status), temp & 0xFF)
+    val update = CpuState.status.modify(setFlags(
+      CpuFlags.C -> (d & 0x01),
+      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
+      CpuFlags.N -> (temp & 0x80)
+    ))
+    (update(cpu), temp & 0xFF)
   }
 
   // Return from interrupt
@@ -778,18 +804,20 @@ object Cpu extends LazyLogging {
   } yield ()
 
   // Subtract with carry
-  def SBC(addressMode: AddressMode): Op = readExecute(addressMode) { d => cpuState =>
+  def SBC(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
     val value  = d ^ 0x00FF
-    val c      = cpuState.getFlag(CpuFlags.C)
+    val c      = cpu.getFlag(CpuFlags.C)
     val lsb    = if (c) 1 else 0
-    val temp   = cpuState.a + value + lsb
-    val status = setFlags(
-      (CpuFlags.C, temp & 0xFF00),
-      (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-      (CpuFlags.V, (temp ^ cpuState.a) & (temp ^ value) & 0x80),
-      (CpuFlags.N, temp & 0x80)
-    )(cpuState.status)
-    cpuState.copy(a = temp & 0xFF, status = status)
+    val temp   = cpu.a + value + lsb
+    val update =
+      CpuState.a.set(temp & 0xFF) andThen
+      CpuState.status.modify(setFlags(
+        (CpuFlags.C, temp & 0xFF00),
+        (CpuFlags.Z, (temp & 0x00FF) == 0x00),
+        (CpuFlags.V, (temp ^ cpu.a) & (temp ^ value) & 0x80),
+        (CpuFlags.N, temp & 0x80)
+      ))
+    update(cpu)
   }
 
   // Set carry flag
@@ -802,65 +830,64 @@ object Cpu extends LazyLogging {
   val SEI: Op = setFlag(CpuFlags.I, value = true)
 
   // Store accumulator
-  def STA(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
-    (cpuState, cpuState.a)
+  def STA(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
+    (cpu, cpu.a)
   }
 
   // Store X register
-  def STX(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
-    (cpuState, cpuState.x)
+  def STX(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
+    (cpu, cpu.x)
   }
 
   // Store Y register
-  def STY(addressMode: AddressMode): Op = executeWrite(addressMode) { cpuState =>
-    (cpuState, cpuState.y)
+  def STY(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
+    (cpu, cpu.y)
   }
 
   // Transfer accumulator to X
-  val TAX: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val status   = setZnFlags(cpuState.a)(cpuState.status)
-    val updated  = cpuState.copy(x = cpuState.a, status = status)
-    nesState.copy(cpuState = updated)
+  val TAX: Op = liftS { cpu =>
+    val update =
+      CpuState.x.set(cpu.a) andThen
+      CpuState.status.modify(setZnFlags(cpu.a))
+    update(cpu)
   }
 
   // Transfer accumulator to Y
-  val TAY: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val status   = setZnFlags(cpuState.a)(cpuState.status)
-    val updated  = cpuState.copy(y = cpuState.a, status = status)
-    nesState.copy(cpuState = updated)
+  val TAY: Op = liftS { cpu =>
+    val update =
+      CpuState.y.set(cpu.a) andThen
+      CpuState.status.modify(setZnFlags(cpu.a))
+    update(cpu)
   }
 
-  // Transfer accumulator to X
-  val TSX: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val status   = setZnFlags(cpuState.stkp)(cpuState.status)
-    val updated  = cpuState.copy(x = cpuState.stkp, status = status)
-    nesState.copy(cpuState = updated)
+  // Transfer stack pointer to X
+  val TSX: Op = liftS { cpu =>
+    val update =
+      CpuState.x.set(cpu.stkp) andThen
+      CpuState.status.modify(setZnFlags(cpu.stkp))
+    update(cpu)
   }
 
   // Transfer X to accumulator
-  val TXA: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val status   = setZnFlags(cpuState.x)(cpuState.status)
-    val updated  = cpuState.copy(a = cpuState.x, status = status)
-    nesState.copy(cpuState = updated)
+  val TXA: Op = liftS { cpu =>
+    val update =
+      CpuState.a.set(cpu.x) andThen
+      CpuState.status.modify(setZnFlags(cpu.x))
+    update(cpu)
   }
 
   // Transfer X to stack pointer
-  val TXS: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val updated  = cpuState.copy(stkp = cpuState.x)
-    nesState.copy(cpuState = updated)
+  val TXS: Op = liftS { cpu =>
+    val update = CpuState.stkp.set(cpu.x)
+    update(cpu)
   }
 
   // Transfer Y to accumulator
-  val TYA: Op = State.modify { nesState =>
-    val cpuState = nesState.cpuState
-    val status   = setZnFlags(cpuState.y)(cpuState.status)
-    val updated  = cpuState.copy(a = cpuState.y, status = status)
-    nesState.copy(cpuState = updated)
+  val TYA: Op = liftS { cpu =>
+    val update =
+      CpuState.a.set(cpu.y) andThen
+      CpuState.status.modify(setZnFlags(cpu.y))
+    update(cpu)
   }
 
   // *** Unofficial instructions ***

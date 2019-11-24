@@ -84,7 +84,7 @@ case class PpuCtrl(nametable: NametableAddress,
 }
 
 object PpuCtrl {
-  def apply(a: UInt8): PpuCtrl = new PpuCtrl(
+  def apply(a: UInt8): PpuCtrl = PpuCtrl(
     NametableAddress(a & 0x03),
     AddressIncrementMode((a >> 2) & 0x01),
     SpriteTableAddress((a >> 3) & 0x01),
@@ -173,7 +173,7 @@ case class PpuMask(greyscale: Boolean,
 object PpuMask {
   def apply(d: UInt8): PpuMask = {
     require((d & 0xFF) == d)
-    new PpuMask(
+    PpuMask(
       (d >> 0) & 0x01,
       (d >> 1) & 0x01,
       (d >> 2) & 0x01,
@@ -202,7 +202,7 @@ object PpuStatus {
   val spriteZeroHit: Lens[PpuStatus, Boolean]  = GenLens[PpuStatus](_.spriteZeroHit)
   val verticalBlank: Lens[PpuStatus, Boolean]  = GenLens[PpuStatus](_.verticalBlank)
 
-  def apply(a: UInt8): PpuStatus = new PpuStatus(a & 0x20, a & 0x40, a & 0x80)
+  def apply(a: UInt8): PpuStatus = PpuStatus(a & 0x20, a & 0x40, a & 0x80)
 
   def initial: PpuStatus = apply(0)
 }
@@ -250,7 +250,7 @@ object LoopyAddress {
   val nametableY: Lens[LoopyAddress, UInt1] = GenLens[LoopyAddress](_.nametableY)
   val fineY: Lens[LoopyAddress, UInt3]      = GenLens[LoopyAddress](_.fineY)
 
-  def apply(address: UInt16): LoopyAddress = new LoopyAddress(
+  def apply(address: UInt16): LoopyAddress = LoopyAddress(
     address & 0x1F,
     (address >> 5) & 0x1F,
     (address >> 10) & 0x1,
@@ -378,7 +378,7 @@ object ScanlineOamEntry {
   val spriteHi: Lens[ScanlineOamEntry, UInt8]  = GenLens[ScanlineOamEntry](_.spriteHi)
 
   def apply(sprite: OamEntry, isZeroSprite: Boolean): ScanlineOamEntry =
-    new ScanlineOamEntry(sprite, 0x00, 0x00, isZeroSprite)
+    ScanlineOamEntry(sprite, 0x00, 0x00, isZeroSprite)
 }
 
 object SpritePriority extends Enumeration {
