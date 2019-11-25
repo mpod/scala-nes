@@ -16,6 +16,12 @@ case class CpuState(a: UInt8,
                     cycles: Int,
                     haltAt: UInt16) {
 
+  require((a & 0xFF) == a)
+  require((x & 0xFF) == x)
+  require((y & 0xFF) == y)
+  require((stkp & 0xFF) == stkp)
+  require((status & 0xFF) == status)
+
   def getFlag(flag: CpuFlags): Boolean = status & flag.bit
 }
 
@@ -29,7 +35,8 @@ object CpuState {
   val cycles: Lens[CpuState, Int] = GenLens[CpuState](_.cycles)
   val haltAt: Lens[CpuState, UInt16] = GenLens[CpuState](_.haltAt)
 
-  val initial: CpuState = CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0, 0xFFFF)
+  val initial: CpuState =
+    CpuState(0x00, 0x00, 0x00, 0xFD, 0x0000, 0x00 | CpuFlags.U.bit | CpuFlags.I.bit, 0, 0xFFFF)
 }
 
 object CpuFlags extends Enumeration {
@@ -134,17 +141,11 @@ object Cpu extends LazyLogging {
 
   val getA: State[NesState, UInt8] = State.inspect(_.cpuState.a)
 
-  def setA(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
-    liftS(CpuState.a.set(d))
-  }
+  def setA(d: UInt8): State[NesState, Unit] = liftS(CpuState.a.set(d))
 
   val getStkp: State[NesState, UInt8] = State.inspect(_.cpuState.stkp)
 
-  def setStkp(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
-    liftS(CpuState.stkp.set(d))
-  }
+  def setStkp(d: UInt8): State[NesState, Unit] = liftS(CpuState.stkp.set(d))
 
   val decStkp: State[NesState, UInt8] = State { nes =>
     val updated = lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xFF))(nes)
@@ -189,9 +190,9 @@ object Cpu extends LazyLogging {
   def fastCpuRead(address: UInt16)(nes: NesState): UInt8 = {
     require((address & 0xFFFF) == address)
 
-    if (address >= 0x0000 && address <= 0x1FFF)
+    if (address >= 0x0000 && address <= 0x1FFF)         // RAM
       nes.ram(address % 0x800)
-    else if (address >= 0x6000 && address <= 0xFFFF)
+    else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
       Cartridge.fastCpuRead(address)(nes)
     else
       throw new RuntimeException(s"Invalid address $address for fast cpu read.")
@@ -220,12 +221,19 @@ object Cpu extends LazyLogging {
       State.pure(())
   }
 
+  def fastCpuWrite(address: UInt16, d: UInt8)(nes: NesState): NesState = {
+    require((address & 0xFFFF) == address)
+    require((d & 0xFF) == d)
+
+    if (address >= 0x0000 && address <= 0x1FFF)         //RAM
+      NesState.ram.modify(_.updated(address, d))(nes)
+    else
+      throw new RuntimeException(s"Invalid address $address for fast cpu write.")
+  }
+
   val getStatus: State[NesState, UInt8] = State.inspect(_.cpuState.status)
 
-  def setStatus(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
-    liftS(CpuState.status.set(d))
-  }
+  def setStatus(d: UInt8): State[NesState, Unit] = liftS(CpuState.status.set(d))
 
   def setFlag(flag: CpuFlags, value: Boolean): State[NesState, Unit] =
     liftS(CpuState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit))
@@ -238,16 +246,21 @@ object Cpu extends LazyLogging {
 
   def getFlag(flag: CpuFlags): State[NesState, Boolean] = State.inspect(flag.bit & _.cpuState.status)
 
-  val pop: State[NesState, UInt8] = for {
-    stkp <- incStkp
-    d    <- cpuRead((0x0100 + stkp) & 0xFFFF)
-  } yield d
+  val pop: State[NesState, UInt8] = State { nes =>
+    val updated = lift(
+      CpuState.stkp.modify(stkp => (stkp + 1) & 0xFF)
+    )(nes)
+    val address = (0x0100 + updated.cpuState.stkp) & 0xFFFF
+    (updated, fastCpuRead(address)(nes))
+  }
 
-  def push(d: UInt8): State[NesState, Unit] = for {
-    stkp <- getStkp
-    _    <- cpuWrite((0x0100 + stkp) & 0xFFFF, d)
-    _    <- decStkp
-  } yield ()
+  def push(d: UInt8): State[NesState, Unit] = State.modify { nes =>
+    val address = (0x0100 + nes.cpuState.stkp) & 0xFFFF
+    val update =
+      fastCpuWrite(address, d) _ andThen
+      lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xFF))
+    update(nes)
+  }
 
   private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xFF00) != (a & 0xFF00)
 
@@ -309,22 +322,31 @@ object Cpu extends LazyLogging {
   val clock: State[NesState, NesState] = State.get.flatMap { nes =>
     if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc)
       State { nes =>
-        val updated = (NesState.cpuState composeLens CpuState.cycles).set(10)(nes)
+        val updated = lift(
+          CpuState.cycles.set(10)
+        )(nes)
         (updated, updated)
       }
     else if (nes.cpuState.cycles == 0) {
       val opCode = fastCpuRead(nes.cpuState.pc)(nes)
       val instr = lookup(opCode)
       State[NesState, Unit] { nes =>
-        val updated = NesState.cpuState.modify(cpu => cpu.copy(cycles = instr.cycles, pc = cpu.pc + 1))(nes)
+        val updated = lift(
+          CpuState.cycles.set(instr.cycles) andThen
+          CpuState.pc.modify(_ + 1)
+        )(nes)
         (updated, ())
       } *> instr.op *> State { nes =>
-        val updated = (NesState.cpuState composeLens CpuState.status).modify(setFlags((CpuFlags.U, true)))(nes)
+        val updated = lift(
+          CpuState.status.modify(setFlags(CpuFlags.U -> true))
+        )(nes)
         (updated, updated)
       }
     } else
       State { nes =>
-        val updated = (NesState.cpuState composeLens CpuState.cycles).modify(_ - 1)(nes)
+        val updated = lift(
+          CpuState.cycles.modify(_ - 1)
+        )(nes)
         (updated, updated)
       }
   }
@@ -420,38 +442,48 @@ object Cpu extends LazyLogging {
   // Indirect - (a)
   // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a
   // 16-bit pointer anywhere in memory.
-  val IND: AbsAddressMode = for {
-    abs     <- ABS
-    ptr     =  abs.address
-    lo      <- cpuRead(ptr)
-    hi      <- if ((ptr & 0x00FF) == 0x00FF)
-      cpuRead(ptr & 0xFF00)
-    else
-      cpuRead((ptr + 1) & 0xFFFF)
-    address =  asUInt16(hi, lo)
-  } yield AbsAddress(address)
+  val IND: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val ptrLo   = fastCpuRead(pc)(nes)
+    val ptrHi   = fastCpuRead(pc + 1)(nes)
+    val ptr     = asUInt16(ptrHi, ptrLo)
+    val lo      = fastCpuRead(ptr)(nes)
+    val hi      = if ((ptr & 0x00FF) == 0x00FF)
+                    fastCpuRead(ptr & 0xFF00)(nes)
+                  else
+                    fastCpuRead((ptr + 1) & 0xFFFF)(nes)
+    val address = asUInt16(hi, lo)
+    val updated = lift(CpuState.pc.modify(_ + 2))(nes)
+    (updated, AbsAddress(address))
+  }
 
   // Indexed indirect - (d,x)
-  val IZX: AbsAddressMode = for {
-    pc      <- IMM
-    t       <- pc.read()
-    x       <- getX
-    lo      <- cpuRead((t + x + 0) & 0x00FF)
-    hi      <- cpuRead((t + x + 1) & 0x00FF)
-    address =  asUInt16(hi, lo)
-  } yield AbsAddress(address)
+  val IZX: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val t       = fastCpuRead(pc)(nes)
+    val x       = nes.cpuState.x
+    val lo      = fastCpuRead((t + x + 0) & 0x00FF)(nes)
+    val hi      = fastCpuRead((t + x + 1) & 0x00FF)(nes)
+    val address = asUInt16(hi, lo)
+    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
+    (updated, AbsAddress(address))
+  }
 
   // Indirect indexed - (d),y
-  val IZY: AbsAddressMode = for {
-    pc      <- IMM
-    t       <- pc.read()
-    y       <- getY
-    lo      <- cpuRead((t + 0) & 0x00FF)
-    hi      <- cpuRead((t + 1) & 0x00FF)
-    address =  asUInt16(hi, lo)
-    c       =  if (isPageChange(address, y)) 1 else 0
-    _       <- incCycles(c)
-  } yield AbsAddress((address + y) & 0xFFFF)
+  val IZY: AbsAddressMode = State { nes =>
+    val pc      = nes.cpuState.pc
+    val t       = fastCpuRead(pc)(nes)
+    val y       = nes.cpuState.y
+    val lo      = fastCpuRead((t + 0) & 0x00FF)(nes)
+    val hi      = fastCpuRead((t + 1) & 0x00FF)(nes)
+    val address = asUInt16(hi, lo)
+    val c       = if (isPageChange(address, y)) 1 else 0
+    val updated = lift(
+      CpuState.cycles.modify(_ + c) andThen
+      CpuState.pc.modify(_ + 1)
+    )(nes)
+    (updated, AbsAddress((address + y) & 0xFFFF))
+  }
 
   // Add with carry
   def ADC(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
