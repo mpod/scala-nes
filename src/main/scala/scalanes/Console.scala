@@ -17,6 +17,7 @@ import scalafx.scene.text.Text
 import scalafx.stage.FileChooser
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 import scala.language.higherKinds
 
 object Console extends JFXApp {
@@ -50,7 +51,7 @@ object Console extends JFXApp {
       }
       .parEvalMap(2) { next =>
         IO {
-          drawScreen(next, screenCanvas)
+          drawScreen(next.ppuState.pixels, screenCanvas)
           val diff = System.currentTimeMillis() - frameStart
           println(s"Frame generated in $diff ms")
           frameStart = System.currentTimeMillis()
@@ -63,17 +64,59 @@ object Console extends JFXApp {
       .unsafeRunAsyncAndForget()
   }
 
-  def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
+  def runNesImagePipeline(file: Path): Unit = {
+    var frameStart = System.currentTimeMillis()
+    NesState
+      .fromFile[IO](file, controller)
+      .head
+      .evalMap(NesState.reset.runS)
+      .flatMap { initial =>
+        Stream.unfoldEval((-1, initial)) { case (scanline, s) =>
+          NesState.executeScanlineCpu(scanline).runS(s).map { next =>
+            val nextScanline = if (scanline == 260) -1 else scanline + 1
+            Option((scanline, next), (nextScanline, next))
+          }
+        }
+      }
+      .filter { case (scanline, _) => scanline >= -1 && scanline < 240 }
+      .parEvalMap(5) { case (scanline, s) =>
+        NesState.executeScanlinePpu(scanline)
+          .runS(s)
+          .map { nextS => (scanline, nextS) }
+      }
+      .filter { case (scanline, _) =>
+        scanline >= 0 && scanline < 240
+      }
+      .map { case (scanline, s) =>
+        s.ppuState.pixels.slice(scanline * 256, scanline * 256 + 256)
+      }
+      .chunkN(240, false)
+      .parEvalMap(1) { chunk =>
+        IO {
+          val pixels = chunk.foldLeft(Vector.empty[Rgb])(_ ++ _)
+          drawScreen(pixels, screenCanvas)
+          val diff = System.currentTimeMillis() - frameStart
+          println(s"Frame generated in $diff ms")
+          frameStart = System.currentTimeMillis()
+          ()
+        }
+      }
+      .drain
+      .compile
+      .toVector
+      .unsafeRunAsyncAndForget()
+  }
+
+  def drawScreen(pixels: Vector[Rgb], canvas: Canvas): Unit = {
     def asInt(rgb: Rgb): Int = (rgb.b & 0xFF) | ((rgb.g & 0xFF) << 8) | ((rgb.r & 0xFF) << 16) | (0xFF << 24)
     val gc = canvas.graphicsContext2D
     val pw = gc.pixelWriter
     val pixelFormat = PixelFormat.getIntArgbInstance
     val pixelArray = Array.fill(240 * 2 * 256 * 2)(0)
-    val pixelVector = nesState.ppuState.pixels
     for (i <- pixelArray.indices) {
       val row = (i / (256 * 2)) / 2
       val col = (i % (256 * 2)) / 2
-      val color = asInt(pixelVector(row * 256 + col))
+      val color = asInt(pixels(row * 256 + col))
       pixelArray(i) = color
     }
     pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, pixelArray, 0, 256 * 2)
@@ -126,7 +169,7 @@ object Console extends JFXApp {
 
   val file: File = fileChooser.showOpenDialog(stage)
   if (file != null)
-    runNesImage(file.toPath)
+    runNesImagePipeline(file.toPath)
   else
     System.exit(0)
 }

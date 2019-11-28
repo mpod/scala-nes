@@ -20,6 +20,7 @@ case class CpuState(a: UInt8,
   require((x & 0xFF) == x)
   require((y & 0xFF) == y)
   require((stkp & 0xFF) == stkp)
+  require((pc & 0xFFFF) == pc)
   require((status & 0xFF) == status)
 
   def getFlag(flag: CpuFlags): Boolean = status & flag.bit
@@ -121,21 +122,18 @@ object Cpu extends LazyLogging {
   val getPc: State[NesState, UInt16] = State.inspect(_.cpuState.pc)
 
   def setPc(d: UInt16): State[NesState, Unit] = {
-    require((d & 0xFFFF) == d)
     liftS(CpuState.pc.set(d))
   }
 
   val getX: State[NesState, UInt8] = State.inspect(_.cpuState.x)
 
   def setX(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
     liftS(CpuState.x.set(d))
   }
 
   val getY: State[NesState, UInt8] = State.inspect(_.cpuState.y)
 
   def setY(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
     liftS(CpuState.y.set(d))
   }
 

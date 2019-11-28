@@ -598,6 +598,23 @@ object Ppu {
     update(ppu)
   }
 
+  // Used for syncing pipelined implementation
+  def evaluateSpriteZero(scanline: Int)(ppu: PpuState): PpuState = {
+    val spriteSize = ppu.registers.ctrl.spriteSize
+    val spriteZero = ppu
+      .spritesState
+      .oam
+      .take(1)
+      .filter { e =>
+        val diff = scanline - e.y
+        diff >= 0 && diff < spriteSize.height
+      }
+      .map { e =>
+        ScanlineOamEntry(e, true)
+      }
+    (PpuState.spritesState composeLens SpritesState.scanlineOam).set(spriteZero)(ppu)
+  }
+
   private def flipByte(d: UInt8): UInt8 = {
     val d1 = (d  & 0xF0) >> 4 | (d  & 0x0F) << 4
     val d2 = (d1 & 0xCC) >> 2 | (d1 & 0x33) << 2
@@ -937,8 +954,58 @@ object Ppu {
     }
   }
 
-  def isNmiReady(scanline: Int, cycle: Int, ppu: PpuState): Boolean =
-    scanline == 241 && cycle == 2 && ppu.registers.ctrl.nmiMode == NmiMode.On
+  def syncClock(scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
+    def isRenderingPart(scanline: Int, cycle: Int): Boolean =
+      scanline >= 0 && scanline < 240 && cycle >= 1 && cycle < 257
+
+    def lift(f: PpuState => PpuState): Option[State[NesState, NesState]] =
+      Option(
+        State { nes =>
+          val updated = NesState.ppuState.modify(f)(nes)
+          (updated, updated)
+        }
+      )
+
+    (scanline, cycle) match {
+      case (241, 1) =>
+        lift(setVerticalBlank(true))
+      case (-1, 1) =>
+        lift(
+          setVerticalBlank(false) _ andThen
+          clearSpriteZeroHit
+        )
+      case (scanline, cycle) if scanline >= 0 && scanline < 240 && cycle == 0 =>
+        lift(evaluateSpriteZero(scanline))
+      case (scanline, cycle) if isRenderingPart(scanline, cycle) =>
+        val op = State[NesState, NesState] { nes =>
+          val ppu = nes.ppuState
+          val y = scanline
+          val x = cycle - 1
+          val zeroSprite = ppu.spritesState.scanlineOam.headOption
+          val hit = zeroSprite.exists(e => x >= e.sprite.x && x < (e.sprite.x + 8)) &&
+            isRendering(ppu) && y < 258 && x != 255 &&
+            ((ppu.registers.mask.renderSpritesLeft || ppu.registers.mask.renderBackgroundLeft) && x >= 7)
+          val updated = NesState.ppuState.set(
+            if (hit) setSpriteZeroHit(ppu)
+            else ppu
+          )(nes)
+          (updated, updated)
+        }
+        Option(op)
+      case _ =>
+        None
+    }
+
+  }
+
+  def preClock(scanline: Int): State[NesState, NesState] =
+    State { nes =>
+      val update = (0 until scanline)
+        .map(_ => incScrollY _)
+        .foldLeft(transferAddressY _)(_ andThen _)
+      val updated = NesState.ppuState.modify(update)(nes)
+      (updated, updated)
+    }
 
   def reset: State[NesState, Unit] = State.modify[PpuState](_.reset).toNesState
 

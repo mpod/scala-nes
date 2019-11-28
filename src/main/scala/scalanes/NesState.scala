@@ -37,6 +37,15 @@ object NesState {
     _ <- Cartridge.reset
   } yield ()
 
+  def isNmiReady(scanline: Int, cycle: Int, nes: NesState): Boolean =
+    scanline == 241 && cycle == 2 && nes.ppuState.registers.ctrl.nmiMode == NmiMode.On
+
+  def nmi(scanline: Int, cycle: Int): State[NesState, NesState] =
+    State.get.flatMap { nes =>
+      if (isNmiReady(scanline, cycle, nes)) Cpu.nmi
+      else dummy
+    }
+
   def clock(counter: Int, scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
     val ppuClock = Ppu.clock(scanline, cycle)
     val ppuReady = ppuClock.nonEmpty
@@ -46,45 +55,32 @@ object NesState {
     (ppuReady, cpuReady, nmiReady) match {
       case (true, true, true) =>
         Option(
-          ppuClock.get.flatMap { nes =>
-            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
-            else dummy
-          }.flatMap(_ => Cpu.clock)
+          ppuClock.get *> nmi(scanline, cycle) *> Cpu.clock
         )
-
       case (true, true, false) =>
-        Option(ppuClock.get *> Cpu.clock)
-
+        Option(
+          ppuClock.get *> Cpu.clock
+        )
       case (true, false, true) =>
         Option(
-          ppuClock.get.flatMap { nes =>
-            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
-            else dummy
-          }
+          ppuClock.get *> nmi(scanline, cycle)
         )
-
-      case (_, false, false) =>
+      case (true, false, false) =>
         ppuClock
-
       case (false, true, true) =>
         Option(
-          Cpu.clock.flatMap { nes =>
-            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
-            else dummy
-          }
+          Cpu.clock *> nmi(scanline, cycle)
         )
-
       case (false, true, false) =>
-        Option(Cpu.clock)
-
+        Option(
+          Cpu.clock
+        )
       case (false, false, true) =>
         Option(
-          State.get[NesState].flatMap { nes =>
-            if (Ppu.isNmiReady(scanline, cycle, nes.ppuState)) Cpu.nmi
-            else dummy
-          }
+          nmi(scanline, cycle)
         )
-
+      case (false, false, false) =>
+        None
     }
   }
 
@@ -99,12 +95,72 @@ object NesState {
       (counter, scanline, cycle)
     }
 
+  def cpuClock(counter: Int, scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
+    val ppuClock = Ppu.syncClock(scanline, cycle)
+    val ppuReady = ppuClock.nonEmpty
+    val cpuReady = (counter % 3) == 1
+    val nmiReady = scanline == 241 && cycle == 2
+
+    (ppuReady, cpuReady, nmiReady) match {
+      case (true, true, true) =>
+        Option(
+          ppuClock.get *> nmi(scanline, cycle) *> Cpu.clock
+        )
+      case (true, true, false) =>
+        Option(
+          ppuClock.get *> Cpu.clock
+        )
+      case (true, false, true) =>
+        Option(
+          ppuClock.get *> nmi(scanline, cycle)
+        )
+      case (true, false, false) =>
+        ppuClock
+      case (false, true, true) =>
+        Option(
+          Cpu.clock *> nmi(scanline, cycle)
+        )
+      case (false, true, false) =>
+        Option(
+          Cpu.clock
+        )
+      case (false, false, true) =>
+        Option(
+          nmi(scanline, cycle)
+        )
+      case (false, false, false) =>
+        None
+    }
+  }
+
+  val executeScanlineCpu: Map[Int, State[NesState, NesState]] =
+    frameTicks.groupBy(_._2).map { case (scanline, cycles) =>
+      scanline -> cycles.foldLeft(State.get[NesState]) {
+        case (nes, (counter, scanline, cycle)) =>
+          cpuClock(counter, scanline, cycle) match {
+            case None => nes
+            case Some(op) => nes *> op
+          }
+      }
+    }
+
+  val executeScanlinePpu: Map[Int, State[NesState, NesState]] =
+    frameTicks.groupBy(_._2).map { case (scanline, cycles) =>
+      scanline -> cycles.foldLeft(Ppu.preClock(scanline)) {
+        case (nes, (_, scanline, cycle)) =>
+          Ppu.clock(scanline, cycle) match {
+            case None => nes
+            case Some(op) => nes *> op
+          }
+      }
+    }
+
   val executeFrame: State[NesState, NesState] =
     frameTicks.foldLeft(State.get[NesState]) { case (nes, (counter, scanline, cycle)) =>
-        clock(counter, scanline, cycle) match {
-          case None => nes
-          case Some(op) => nes *> op
-        }
+      clock(counter, scanline, cycle) match {
+        case None => nes
+        case Some(op) => nes *> op
+      }
     }
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
