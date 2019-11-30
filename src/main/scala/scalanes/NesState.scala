@@ -100,12 +100,11 @@ object NesState {
     }
 
   val executeFrame: State[NesState, NesState] =
-    frameTicks.foldLeft(State.get[NesState]) { case (nes, (counter, scanline, cycle)) =>
-        clock(counter, scanline, cycle) match {
-          case None => nes
-          case Some(op) => nes *> op
-        }
-    }
+    frameTicks
+      .flatMap { case (counter, scanline, cycle) =>
+        clock(counter, scanline, cycle)
+      }
+      .reduce(_ *> _)
 
   def initial(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     NesState(
