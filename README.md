@@ -40,7 +40,7 @@ memory mapped registers can change the behaviour of PPU). The type of read opera
 `NesState => (NesState, UInt8)`. Such transitions can be modeled with `State` data structure from Cats library. 
 `State[S, A]` is a wrapper around a function of type `S => (S, A)`, where `S` is the type of the state and `A` is 
 the type of the result. Basic purpose of the `State` data structure is to provide mechanisms for composition of 
-state transitions. Read operation in this case can be represented represented with `State[NesState, UInt8]` type, while 
+state transitions. Read operation in this case can be represented with `State[NesState, UInt8]` type, while 
 other operations can be in most cases represented with `State[NesState, Unit]` type.
 
 Here is an example of TAX CPU instruction, which transfers a value from the accumulator register to the register X and 
@@ -145,7 +145,7 @@ inside the interrupt routine which is triggered when PPU sets vertical blank fla
 it is safe for CPU to access and change PPU's data. Optimization idea was to detect the address of the infinite loop 
 and to skip processing of the CPU instructions at that address. 
 
-## Unsuccessful optimization
+### Unsuccessful optimization
 Immutable data structures are suitable for pipelined processing. The idea here is to separate CPU processing from PPU 
 processing, and to execute them in sequence. The separation could be done, in theory, only on scanline level, because
 of the sprite zero hit flag. PPU sets that flag on rendering sprite that is at the index 0 in internal sprite array. 
@@ -156,7 +156,7 @@ Pipeline implementation however didn't produce any improvements in frame process
 management overhead was significant. Since this was an interesting but unsuccessful optimization attempt, the 
 code changes are left on `pipeline2` branch.
 
-## Unaccepted optimization
+### Unaccepted optimization
 Another idea for optimization is to use `Ref` data structure from Cats Effect library. This data structure provides a 
 functional access to the mutable instances. Idea was not explored in detail because it would require significant 
 refactoring of current implementation. Another reason is that the use of `Ref` data structure is kind of against the 
@@ -169,3 +169,8 @@ techniques.
 * Only support for mappers 000 and 001
 
 ## References
+* [OneLoneCoder's "NES Emulator From Scratch" YouTube Tutorial](https://www.youtube.com/channel/UC-yuWVUplUJZvieEligKBkA): 
+the main source of motivation for starting this project
+* [OneLoneCoder/olcNES emulator](https://github.com/OneLoneCoder/olcNES): video tutorial code
+* [NesDev](http://nesdev.com/): various NES resources
+
