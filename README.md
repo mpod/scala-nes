@@ -6,9 +6,9 @@ programming can be used in implementation of low-level applications.
 ## Screenshots
 
 <p float="left">
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="266"/></kbd>
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="266"/></kbd>
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="266"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="286"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="286"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="286"/></kbd>
 </p>
 
 ## Running
