@@ -163,7 +163,7 @@ object Cpu extends LazyLogging {
     liftS(CpuState.cycles.set(d))
 
   def incCycles(n: Int): State[NesState, Int] = State { nes =>
-    val updated = lift(CpuState.cycles.modify(_ + 1))(nes)
+    val updated = lift(CpuState.cycles.modify(_ + n))(nes)
     (updated, updated.cpuState.cycles)
   }
 
