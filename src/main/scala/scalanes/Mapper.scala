@@ -28,7 +28,7 @@ trait Mapper {
   def chrBankMaps: List[BankMap]
 
   protected def mapAddress(address: UInt16, bankMaps: List[BankMap]): UInt16 = {
-    val (_, result) = prgBankMaps.foldLeft((address, Option.empty[UInt8])) {
+    val (_, result) = bankMaps.foldLeft((address, Option.empty[UInt8])) {
       case ((addr, res), bankMap) if res.isEmpty =>
         if (addr >= (bankMap.offset + bankMap.sizeInKB * 1024))
           (addr - bankMap.sizeInKB * 1024, None)
