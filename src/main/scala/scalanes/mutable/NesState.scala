@@ -1,7 +1,6 @@
 package scalanes.mutable
 
 import monocle.Lens
-import scalanes.mutable.PpuState
 import scalanes.mutable.CpuFlags.CpuFlags
 import scalanes.mutable.Mirroring.Mirroring
 
@@ -64,17 +63,21 @@ class NesState(
   // 2KB internal RAM
   var ram: Vector[UInt8],
   var cpuState: CpuState,
-  var ppuState: PpuState
+  var ppuState: PpuState,
+  var cartridge: Cartridge
 )
 
 object NesState {
   val ram: Lens[NesState, Vector[UInt8]] = lens(_.ram, _.ram_=)
   val cpuState: Lens[NesState, CpuState] = lens(_.cpuState, _.cpuState_=)
   val ppuState: Lens[NesState, PpuState] = lens(_.ppuState, _.ppuState_=)
+  val cartridge: Lens[NesState, Cartridge] = lens(_.cartridge, _.cartridge_=)
 
-  def initial(mirroring: Mirroring): NesState = new NesState(
-    Vector.fill(0x800)(0x00),
-    CpuState.initial,
-    PpuState.initial(mirroring)
-  )
+  def initial(mirroring: Mirroring, cartridge: Cartridge): NesState =
+    new NesState(
+      Vector.fill(0x800)(0x00),
+      CpuState.initial,
+      PpuState.initial(mirroring),
+      cartridge
+    )
 }

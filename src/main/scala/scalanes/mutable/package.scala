@@ -4,6 +4,7 @@ import cats.Monoid
 import cats.data.{IndexedStateT, StateT}
 import cats.effect.IO
 import monocle.Lens
+import scalanes.mutable.mappers.Mapper000
 
 import scala.language.implicitConversions
 

@@ -787,8 +787,7 @@ object Ppu {
     require((address & 0x3FFF) == address)
 
     if (address >= 0x0000 && address <= 0x1FFF)
-      // Cartridge.ppuRead(address)
-      ???
+       Cartridge.ppuRead(address)
     else if (address >= 0x2000 && address <= 0x3EFF)
       State.inspect(nes => readNametables(address)(nes.ppuState))
     else
@@ -799,8 +798,7 @@ object Ppu {
     require((address & 0x3FFF) == address)
 
     if (address >= 0x0000 && address <= 0x1FFF)
-      // Cartridge.ppuWrite(address, d)
-      ???
+      Cartridge.ppuWrite(address, d)
     else if (address >= 0x2000 && address <= 0x3EFF)
       modifyNesState(writeNametables(address, d))
     else

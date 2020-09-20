@@ -129,8 +129,7 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1FFF)       // RAM
       State.inspect(_.ram(address % 0x800))
     else if (address >= 0x2000 && address <= 0x3FFF)  // PPU registers
-      // Ppu.cpuRead(address)
-      ???
+      Ppu.cpuRead(address)
     else if (address == 0x4016)                       // Controller 1
       // Controller.serialReadController1
       ???
@@ -138,8 +137,7 @@ object Cpu extends LazyLogging {
       // Controller.serialReadController2
       ???
     else if (address >= 0x6000 && address <= 0xFFFF)  // Cartridge
-      // Cartridge.cpuRead(address)
-      ???
+      Cartridge.cpuRead(address)
     else
       State.pure(0x00)
   }
@@ -150,8 +148,7 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1FFF)         // RAM
       nes.ram(address % 0x800)
     else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
-      // Cartridge.fastCpuRead(address)(nes)
-      ???
+      Cartridge.fastCpuRead(address)(nes)
     else
       throw new RuntimeException(s"Invalid address $address for fast cpu read.")
   }
@@ -163,16 +160,12 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1FFF)         //RAM
       State.modify(NesState.ram.modify(_.updated(address, d)))
     else if (address >= 0x2000 && address <= 0x3FFF)    // PPU registers
-      // Ppu.cpuWrite(address, d)
-      ???
+      Ppu.cpuWrite(address, d)
     else if (address == 0x4014) {                       // OAM DMA
-      /*
       val page = d << 8
       incCycles(513) *> (0 until 256).map { oamAddress =>
         cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
       }.reduce(_ *> _)
-       */
-      ???
     } else if (address == 0x4016 && (d & 0x01))         // Controller 1
       // Controller.writeController1
       ???
@@ -180,8 +173,7 @@ object Cpu extends LazyLogging {
       // Controller.writeController2
       ???
     else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
-      // Cartridge.cpuWrite(address, d)
-      ???
+      Cartridge.cpuWrite(address, d)
     else
       State.pure(())
   }
