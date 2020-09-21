@@ -3,8 +3,8 @@ package scalanes
 import cats.Monoid
 import cats.data.{IndexedStateT, StateT}
 import cats.effect.IO
+import cats.effect.concurrent.Ref
 import monocle.Lens
-import scalanes.mutable.mappers.Mapper000
 
 import scala.language.implicitConversions
 
@@ -17,6 +17,8 @@ package object mutable {
   type UInt8 = Int
   type UInt15 = Int
   type UInt16 = Int
+
+  type ControllerRef = Ref[IO, UInt8]
 
   def isValidUInt1(v: UInt1): Boolean = (v & 0x01) == v
   def isValidUInt2(v: UInt2): Boolean = (v & 0x03) == v

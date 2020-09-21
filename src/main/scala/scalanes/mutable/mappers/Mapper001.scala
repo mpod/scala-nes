@@ -6,9 +6,6 @@ class Mapper001(
   override val prgRom: Vector[UInt8],
   override val chrRom: Vector[UInt8],
   prgRamSize: Int,
-  private val registers: Array[UInt8],
-  private var shiftReg: UInt8,
-  private var writeCounter: Int
 ) extends Mapper {
 
   override type Self = Mapper001
@@ -18,6 +15,12 @@ class Mapper001(
   override def prgBankMaps: List[BankMap] = createPrgBankMaps(registers)
 
   override def chrBankMaps: List[BankMap] = createChrBankMaps(registers)
+
+  private val registers: Array[UInt8] = Array(0x0C, 0x00, 0x00, 0x00)
+
+  private var shiftReg: UInt8 = 0x00
+
+  private var writeCounter: Int = 0
 
   override def prgWrite(address: UInt16, d: UInt8): Self = {
     if (address < 0x8000)
@@ -74,5 +77,3 @@ class Mapper001(
       List(BankMap.map8kB((registers(1) >> 1) & 0xF))
 }
 
-object Mapper001 {
-}

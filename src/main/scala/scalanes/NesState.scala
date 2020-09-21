@@ -12,7 +12,6 @@ import scalanes.mappers.{Mapper000, Mapper001}
 import scodec.codecs.{conditional, fixedSizeBytes, ignore, uint8, vector}
 import scodec.stream.StreamDecoder
 import scodec.{Attempt, Decoder, Err}
-import shapeless.{::, HNil}
 
 import scala.language.higherKinds
 
