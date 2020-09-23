@@ -30,18 +30,18 @@ object Controller {
     (update(ns), bit)
   }
 
-  def writeController1: State[NesState, Unit] = StateT { ns =>
+  def writeController1: State[NesState, Unit] = State { ns =>
     ns.controllerState.ref.getAndSet(0x00).map { a =>
       val update = (NesState.controllerState composeLens ControllerState.controller1).set(a)
       (update(ns), ())
-    }
+    }.unsafeRunSync()
   }
 
-  def writeController2: State[NesState, Unit] = StateT { ns =>
+  def writeController2: State[NesState, Unit] = State { ns =>
     ns.controllerState.ref.getAndSet(0x00).map { a =>
       val update = (NesState.controllerState composeLens ControllerState.controller2).set(a)
       (update(ns), ())
-    }
+    }.unsafeRunSync()
   }
 
 }

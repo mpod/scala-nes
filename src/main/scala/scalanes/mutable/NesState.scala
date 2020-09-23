@@ -97,6 +97,12 @@ object NesState {
 
   def dummy: State[NesState, NesState] = State.get
 
+  def reset: State[NesState, Unit] = for {
+    _ <- Cpu.reset
+    _ <- Ppu.reset
+    _ <- Cartridge.reset
+  } yield ()
+
   def clock(counter: Int, scanline: Int, cycle: Int): Option[State[NesState, NesState]] = {
     val ppuClock = Ppu.clock(scanline, cycle)
     val ppuReady = ppuClock.nonEmpty

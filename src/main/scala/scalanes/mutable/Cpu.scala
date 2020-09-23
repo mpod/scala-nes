@@ -7,6 +7,8 @@ import scalanes.mutable.CpuFlags.CpuFlags
 
 object Cpu extends LazyLogging {
 
+  import State.stateMonad
+
   sealed trait AddressUnit {
     def read(): State[NesState, UInt8]
     def write(d: UInt8): State[NesState, Unit]
@@ -131,11 +133,9 @@ object Cpu extends LazyLogging {
     else if (address >= 0x2000 && address <= 0x3FFF)  // PPU registers
       Ppu.cpuRead(address)
     else if (address == 0x4016)                       // Controller 1
-      // Controller.serialReadController1
-      ???
+      Controller.serialReadController1
     else if (address == 0x4017)                       // Controller 2
-      // Controller.serialReadController2
-      ???
+      Controller.serialReadController2
     else if (address >= 0x6000 && address <= 0xFFFF)  // Cartridge
       Cartridge.cpuRead(address)
     else
@@ -167,11 +167,9 @@ object Cpu extends LazyLogging {
         cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
       }.reduce(_ *> _)
     } else if (address == 0x4016 && (d & 0x01))         // Controller 1
-      // Controller.writeController1
-      ???
+      Controller.writeController1
     else if (address == 0x4017 && (d & 0x01))           // Controller 2
-      // Controller.writeController2
-      ???
+      Controller.writeController2
     else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
       Cartridge.cpuWrite(address, d)
     else
