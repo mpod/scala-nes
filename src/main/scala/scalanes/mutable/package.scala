@@ -1,12 +1,10 @@
 package scalanes
 
-import cats.{Monad, Monoid}
-import cats.data.{IndexedStateT, StateT}
+import cats.Monad
 import cats.effect.IO
 import cats.effect.concurrent.Ref
 import monocle.Lens
 
-import scala.annotation.tailrec
 import scala.language.implicitConversions
 
 package object mutable {
@@ -31,41 +29,43 @@ package object mutable {
 
   implicit def intToBoolean(v: Int): Boolean = v != 0
 
-  case class State[S, A](run: S => (S, A)) {
+  type State[S, A] = S => (S, A)
+
+  implicit class StateOps[S, A](val sf: State[S, A]) extends AnyVal {
     def map[B](f: A => B): State[S, B] =
       flatMap(a => State.pure(f(a)))
 
-    def transformS[R](f: R => S, g: (R, S) => R): State[R, A] = State { r =>
-      val (s, a) = run(f(r))
+    def transformS[R](f: R => S, g: (R, S) => R): State[R, A] = r => {
+      val (s, a) = sf(f(r))
       (g(r, s), a)
     }
 
-    def transform[B](f: (S, A) => (S, B)): State[S, B] = State { s =>
-      val (s1, a) = run(s)
+    def transform[B](f: (S, A) => (S, B)): State[S, B] = s => {
+      val (s1, a) = sf(s)
       f(s1, a)
     }
 
     def modify(f: S => S): State[S, A] = transform((s, a) => (f(s), a))
 
-    def flatMap[B](f: A => State[S, B]): State[S, B] = State(s => {
-      val (s1, a) = run(s)
-      f(a).run(s1)
-    })
+    def flatMap[B](f: A => State[S, B]): State[S, B] = s => {
+      val (s1, a) = sf(s)
+      f(a)(s1)
+    }
 
     def >>[B](fb: => State[S, B]): State[S, B] = flatMap(_ => fb)
 
     def *>[B](fb: State[S, B]): State[S, B] = >>(fb)
 
-    def runS(s: S): S = run(s)._1
+    def runS(s: S): S = sf(s)._1
   }
 
   object State {
-    def pure[S, A](a: A): State[S, A] = State(s => (s, a))
-    def empty[S, A](implicit A: Monoid[A]): State[S, A] = pure(A.empty)
-    def modify[S](f: S => S): State[S, Unit] = State(s => (f(s), ()))
-    def inspect[S, T](f: S => T): State[S, T] = State(s => (s, f(s)))
-    def get[S]: State[S, S] = State(s => (s, s))
-    def set[S](s: S): State[S, Unit] = State(_ => (s, ()))
+    def apply[S, A](sf: S => (S, A)): State[S, A] = sf
+    def pure[S, A](a: A): State[S, A] = s => (s, a)
+    def modify[S](f: S => S): State[S, Unit] = s => (f(s), ())
+    def inspect[S, T](f: S => T): State[S, T] = s => (s, f(s))
+    def get[S]: State[S, S] = s => (s, s)
+    def set[S](s: S): State[S, Unit] = _ => (s, ())
 
     implicit val stateMonad: Monad[State[NesState, *]] = new Monad[State[NesState, *]] {
       def flatMap[A, B](fa: State[NesState, A])(f: A => State[NesState, B]): State[NesState, B] = fa.flatMap(f)

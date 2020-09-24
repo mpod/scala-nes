@@ -1,13 +1,11 @@
 package scalanes.mutable
 
 import cats.Monad
-import cats.implicits._
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.mutable.CpuFlags.CpuFlags
+import State.stateMonad
 
 object Cpu extends LazyLogging {
-
-  import State.stateMonad
 
   sealed trait AddressUnit {
     def read(): State[NesState, UInt8]
@@ -271,10 +269,10 @@ object Cpu extends LazyLogging {
     hi     <- cpuRead(0xFFFA + 1)
     _      <- setPc(asUInt16(hi, lo))
     _      <- setCycles(8)
-    s      <- State.get
+    s      <- State.get[NesState]
   } yield s
 
-  val clock: State[NesState, NesState] = State.get.flatMap { nes =>
+  val clock: State[NesState, NesState] = State.get[NesState].flatMap { nes =>
     if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc)
       State { nes =>
         val updated = lift(

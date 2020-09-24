@@ -5,7 +5,6 @@ import java.nio.file.Path
 import cats.effect.{Blocker, ContextShift, Sync}
 import fs2.{Stream, io}
 import monocle.Lens
-import cats.implicits._
 import scalanes.mutable.CpuFlags.CpuFlags
 import scalanes.mutable.Mirroring.Mirroring
 import scalanes.mutable.mappers.{Mapper000, Mapper001}
