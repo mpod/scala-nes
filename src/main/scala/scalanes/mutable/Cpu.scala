@@ -3,31 +3,38 @@ package scalanes.mutable
 import cats.Monad
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.mutable.CpuFlags.CpuFlags
-import State.stateMonad
+import scalanes.mutable.State.stateMonad
 
 object Cpu extends LazyLogging {
 
-  sealed trait AddressUnit {
-    def read(): State[NesState, UInt8]
-    def write(d: UInt8): State[NesState, Unit]
+  trait AddressMode
+
+  trait RwAddressMode {
+    def read: NesState => (NesState, UInt8)
+    def write(d: UInt8): NesState => NesState
   }
 
-  case class AbsAddressUnit(address: UInt16) extends AddressUnit {
-    require((address & 0xFFFF) == address)
-    override def read(): State[NesState, UInt8] = cpuRead(address)
-    override def write(d: UInt8): State[NesState, Unit] = cpuWrite(address, d)
+  trait AbsAddressMode extends RwAddressMode {
+    def prepareAddress(nes: NesState): (NesState, UInt16)
+
+    override def read: NesState => (NesState, UInt8) =
+      nes => {
+        val (nes1, address) = prepareAddress(nes)
+        cpuRead(address)(nes1)
+      }
+
+    override def write(d: UInt8): NesState => NesState =
+      nes => {
+        val (nes1, address) = prepareAddress(nes)
+        cpuWrite(address, d)(nes1)
+      }
   }
 
-  case object AccAddressUnit extends AddressUnit {
-    override def read(): State[NesState, UInt8] = getA
-    override def write(d: UInt8): State[NesState, Unit] = setA(d)
+  trait RelAddressMode extends AddressMode {
+    def prepareAddress(nes: NesState): (NesState, Byte)
   }
 
-  type AddressMode = State[NesState, _ <: AddressUnit]
-  type AbsAddressMode = State[NesState, AbsAddressUnit]
-  type AccAddressMode = State[NesState, AccAddressUnit.type]
-  type RelAddressMode = State[NesState, Byte]
-  type Op = State[NesState, Unit]
+  type Op = NesState => NesState
 
   implicit class CpuStateOps[A](val a: State[CpuState, A]) extends AnyVal {
     def toNesState: State[NesState, A] = a.transformS(
@@ -36,458 +43,369 @@ object Cpu extends LazyLogging {
     )
   }
 
-  private def readExecute(addressMode: AddressMode)(op: (UInt8, CpuState) => CpuState): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    _       <- State.modify(NesState.cpuState.modify(op(d, _)))
-  } yield ()
-
-  private def readExecuteWrite(addressMode: AddressMode)(op: (UInt8, CpuState) => (CpuState, UInt8)): Op = for {
-    address <- addressMode
-    dIn     <- address.read()
-    dOut    <- State(op(dIn, _)).toNesState
-    _       <- address.write(dOut)
-  } yield ()
-
-  private def executeWrite(addressMode: AddressMode)(op: CpuState => (CpuState, UInt8)): Op = for {
-    address <- addressMode
-    dOut    <- State(op).toNesState
-    _       <- address.write(dOut)
-  } yield ()
-
   private def lift(f: CpuState => CpuState): NesState => NesState =
     NesState.cpuState.modify(f)
 
-  private def liftS(f: CpuState => CpuState): State[NesState, Unit] =
-    State.modify(lift(f))
+  val incPc: State[NesState, UInt16] =
+    nes => {
+      val nes1 = lift(CpuState.pc.modify(pc => (pc + 1) & 0xffff))(nes)
+      (nes1, nes1.cpuState.pc)
+    }
 
-  val incPc: State[NesState, UInt16] = State { nes =>
-    val updated = lift(CpuState.pc.modify(pc => (pc + 1) & 0xFFFF))(nes)
-    (updated, updated.cpuState.pc)
-  }
-
-  val decPc: State[NesState, UInt16] = State { nes =>
-    val updated = lift(CpuState.pc.modify(pc => (pc - 1) & 0xFFFF))(nes)
-    (updated, updated.cpuState.pc)
-  }
-
-  val getPc: State[NesState, UInt16] = State.inspect(_.cpuState.pc)
-
-  def setPc(d: UInt16): State[NesState, Unit] = {
-    require((d & 0xFFFF) == d)
-    liftS(CpuState.pc.set(d))
-  }
-
-  val getX: State[NesState, UInt8] = State.inspect(_.cpuState.x)
-
-  def setX(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
-    liftS(CpuState.x.set(d))
-  }
-
-  val getY: State[NesState, UInt8] = State.inspect(_.cpuState.y)
-
-  def setY(d: UInt8): State[NesState, Unit] = {
-    require((d & 0xFF) == d)
-    liftS(CpuState.y.set(d))
-  }
-
-  val getA: State[NesState, UInt8] = State.inspect(_.cpuState.a)
-
-  def setA(d: UInt8): State[NesState, Unit] = liftS(CpuState.a.set(d))
-
-  val getStkp: State[NesState, UInt8] = State.inspect(_.cpuState.stkp)
-
-  def setStkp(d: UInt8): State[NesState, Unit] = liftS(CpuState.stkp.set(d))
-
-  val decStkp: State[NesState, UInt8] = State { nes =>
-    val updated = lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xFF))(nes)
-    (updated, updated.cpuState.stkp)
-  }
-
-  val incStkp: State[NesState, UInt8] = State { nes =>
-    val updated = lift(CpuState.stkp.modify(stkp => (stkp + 1) & 0xFF))(nes)
-    (updated, updated.cpuState.stkp)
-  }
-
-  val getCycles: State[NesState, Int] = State.inspect(_.cpuState.cycles)
-
-  def setCycles(d: Int): State[NesState, Unit] =
-    liftS(CpuState.cycles.set(d))
-
-  def incCycles(n: Int): State[NesState, Int] = State { nes =>
-    val updated = lift(CpuState.cycles.modify(_ + n))(nes)
-    (updated, updated.cpuState.cycles)
-  }
-
-  def setHaltAt(address: UInt16): State[NesState, Unit] =
-    liftS(CpuState.haltAt.set(address))
+  val decPc: State[NesState, UInt16] =
+    nes => {
+      val nes1 = lift(CpuState.pc.modify(pc => (pc - 1) & 0xffff))(nes)
+      (nes1, nes1.cpuState.pc)
+    }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
-    require((address & 0xFFFF) == address)
+    require((address & 0xffff) == address)
 
-    if (address >= 0x0000 && address <= 0x1FFF)       // RAM
+    if (address >= 0x0000 && address <= 0x1fff) // RAM
       State.inspect(_.ram(address % 0x800))
-    else if (address >= 0x2000 && address <= 0x3FFF)  // PPU registers
+    else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
       Ppu.cpuRead(address)
-    else if (address == 0x4016)                       // Controller 1
+    else if (address == 0x4016) // Controller 1
       Controller.serialReadController1
-    else if (address == 0x4017)                       // Controller 2
+    else if (address == 0x4017) // Controller 2
       Controller.serialReadController2
-    else if (address >= 0x6000 && address <= 0xFFFF)  // Cartridge
+    else if (address >= 0x6000 && address <= 0xffff) // Cartridge
       Cartridge.cpuRead(address)
     else
       State.pure(0x00)
   }
 
-  def fastCpuRead(address: UInt16)(nes: NesState): UInt8 = {
-    require((address & 0xFFFF) == address)
+  def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
+    nes => {
+      if (address >= 0x0000 && address <= 0x1fff) //RAM
+        NesState.ram.modify(_.updated(address, d))(nes)
+      else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
+        Ppu.cpuWrite(address, d).runS(nes)
+      else if (address == 0x4014) { // OAM DMA
+        ???
+        /*
+        val page = d << 8
+        incCycles(513) *> (0 until 256)
+          .map { oamAddress =>
+            cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
+          }
+          .reduce(_ *> _)
+         */
+      } else if (address == 0x4016 && (d & 0x01)) // Controller 1
+        Controller.writeController1.runS(nes)
+      else if (address == 0x4017 && (d & 0x01)) // Controller 2
+        Controller.writeController2.runS(nes)
+      else if (address >= 0x6000 && address <= 0xffff) // Cartridge
+        Cartridge.cpuWrite(address, d).runS(nes)
+      else
+        nes
+    }
 
-    if (address >= 0x0000 && address <= 0x1FFF)         // RAM
-      nes.ram(address % 0x800)
-    else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
-      Cartridge.fastCpuRead(address)(nes)
-    else
-      throw new RuntimeException(s"Invalid address $address for fast cpu read.")
-  }
+  def modifyFlag(flag: CpuFlags, value: Boolean): NesState => NesState =
+    lift(CpuState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit))
 
-  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] = {
-    require((address & 0xFFFF) == address)
-    require((d & 0xFF) == d)
+  def modifyFlags(flags: Map[CpuFlags, Boolean]): NesState => NesState =
+    lift(
+      CpuState.status.modify(s =>
+        flags.foldLeft(s) { case (acc, (f, v)) =>
+          if (v) acc | f.bit else acc & ~f.bit
+        }
+      )
+    )
 
-    if (address >= 0x0000 && address <= 0x1FFF)         //RAM
-      State.modify(NesState.ram.modify(_.updated(address, d)))
-    else if (address >= 0x2000 && address <= 0x3FFF)    // PPU registers
-      Ppu.cpuWrite(address, d)
-    else if (address == 0x4014) {                       // OAM DMA
-      val page = d << 8
-      incCycles(513) *> (0 until 256).map { oamAddress =>
-        cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
-      }.reduce(_ *> _)
-    } else if (address == 0x4016 && (d & 0x01))         // Controller 1
-      Controller.writeController1
-    else if (address == 0x4017 && (d & 0x01))           // Controller 2
-      Controller.writeController2
-    else if (address >= 0x6000 && address <= 0xFFFF)    // Cartridge
-      Cartridge.cpuWrite(address, d)
-    else
-      State.pure(())
-  }
+  def setZnFlags(d: UInt8): NesState => NesState =
+    modifyFlags(
+      Map(
+        (CpuFlags.Z, d == 0x00),
+        (CpuFlags.N, d & 0x80)
+      )
+    )
 
-  def fastCpuWrite(address: UInt16, d: UInt8)(nes: NesState): NesState = {
-    require((address & 0xFFFF) == address)
-    require((d & 0xFF) == d)
+  def getFlag(flag: CpuFlags): State[NesState, Boolean] =
+    State.inspect(flag.bit & _.cpuState.status)
 
-    if (address >= 0x0000 && address <= 0x1FFF)         //RAM
-      NesState.ram.modify(_.updated(address, d))(nes)
-    else
-      throw new RuntimeException(s"Invalid address $address for fast cpu write.")
-  }
+  val pop: State[NesState, UInt8] =
+    nes => {
+      val nes1      = lift(CpuState.stkp.modify(stkp => (stkp + 1) & 0xff))(nes)
+      val address   = (0x0100 + nes1.cpuState.stkp) & 0xffff
+      val (nes2, d) = cpuRead(address)(nes1)
+      (nes2, d)
+    }
 
-  val getStatus: State[NesState, UInt8] = State.inspect(_.cpuState.status)
+  def push(d: UInt8): NesState => NesState =
+    nes => {
+      val address   = (0x0100 + nes.cpuState.stkp) & 0xffff
+      val modifyCpu = CpuState.stkp.modify(stkp => (stkp - 1) & 0xff)
+      (cpuWrite(address, d) andThen lift(modifyCpu))(nes)
+    }
 
-  def setStatus(d: UInt8): State[NesState, Unit] = liftS(CpuState.status.set(d))
-
-  def setFlag(flag: CpuFlags, value: Boolean): State[NesState, Unit] =
-    liftS(CpuState.status.modify(s => if (value) s | flag.bit else s & ~flag.bit))
-
-  def setFlags(flags: (CpuFlags, Boolean)*)(s: UInt8): UInt8 =
-    flags.foldLeft(s) { case (acc, (f, v)) => if (v) acc | f.bit else acc & ~f.bit }
-
-  def setZnFlags(d: UInt8)(s: UInt8): UInt8 =
-    setFlags((CpuFlags.Z, d == 0x00), (CpuFlags.N, d & 0x80))(s)
-
-  def getFlag(flag: CpuFlags): State[NesState, Boolean] = State.inspect(flag.bit & _.cpuState.status)
-
-  val pop: State[NesState, UInt8] = State { nes =>
-    val updated = lift(
-      CpuState.stkp.modify(stkp => (stkp + 1) & 0xFF)
-    )(nes)
-    val address = (0x0100 + updated.cpuState.stkp) & 0xFFFF
-    (updated, fastCpuRead(address)(nes))
-  }
-
-  def push(d: UInt8): State[NesState, Unit] = State.modify { nes =>
-    val address = (0x0100 + nes.cpuState.stkp) & 0xFFFF
-    val update =
-      fastCpuWrite(address, d) _ andThen
-        lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xFF))
-    update(nes)
-  }
-
-  private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xFF00) != (a & 0xFF00)
+  private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xff00) != (a & 0xff00)
 
   private def asUInt16(hi: UInt8, lo: UInt8): UInt16 = {
-    require((hi & 0xFF) == hi)
-    require((lo & 0xFF) == lo)
+    require((hi & 0xff) == hi)
+    require((lo & 0xff) == lo)
 
     (hi << 8) | lo
   }
 
-  def reset: State[NesState, Unit] = for {
-    lo <- cpuRead(0xFFFC)
-    hi <- cpuRead(0xFFFD)
-    _  <- setPc(asUInt16(hi, lo))
-    _  <- setA(0)
-    _  <- setX(0)
-    _  <- setY(0)
-    _  <- setStkp(0xFD)
-    _  <- setStatus(0x00 | CpuFlags.U.bit | CpuFlags.I.bit)
-    _  <- setCycles(0)
-    _  <- setHaltAt(0xFFFF)
-  } yield ()
+  def reset: State[NesState, Unit] =
+    nes => {
+      val (nes1, lo) = cpuRead(0xfffc)(nes)
+      val (nes2, hi) = cpuRead(0xfffd)(nes1)
+      val pc         = asUInt16(hi, lo)
+      val nes3 = lift(
+        CpuState.pc.set(pc) andThen
+          CpuState.a.set(0) andThen
+          CpuState.x.set(0) andThen
+          CpuState.y.set(0) andThen
+          CpuState.stkp.set(0xfd) andThen
+          CpuState.status.set(0x00 | CpuFlags.U.bit | CpuFlags.I.bit) andThen
+          CpuState.cycles.set(0)
+      )(nes2)
+      (nes3, ())
+    }
 
-  def irq: State[NesState, Unit] = for {
-    pc     <- getPc
-    pcHi   =  (pc >> 8) & 0xFF
-    _      <- push(pcHi)
-    pcLo   =  pc & 0xFF
-    _      <- push(pcLo)
-    _      <- setFlag(CpuFlags.B, value = false)
-    _      <- setFlag(CpuFlags.U, value = true)
-    _      <- setFlag(CpuFlags.I, value = true)
-    status <- getStatus
-    _      <- push(status)
-    lo     <- cpuRead(0xFFFE)
-    hi     <- cpuRead(0xFFFE+ 1)
-    _      <- setPc(asUInt16(hi, lo))
-    _      <- setCycles(7)
-  } yield ()
+  def irq: Op =
+    nes => {
+      val pc1  = nes.cpuState.pc
+      val pcHi = (pc1 >> 8) & 0xff
+      val pcLo = pc1 & 0xff
+      val flags = Map[CpuFlags, Boolean](
+        (CpuFlags.B, false),
+        (CpuFlags.U, true),
+        (CpuFlags.I, true)
+      )
+      val nes1       = (push(pcHi) andThen push(pcLo) andThen modifyFlags(flags))(nes)
+      val status     = nes1.cpuState.status
+      val nes2       = push(status)(nes1)
+      val (nes3, lo) = cpuRead(0xfffe)(nes2)
+      val (nes4, hi) = cpuRead(0xfffe + 1)(nes3)
+      val pc2        = asUInt16(hi, lo)
+      lift(CpuState.pc.set(pc2) andThen CpuState.cycles.set(7))(nes4)
+    }
 
-  def nmi: State[NesState, NesState] = for {
-    pc     <- getPc
-    pcHi   =  (pc >> 8) & 0xFF
-    _      <- push(pcHi)
-    pcLo   =  pc & 0xFF
-    _      <- push(pcLo)
-    _      <- setFlag(CpuFlags.B, value = false)
-    _      <- setFlag(CpuFlags.U, value = true)
-    _      <- setFlag(CpuFlags.I, value = true)
-    status <- getStatus
-    _      <- push(status)
-    lo     <- cpuRead(0xFFFA)
-    hi     <- cpuRead(0xFFFA + 1)
-    _      <- setPc(asUInt16(hi, lo))
-    _      <- setCycles(8)
-    s      <- State.get[NesState]
-  } yield s
+  def nmi: State[NesState, NesState] =
+    nes => {
+      val pc1  = nes.cpuState.pc
+      val pcHi = (pc1 >> 8) & 0xff
+      val pcLo = pc1 & 0xff
+      val flags = Map[CpuFlags, Boolean](
+        (CpuFlags.B, false),
+        (CpuFlags.U, true),
+        (CpuFlags.I, true)
+      )
+      val nes1       = (push(pcHi) andThen push(pcLo) andThen modifyFlags(flags))(nes)
+      val status     = nes1.cpuState.status
+      val nes2       = push(status)(nes1)
+      val (nes3, lo) = cpuRead(0xfffa)(nes2)
+      val (nes4, hi) = cpuRead(0xfffa + 1)(nes3)
+      val pc2        = asUInt16(hi, lo)
+      val nes5       = lift(CpuState.pc.set(pc2) andThen CpuState.cycles.set(7))(nes4)
+      (nes5, nes5)
+    }
 
-  val clock: State[NesState, NesState] = State.get[NesState].flatMap { nes =>
-    if (nes.cpuState.cycles == 0 && nes.cpuState.haltAt == nes.cpuState.pc)
-      State { nes =>
-        val updated = lift(
-          CpuState.cycles.set(10)
-        )(nes)
-        (updated, updated)
+  val clock: State[NesState, NesState] =
+    nes => {
+      val nes2 = if (nes.cpuState.cycles == 0) {
+        val (nes1, opCode) = cpuRead(nes.cpuState.pc)(nes)
+        val instr          = lookup(opCode)
+        (lift(CpuState.cycles.set(instr.cycles) andThen CpuState.pc.modify(pc => (pc + 1) & 0xffff)) andThen
+          instr.op andThen modifyFlag(CpuFlags.U, true))(nes1)
+      } else {
+        lift(CpuState.cycles.modify(_ - 1))(nes)
       }
-    else if (nes.cpuState.cycles == 0) {
-      val opCode = fastCpuRead(nes.cpuState.pc)(nes)
-      val instr = lookup(opCode)
-      State[NesState, Unit] { nes =>
-        val updated = lift(
-          CpuState.cycles.set(instr.cycles) andThen
-            CpuState.pc.modify(_ + 1)
-        )(nes)
-        (updated, ())
-      } *> instr.op *> State { nes =>
-        val updated = lift(
-          CpuState.status.modify(setFlags(CpuFlags.U -> true))
-        )(nes)
-        (updated, updated)
-      }
-    } else
-      State { nes =>
-        val updated = lift(
-          CpuState.cycles.modify(_ - 1)
-        )(nes)
-        (updated, updated)
-      }
-  }
+      (nes2, nes2)
+    }
 
-  val executeNextInstr: State[NesState, Unit] = for {
-    _ <- clock
-    _ <- Monad[State[NesState, *]].whileM_(getCycles.map(_ != 0))(clock)
-  } yield ()
+  val executeNextInstr: State[NesState, Unit] =
+    nes => {
+      var nextNes = nes
+      while (nextNes.cpuState.cycles > 0)
+        nextNes = clock.runS(nextNes)
+      (nextNes, ())
+    }
 
   // Implicit
   // It may operate on the accumulator.
-  val IMP: AccAddressMode = State.pure(AccAddressUnit)
+  val IMP: RwAddressMode = new RwAddressMode {
+    override def read: NesState => (NesState, UInt8) =
+      nes => (nes, nes.cpuState.a)
+
+    override def write(d: UInt8): NesState => NesState =
+      lift(CpuState.a.set(d))
+  }
 
   // Immediate - #v
   // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
-  val IMM: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-    (updated, AbsAddressUnit(pc))
-  }
+  val IMM: AbsAddressMode =
+    nes => {
+      val address = nes.cpuState.pc
+      val nes1    = lift(CpuState.pc.modify(_ + 1))(nes)
+      (nes1, address)
+    }
 
   // Zero page - d
   // Fetches the value from an 8-bit address on the zero page.
-  val ZP0: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val address = fastCpuRead(pc)(nes)
-    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val ZP0: AbsAddressMode =
+    nes => {
+      val pc              = nes.cpuState.pc
+      val (nes1, address) = cpuRead(pc)(nes)
+      val nes2            = lift(CpuState.pc.modify(_ + 1))(nes1)
+      (nes2, address)
+    }
 
   // Zero page indexed - d,x
-  val ZPX: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val address = (fastCpuRead(pc)(nes) + nes.cpuState.x) & 0xFF
-    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val ZPX: AbsAddressMode =
+    nes => {
+      val pc        = nes.cpuState.pc
+      val (nes1, d) = cpuRead(pc)(nes)
+      val address   = (d + nes1.cpuState.x) & 0xff
+      val nes2      = lift(CpuState.pc.modify(_ + 1))(nes1)
+      (nes2, address)
+    }
 
   // Zero page indexed - d,y
-  val ZPY: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val address = (fastCpuRead(pc)(nes) + nes.cpuState.y) & 0xFF
-    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val ZPY: AbsAddressMode =
+    nes => {
+      val pc        = nes.cpuState.pc
+      val (nes1, d) = cpuRead(pc)(nes)
+      val address   = (d + nes1.cpuState.y) & 0xff
+      val nes2      = lift(CpuState.pc.modify(_ + 1))(nes1)
+      (nes2, address)
+    }
 
-  val REL: RelAddressMode = State { nes =>
-    val pc         = nes.cpuState.pc
-    val updated    = lift(CpuState.pc.modify(_ + 1))(nes)
-    val relAddress = fastCpuRead(pc)(nes).toByte
-    (updated, relAddress)
-  }
+  val REL: RelAddressMode =
+    nes => {
+      val pc              = nes.cpuState.pc
+      val (nes1, address) = cpuRead(pc)(nes)
+      val nes2            = lift(CpuState.pc.modify(_ + 1))(nes1)
+      (nes2, address.toByte)
+    }
 
   // Absolute - a
   // Fetches the value from a 16-bit address anywhere in memory.
-  val ABS: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val lo      = fastCpuRead(pc)(nes)
-    val hi      = fastCpuRead(pc + 1)(nes)
-    val address = asUInt16(hi, lo)
-    val updated = lift(CpuState.pc.modify(_ + 2))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val ABS: AbsAddressMode =
+    nes => {
+      val pc         = nes.cpuState.pc
+      val (nes1, lo) = cpuRead(pc)(nes)
+      val (nes2, hi) = cpuRead(pc + 1)(nes1)
+      val address    = asUInt16(hi, lo)
+      val nes3       = lift(CpuState.pc.modify(_ + 2))(nes2)
+      (nes3, address)
+    }
 
   // Absolute indexed - a,x
-  val ABX: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val lo      = fastCpuRead(pc)(nes)
-    val hi      = fastCpuRead(pc + 1)(nes)
-    val address = asUInt16(hi, lo)
-    val c       = if (isPageChange(address, nes.cpuState.x)) 1 else 0
-    val updated = lift(
-      CpuState.pc.modify(_ + 2) andThen
-        CpuState.cycles.modify(_ + c)
-    )(nes)
-    (updated, AbsAddressUnit((address + nes.cpuState.x) & 0xFFFF))
-  }
+  val ABX: AbsAddressMode =
+    nes => {
+      val (nes1, address) = ABS.prepareAddress(nes)
+      val c               = if (isPageChange(address, nes1.cpuState.x)) 1 else 0
+      val modifyNes       = lift(CpuState.cycles.modify(_ + c))
+      (modifyNes(nes1), (address + nes1.cpuState.x) & 0xffff)
+    }
 
   // Absolute indexed - a,y
-  val ABY: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val lo      = fastCpuRead(pc)(nes)
-    val hi      = fastCpuRead(pc + 1)(nes)
-    val address = asUInt16(hi, lo)
-    val c       = if (isPageChange(address, nes.cpuState.y)) 1 else 0
-    val updated = lift(
-      CpuState.pc.modify(_ + 2) andThen
-        CpuState.cycles.modify(_ + c)
-    )(nes)
-    (updated, AbsAddressUnit((address + nes.cpuState.y) & 0xFFFF))
-  }
+  val ABY: AbsAddressMode =
+    nes => {
+      val (nes1, address) = ABS.prepareAddress(nes)
+      val c               = if (isPageChange(address, nes1.cpuState.y)) 1 else 0
+      val nes2            = lift(CpuState.cycles.modify(_ + c))(nes1)
+      (nes2, (address + nes.cpuState.y) & 0xffff)
+    }
 
   // Indirect - (a)
   // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a
   // 16-bit pointer anywhere in memory.
-  val IND: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val ptrLo   = fastCpuRead(pc)(nes)
-    val ptrHi   = fastCpuRead(pc + 1)(nes)
-    val ptr     = asUInt16(ptrHi, ptrLo)
-    val lo      = fastCpuRead(ptr)(nes)
-    val hi      = if ((ptr & 0x00FF) == 0x00FF)
-      fastCpuRead(ptr & 0xFF00)(nes)
-    else
-      fastCpuRead((ptr + 1) & 0xFFFF)(nes)
-    val address = asUInt16(hi, lo)
-    val updated = lift(CpuState.pc.modify(_ + 2))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val IND: AbsAddressMode =
+    nes => {
+      val (nes1, ptr) = ABS.prepareAddress(nes)
+      val (nes2, lo)  = cpuRead(ptr)(nes1)
+      val (nes3, hi) =
+        if ((ptr & 0x00ff) == 0x00ff)
+          cpuRead(ptr & 0xff00)(nes2)
+        else
+          cpuRead((ptr + 1) & 0xffff)(nes2)
+      val address = asUInt16(hi, lo)
+      (nes3, address)
+    }
 
   // Indexed indirect - (d,x)
-  val IZX: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val t       = fastCpuRead(pc)(nes)
-    val x       = nes.cpuState.x
-    val lo      = fastCpuRead((t + x + 0) & 0x00FF)(nes)
-    val hi      = fastCpuRead((t + x + 1) & 0x00FF)(nes)
-    val address = asUInt16(hi, lo)
-    val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-    (updated, AbsAddressUnit(address))
-  }
+  val IZX: AbsAddressMode =
+    nes => {
+      val pc         = nes.cpuState.pc
+      val (nes1, t)  = cpuRead(pc)(nes)
+      val x          = nes.cpuState.x
+      val (nes2, lo) = cpuRead((t + x + 0) & 0x00ff)(nes1)
+      val (nes3, hi) = cpuRead((t + x + 1) & 0x00ff)(nes2)
+      val address    = asUInt16(hi, lo)
+      val nes4       = lift(CpuState.pc.modify(_ + 1))(nes3)
+      (nes4, address)
+    }
 
   // Indirect indexed - (d),y
-  val IZY: AbsAddressMode = State { nes =>
-    val pc      = nes.cpuState.pc
-    val t       = fastCpuRead(pc)(nes)
-    val y       = nes.cpuState.y
-    val lo      = fastCpuRead((t + 0) & 0x00FF)(nes)
-    val hi      = fastCpuRead((t + 1) & 0x00FF)(nes)
-    val address = asUInt16(hi, lo)
-    val c       = if (isPageChange(address, y)) 1 else 0
-    val updated = lift(
-      CpuState.cycles.modify(_ + c) andThen
-        CpuState.pc.modify(_ + 1)
-    )(nes)
-    (updated, AbsAddressUnit((address + y) & 0xFFFF))
-  }
+  val IZY: AbsAddressMode =
+    nes => {
+      val pc         = nes.cpuState.pc
+      val (nes1, t)  = cpuRead(pc)(nes)
+      val y          = nes.cpuState.y
+      val (nes2, lo) = cpuRead((t + 0) & 0x00ff)(nes1)
+      val (nes3, hi) = cpuRead((t + 1) & 0x00ff)(nes2)
+      val address    = asUInt16(hi, lo)
+      val c          = if (isPageChange(address, y)) 1 else 0
+      val nes4       = lift(CpuState.cycles.modify(_ + c) andThen CpuState.pc.modify(_ + 1))(nes3)
+      (nes4, (address + y) & 0xffff)
+    }
 
   // Add with carry
-  def ADC(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val c      = cpu.getFlag(CpuFlags.C)
-    val lsb    = if (c) 1 else 0
-    val temp   = cpu.a + d + lsb
-    val update =
-      CpuState.a.set(temp & 0xFF) andThen
-        CpuState.status.modify(setFlags(
-          CpuFlags.C -> (temp & 0xFF00),
-          CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
-          CpuFlags.V -> ((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
-          CpuFlags.N -> (temp & 0x80)
-        ))
-    update(cpu)
-  }
+  def ADC(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val cpu       = nes1.cpuState
+      val c         = cpu.getFlag(CpuFlags.C)
+      val lsb       = if (c) 1 else 0
+      val temp      = cpu.a + d + lsb
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (temp & 0xff00),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlags.V -> ((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
+        CpuFlags.N -> (temp & 0x80)
+      )
+      (lift(CpuState.a.set(temp & 0xff)) andThen modifyFlags(flags))(nes1)
+    }
 
   // Logical AND
-  def AND(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val r      = cpu.a & d & 0xFF
-    val update = CpuState.a.set(r) andThen CpuState.status.modify(setZnFlags(r))
-    update(cpu)
-  }
+  def AND(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val cpu       = nes1.cpuState
+      val r         = cpu.a & d & 0xff
+      (lift(CpuState.a.set(r)) andThen setZnFlags(r))(nes1)
+    }
 
   // Arithmetic shift left
-  def ASL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val temp   = d << 1
-    val update = CpuState.status.modify(setFlags(
-      CpuFlags.C -> (temp & 0xFF00),
-      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
-      CpuFlags.N -> (temp & 0x80)
-    ))
-    (update(cpu), temp & 0xFF)
-  }
-
-  def branchIf(p: NesState => Boolean): Op = State.get[NesState].flatMap { nes =>
-    if (p(nes)) {
-      REL.transform { (nes, relAddress) =>
-        val cpu = nes.cpuState
-        val absAddress = (cpu.pc + relAddress) & 0xFFFF
-        val cycles = cpu.cycles + (if (isPageChange(cpu.pc, relAddress)) 2 else 1)
-        val updated = lift(
-          CpuState.pc.set(absAddress) andThen CpuState.cycles.set(cycles)
-        )(nes)
-        (updated, ())
-      }
-    } else {
-      val updated = lift(CpuState.pc.modify(_ + 1))(nes)
-      State.set(updated)
+  def ASL(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val temp      = d << 1
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (temp & 0xff00),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlags.N -> (temp & 0x80)
+      )
+      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
     }
-  }
+
+  def branchIf(p: NesState => Boolean): Op =
+    nes => {
+      if (p(nes)) {
+        val (nes1, relAddress) = REL.prepareAddress(nes)
+        val cpu                = nes.cpuState
+        val absAddress         = (cpu.pc + relAddress) & 0xffff
+        val cycles             = cpu.cycles + (if (isPageChange(cpu.pc, relAddress)) 2 else 1)
+        lift(CpuState.pc.set(absAddress) andThen CpuState.cycles.set(cycles))(nes1)
+      } else {
+        lift(CpuState.pc.modify(_ + 1))(nes)
+      }
+    }
 
   // Branch if carry clear
   val BCC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.C))
@@ -499,15 +417,18 @@ object Cpu extends LazyLogging {
   val BEQ: Op = branchIf(_.cpuState.getFlag(CpuFlags.Z))
 
   // Bit test
-  def BIT(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val temp   = cpu.a & d
-    val update = CpuState.status.modify(setFlags(
-      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
-      CpuFlags.N -> (d & (1 << 7)),
-      CpuFlags.V -> (d & (1 << 6))
-    ))
-    update(cpu)
-  }
+  def BIT(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val cpu       = nes1.cpuState
+      val temp      = cpu.a & d
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlags.N -> (d & (1 << 7)),
+        CpuFlags.V -> (d & (1 << 6))
+      )
+      modifyFlags(flags)(nes1)
+    }
 
   // Branch if minus
   val BMI: Op = branchIf(_.cpuState.getFlag(CpuFlags.N))
@@ -519,20 +440,21 @@ object Cpu extends LazyLogging {
   val BPL: Op = branchIf(!_.cpuState.getFlag(CpuFlags.N))
 
   // Force interrupt
-  def BRK: Op = for {
-    pc1    <- incPc
-    _      <- setFlag(CpuFlags.I, value = true)
-    _      <- push((pc1 >> 8) & 0xFF)
-    _      <- push(pc1 & 0xFF)
-    _      <- setFlag(CpuFlags.B, value = true)
-    status <- getStatus
-    _      <- push(status)
-    _      <- setFlag(CpuFlags.B, value = false)
-    d1     <- cpuRead(0xFFFE)
-    d2     <- cpuRead(0xFFFF)
-    pc2    =  asUInt16(d2, d1)
-    _      <- setPc(pc2)
-  } yield ()
+  def BRK: Op =
+    nes => {
+      val (nes1, pc1) = incPc(nes)
+      val nes2 = (
+        modifyFlag(CpuFlags.I, value = true) andThen
+          push((pc1 >> 8) & 0xff) andThen push(pc1 & 0xff)
+          andThen modifyFlag(CpuFlags.B, value = true)
+      )(nes1)
+      val status     = nes2.cpuState.status
+      val nes3       = (push(status) andThen modifyFlag(CpuFlags.B, value = false))(nes2)
+      val (nes4, d1) = cpuRead(0xfffe)(nes3)
+      val (nes5, d2) = cpuRead(0xffff)(nes4)
+      val pc2        = asUInt16(d2, d1)
+      lift(CpuState.pc.set(pc2))(nes5)
+    }
 
   // Branch if overflow clear
   val BVC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.V))
@@ -541,577 +463,665 @@ object Cpu extends LazyLogging {
   val BVS: Op = branchIf(_.cpuState.getFlag(CpuFlags.V))
 
   // Clear carry flag
-  val CLC: Op = setFlag(CpuFlags.C, value = false)
+  val CLC: Op = modifyFlag(CpuFlags.C, value = false)
 
   // Clear decimal mode
-  val CLD: Op = setFlag(CpuFlags.D, value = false)
+  val CLD: Op = modifyFlag(CpuFlags.D, value = false)
 
   // Clear interrupt disable
-  val CLI: Op = setFlag(CpuFlags.I, value = false)
+  val CLI: Op = modifyFlag(CpuFlags.I, value = false)
 
   // Clear overflow flag
-  val CLV: Op = setFlag(CpuFlags.V, value = false)
+  val CLV: Op = modifyFlag(CpuFlags.V, value = false)
 
-  def compareS(getter1: State[NesState, UInt8], getter2: State[NesState, UInt8]): Op = for {
-    d1   <- getter1
-    d2   <- getter2
-    temp =  d2 - d1
-    _    <- setFlag(CpuFlags.C, d2 >= d1)
-    _    <- setFlag(CpuFlags.Z, (temp & 0x00FF) == 0x0000)
-    _    <- setFlag(CpuFlags.N, temp & 0x0080)
-  } yield ()
-
-  def compare(getter: CpuState => UInt8): (UInt8, CpuState) => CpuState = {
-    (d1, cpu) =>
-      val d2     = getter(cpu)
-      val temp   = d2 - d1
-      val update = CpuState.status.modify(setFlags(
+  def compare(addressMode: RwAddressMode, getter: CpuState => UInt8): NesState => NesState =
+    nes => {
+      val (nes1, d1) = addressMode.read(nes)
+      val cpu        = nes1.cpuState
+      val d2         = getter(cpu)
+      val temp       = d2 - d1
+      val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (d2 >= d1),
-        CpuFlags.Z -> ((temp & 0x00FF) == 0x0000),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x0000),
         CpuFlags.N -> (temp & 0x0080)
-      ))
-      update(cpu)
-  }
+      )
+      modifyFlags(flags)(nes1)
+    }
 
   // Compare
-  def CMP(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.a))
+  def CMP(addressMode: RwAddressMode): Op = compare(addressMode, _.a)
 
   // Compare X register
-  def CPX(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.x))
+  def CPX(addressMode: RwAddressMode): Op = compare(addressMode, _.x)
 
   // Compare Y register
-  def CPY(addressMode: AddressMode): Op = readExecute(addressMode)(compare(_.y))
+  def CPY(addressMode: RwAddressMode): Op = compare(addressMode, _.y)
 
   // Decrement memory
-  def DEC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val temp   = (d - 1) & 0xFF
-    val update = CpuState.status.modify(setZnFlags(temp))
-    (update(cpu), temp)
-  }
+  def DEC(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val temp      = (d - 1) & 0xff
+      (setZnFlags(temp) andThen addressMode.write(temp))(nes1)
+    }
 
   // Decrement X register
-  val DEX: Op = liftS { cpu =>
-    val temp   = (cpu.x - 1) & 0xFF
-    val update =
-      CpuState.x.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  val DEX: Op =
+    nes => {
+      val temp = (nes.cpuState.x - 1) & 0xff
+      (lift(CpuState.x.set(temp)) andThen setZnFlags(temp))(nes)
+    }
 
   // Decrement Y register
-  val DEY: Op = liftS { cpu =>
-    val temp   = (cpu.y - 1) & 0xFF
-    val update =
-      CpuState.y.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  val DEY: Op =
+    nes => {
+      val temp = (nes.cpuState.y - 1) & 0xff
+      (lift(CpuState.y.set(temp)) andThen setZnFlags(temp))(nes)
+    }
 
   // Exclusive OR
-  def EOR(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val temp   = (cpu.a ^ d) & 0xFF
-    val update =
-      CpuState.a.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  def EOR(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val cpu       = nes1.cpuState
+      val temp      = (cpu.a ^ d) & 0xff
+      (lift(CpuState.a.set(temp)) andThen setZnFlags(temp))(nes1)
+    }
 
   // Increment memory
-  def INC(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val temp   = (d + 1) & 0xFF
-    val update = CpuState.status.modify(setZnFlags(temp))
-    (update(cpu), temp)
-  }
+  def INC(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val temp      = (d + 1) & 0xff
+      (setZnFlags(temp) andThen addressMode.write(temp))(nes1)
+    }
 
   // Increment X register
-  val INX: Op = liftS { cpu =>
-    val temp   = (cpu.x + 1) & 0xFF
-    val update =
-      CpuState.x.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  val INX: Op =
+    nes => {
+      val temp = (nes.cpuState.x + 1) & 0xff
+      (lift(CpuState.x.set(temp)) andThen setZnFlags(temp))(nes)
+    }
 
   // Increment Y register
-  val INY: Op = liftS { cpu =>
-    val temp   = (cpu.y + 1) & 0xFF
-    val update =
-      CpuState.y.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  val INY: Op =
+    nes => {
+      val temp = (nes.cpuState.y + 1) & 0xff
+      (lift(CpuState.y.set(temp)) andThen setZnFlags(temp))(nes)
+    }
 
   // Jump
-  def JMP(addressMode: AbsAddressMode): Op = for {
-    pc      <- getPc
-    address <- addressMode
-    _       <- setPc(address.address)
-    _       <- if (pc == address.address + 1)
-    // Detect a jump to itself
-      setHaltAt(address.address)
-    else
-      State.get[NesState]
-  } yield ()
+  def JMP(addressMode: AbsAddressMode): Op =
+    nes => {
+      val (nes1, address) = addressMode.prepareAddress(nes)
+      lift(CpuState.pc.set(address))(nes1)
+    }
 
   // Jump to subroutine
-  def JSR(addressMode: AbsAddressMode): Op = for {
-    address <- addressMode
-    pc      <- decPc
-    _       <- push((pc >> 8) & 0xFF)
-    _       <- push(pc & 0xFF)
-    _       <- setPc(address.address)
-  } yield ()
+  def JSR(addressMode: AbsAddressMode): Op =
+    nes => {
+      val (nes1, address) = addressMode.prepareAddress(nes)
+      val (nes2, pc)      = decPc(nes1)
+      val nes3            = (push((pc >> 8) & 0xff) andThen push(pc & 0xff))(nes2)
+      lift(CpuState.pc.set(address))(nes3)
+    }
 
   // Load accumulator
-  def LDA(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val update =
-      CpuState.a.set(d) andThen
-        CpuState.status.modify(setZnFlags(d))
-    update(cpu)
-  }
+  def LDA(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      (lift(CpuState.a.set(d)) andThen setZnFlags(d))(nes1)
+    }
 
   // Load X register
-  def LDX(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val update =
-      CpuState.x.set(d) andThen
-        CpuState.status.modify(setZnFlags(d))
-    update(cpu)
-  }
+  def LDX(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      (lift(CpuState.x.set(d)) andThen setZnFlags(d))(nes1)
+    }
 
   // Load Y register
-  def LDY(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val update =
-      CpuState.y.set(d) andThen
-        CpuState.status.modify(setZnFlags(d))
-    update(cpu)
-  }
+  def LDY(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      (lift(CpuState.y.set(d)) andThen setZnFlags(d))(nes1)
+    }
 
   // Logical shift right
-  def LSR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val temp   = (d >> 1) & 0xFF
-    val update = CpuState.status.modify(setFlags(
-      CpuFlags.C -> (d & 0x01),
-      CpuFlags.Z -> ((temp & 0xFF) == 0x00),
-      CpuFlags.N -> (temp & 0x80)
-    ))
-    (update(cpu), temp)
-  }
+  def LSR(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val temp      = (d >> 1) & 0xff
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (d & 0x01),
+        CpuFlags.Z -> ((temp & 0xff) == 0x00),
+        CpuFlags.N -> (temp & 0x80)
+      )
+      (modifyFlags(flags) andThen addressMode.write(temp))(nes1)
+    }
 
   // No operation
-  def NOP(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    _       <- address.read()
-  } yield ()
+  def NOP(addressMode: RwAddressMode): Op =
+    nes => addressMode.read(nes)._1
 
   // Logical inclusive OR
-  def ORA(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val temp   = (cpu.a | d) & 0xFF
-    val update =
-      CpuState.a.set(temp) andThen
-        CpuState.status.modify(setZnFlags(temp))
-    update(cpu)
-  }
+  def ORA(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val temp      = (nes1.cpuState.a | d) & 0xff
+      (lift(CpuState.a.set(temp)) andThen setZnFlags(temp))(nes1)
+    }
 
   // Push accumulator
-  val PHA: Op = for {
-    a <- getA
-    _ <- push(a)
-  } yield ()
+  val PHA: Op =
+    nes => push(nes.cpuState.a)(nes)
 
   // Push processor status
-  val PHP: Op = for {
-    status <- getStatus
-    _      <- push(status | CpuFlags.B.bit | CpuFlags.U.bit)
-    _      <- setFlag(CpuFlags.B, value = false)
-    _      <- setFlag(CpuFlags.U, value = false)
-  } yield ()
+  val PHP: Op =
+    nes => {
+      val status = nes.cpuState.status | CpuFlags.B.bit | CpuFlags.U.bit
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.B -> false,
+        CpuFlags.U -> false
+      )
+      (push(status) andThen modifyFlags(flags))(nes)
+    }
 
   // Pull accumulator
-  val PLA: Op = for {
-    d <- pop
-    _ <- setA(d)
-    _ <- setFlag(CpuFlags.Z, d == 0x00)
-    _ <- setFlag(CpuFlags.N, d & 0x80)
-  } yield ()
+  val PLA: Op =
+    nes => {
+      val (nes1, d) = pop(nes)
+      (lift(CpuState.a.set(d)) andThen setZnFlags(d))(nes1)
+    }
 
   // Pull processor status
-  val PLP: Op = for {
-    status <- pop
-    _      <- setStatus(status)
-    _      <- setFlag(CpuFlags.U, value = true)
-  } yield ()
+  val PLP: Op =
+    nes => {
+      val (nes1, d) = pop(nes)
+      (lift(CpuState.status.set(d)) andThen modifyFlag(CpuFlags.U, value = true))(nes1)
+    }
 
   // Rotate left
-  def ROL(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val c      = cpu.getFlag(CpuFlags.C)
-    val lsb    = if (c) 1 else 0
-    val temp   = (d << 1) | lsb
-    val update = CpuState.status.modify(setFlags(
-      CpuFlags.C -> (temp & 0xFF00),
-      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
-      CpuFlags.N -> (temp & 0x80)
-    ))
-    (update(cpu), temp & 0xFF)
-  }
+  def ROL(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val c         = nes1.cpuState.getFlag(CpuFlags.C)
+      val lsb       = if (c) 1 else 0
+      val temp      = (d << 1) | lsb
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (temp & 0xff00),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlags.N -> (temp & 0x80)
+      )
+      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
+    }
 
   // Rotate right
-  def ROR(addressMode: AddressMode): Op = readExecuteWrite(addressMode) { (d, cpu) =>
-    val c      = cpu.getFlag(CpuFlags.C)
-    val msb    = if (c) 1 << 7 else 0
-    val temp   = (d >> 1) | msb
-    val update = CpuState.status.modify(setFlags(
-      CpuFlags.C -> (d & 0x01),
-      CpuFlags.Z -> ((temp & 0x00FF) == 0x00),
-      CpuFlags.N -> (temp & 0x80)
-    ))
-    (update(cpu), temp & 0xFF)
-  }
+  def ROR(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val c         = nes1.cpuState.getFlag(CpuFlags.C)
+      val msb       = if (c) 1 << 7 else 0
+      val temp      = (d >> 1) | msb
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (d & 0x01),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlags.N -> (temp & 0x80)
+      )
+      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
+    }
 
   // Return from interrupt
-  val RTI: Op = for {
-    status1 <- pop
-    status2 =  status1 & ~CpuFlags.B.bit & ~CpuFlags.U.bit
-    _       <- setStatus(status2)
-    pc1     <- pop
-    pc2     <- pop
-    pc      =  asUInt16(pc2, pc1)
-    _       <- setPc(pc)
-  } yield ()
+  val RTI: Op =
+    nes => {
+      val (nes1, d)   = pop(nes)
+      val status      = d & ~CpuFlags.B.bit & ~CpuFlags.U.bit
+      val (nes2, pc1) = (lift(CpuState.status.set(status)) andThen pop)(nes1)
+      val (nes3, pc2) = pop(nes2)
+      val pc          = asUInt16(pc2, pc1)
+      lift(CpuState.pc.set(pc))(nes3)
+    }
 
   // Return from subroutine
-  val RTS: Op = for {
-    pc1 <- pop
-    pc2 <- pop
-    pc  =  asUInt16(pc2, pc1)
-    _   <- setPc(pc)
-    _   <- incPc
-  } yield ()
+  val RTS: Op =
+    nes => {
+      val (nes1, pc1) = pop(nes)
+      val (nes2, pc2) = pop(nes1)
+      val pc          = asUInt16(pc2, pc1)
+      (lift(CpuState.pc.set(pc)) andThen incPc.runS)(nes2)
+    }
 
   // Subtract with carry
-  def SBC(addressMode: AddressMode): Op = readExecute(addressMode) { (d, cpu) =>
-    val value  = d ^ 0x00FF
-    val c      = cpu.getFlag(CpuFlags.C)
-    val lsb    = if (c) 1 else 0
-    val temp   = cpu.a + value + lsb
-    val update =
-      CpuState.a.set(temp & 0xFF) andThen
-        CpuState.status.modify(setFlags(
-          (CpuFlags.C, temp & 0xFF00),
-          (CpuFlags.Z, (temp & 0x00FF) == 0x00),
-          (CpuFlags.V, (temp ^ cpu.a) & (temp ^ value) & 0x80),
-          (CpuFlags.N, temp & 0x80)
-        ))
-    update(cpu)
-  }
+  def SBC(addressMode: RwAddressMode): Op =
+    nes => {
+      val (nes1, d) = addressMode.read(nes)
+      val value     = d ^ 0x00ff
+      val c         = nes1.cpuState.getFlag(CpuFlags.C)
+      val lsb       = if (c) 1 else 0
+      val temp      = nes1.cpuState.a + value + lsb
+      val flags = Map[CpuFlags, Boolean](
+        (CpuFlags.C, temp & 0xff00),
+        (CpuFlags.Z, (temp & 0x00ff) == 0x00),
+        (CpuFlags.V, (temp ^ nes1.cpuState.a) & (temp ^ value) & 0x80),
+        (CpuFlags.N, temp & 0x80)
+      )
+      (lift(CpuState.a.set(temp & 0xff)) andThen modifyFlags(flags))(nes1)
+    }
 
   // Set carry flag
-  val SEC: Op = setFlag(CpuFlags.C, value = true)
+  val SEC: Op = modifyFlag(CpuFlags.C, value = true)
 
   // Set decimal flag
-  val SED: Op = setFlag(CpuFlags.D, value = true)
+  val SED: Op = modifyFlag(CpuFlags.D, value = true)
 
   // Set interrupt disable
-  val SEI: Op = setFlag(CpuFlags.I, value = true)
+  val SEI: Op = modifyFlag(CpuFlags.I, value = true)
 
   // Store accumulator
-  def STA(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
-    (cpu, cpu.a)
-  }
+  def STA(addressMode: RwAddressMode): Op =
+    nes => addressMode.write(nes.cpuState.a)(nes)
 
   // Store X register
-  def STX(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
-    (cpu, cpu.x)
-  }
+  def STX(addressMode: RwAddressMode): Op =
+    nes => addressMode.write(nes.cpuState.x)(nes)
 
   // Store Y register
-  def STY(addressMode: AddressMode): Op = executeWrite(addressMode) { cpu =>
-    (cpu, cpu.y)
-  }
+  def STY(addressMode: RwAddressMode): Op =
+    nes => addressMode.write(nes.cpuState.y)(nes)
 
   // Transfer accumulator to X
-  val TAX: Op = liftS { cpu =>
-    val update =
-      CpuState.x.set(cpu.a) andThen
-        CpuState.status.modify(setZnFlags(cpu.a))
-    update(cpu)
-  }
+  val TAX: Op =
+    nes => {
+      val d = nes.cpuState.a
+      (lift(CpuState.x.set(d)) andThen setZnFlags(d))(nes)
+    }
 
   // Transfer accumulator to Y
-  val TAY: Op = liftS { cpu =>
-    val update =
-      CpuState.y.set(cpu.a) andThen
-        CpuState.status.modify(setZnFlags(cpu.a))
-    update(cpu)
-  }
+  val TAY: Op =
+    nes => {
+      val d = nes.cpuState.a
+      (lift(CpuState.y.set(d)) andThen setZnFlags(d))(nes)
+    }
 
   // Transfer stack pointer to X
-  val TSX: Op = liftS { cpu =>
-    val update =
-      CpuState.x.set(cpu.stkp) andThen
-        CpuState.status.modify(setZnFlags(cpu.stkp))
-    update(cpu)
-  }
+  val TSX: Op =
+    nes => {
+      val d = nes.cpuState.stkp
+      (lift(CpuState.x.set(d)) andThen setZnFlags(d))(nes)
+    }
 
   // Transfer X to accumulator
-  val TXA: Op = liftS { cpu =>
-    val update =
-      CpuState.a.set(cpu.x) andThen
-        CpuState.status.modify(setZnFlags(cpu.x))
-    update(cpu)
-  }
+  val TXA: Op =
+    nes => {
+      val d = nes.cpuState.x
+      (lift(CpuState.a.set(d)) andThen setZnFlags(d))(nes)
+    }
 
   // Transfer X to stack pointer
-  val TXS: Op = liftS { cpu =>
-    val update = CpuState.stkp.set(cpu.x)
-    update(cpu)
-  }
+  val TXS: Op =
+    nes => lift(CpuState.stkp.set(nes.cpuState.x))(nes)
 
   // Transfer Y to accumulator
-  val TYA: Op = liftS { cpu =>
-    val update =
-      CpuState.a.set(cpu.y) andThen
-        CpuState.status.modify(setZnFlags(cpu.y))
-    update(cpu)
-  }
+  val TYA: Op =
+    nes => {
+      val d = nes.cpuState.y
+      (lift(CpuState.a.set(d)) andThen setZnFlags(d))(nes)
+    }
 
   // *** Unofficial instructions ***
 
+  /*
   // Shortcut for LDA value then TAX
-  def LAX(addressMode: AddressMode): Op = for {
-    _ <- LDA(addressMode)
-    _ <- TAX
-  } yield ()
+  def LAX(addressMode: RwAddressMode): Op =
+    for {
+      _ <- LDA(addressMode)
+      _ <- TAX
+    } yield ()
 
   // Stores the bitwise AND of A and X. As with STA and STX, no flags are affected.
-  def SAX(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    a       <- getA
-    x       <- getX
-    d       =  a & x
-    _       <- address.write(d)
-  } yield ()
+  def SAX(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      a       <- getA
+      x       <- getX
+      d = a & x
+      _ <- address.write(d)
+    } yield ()
 
   // Equivalent to DEC value then CMP value
-  def DCP(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    temp    =  (d - 1) & 0xFF
-    _       <- address.write(temp)
-    _       <- setFlag(CpuFlags.Z, temp == 0x00)
-    _       <- setFlag(CpuFlags.N, temp & 0x80)
-    _       <- compareS(address.read(), getA)
-  } yield ()
+  def DCP(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      temp = (d - 1) & 0xff
+      _ <- address.write(temp)
+      _ <- modifyFlag(CpuFlags.Z, temp == 0x00)
+      _ <- modifyFlag(CpuFlags.N, temp & 0x80)
+      _ <- compareS(address.read(), getA)
+    } yield ()
 
   // Equivalent to INC value then SBC value
-  def ISC(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    temp1   =  (d + 1) & 0xFF
-    _       <- address.write(temp1)
-    value   =  temp1 ^ 0x00FF
-    a       <- getA
-    c       <- getFlag(CpuFlags.C)
-    lsb     = if (c) 1 else 0
-    temp2   = a + value + lsb
-    _       <- setFlag(CpuFlags.C, temp2 & 0xFF00)
-    _       <- setFlag(CpuFlags.Z, (temp2 & 0x00FF) == 0x00)
-    _       <- setFlag(CpuFlags.V, (temp2 ^ a) & (temp2 ^ value) & 0x80)
-    _       <- setFlag(CpuFlags.N, temp2 & 0x80)
-    _       <- setA(temp2 & 0xFF)
-  } yield ()
+  def ISC(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      temp1 = (d + 1) & 0xff
+      _ <- address.write(temp1)
+      value = temp1 ^ 0x00ff
+      a <- getA
+      c <- getFlag(CpuFlags.C)
+      lsb   = if (c) 1 else 0
+      temp2 = a + value + lsb
+      _ <- modifyFlag(CpuFlags.C, temp2 & 0xff00)
+      _ <- modifyFlag(CpuFlags.Z, (temp2 & 0x00ff) == 0x00)
+      _ <- modifyFlag(CpuFlags.V, (temp2 ^ a) & (temp2 ^ value) & 0x80)
+      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
+      _ <- setA(temp2 & 0xff)
+    } yield ()
 
   // Equivalent to ASL value then ORA value
-  def SLO(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    temp1   =  d << 1
-    _       <- setFlag(CpuFlags.C, temp1 & 0xFF00)
-    _       <- address.write(temp1 & 0x00FF)
-    a       <- getA
-    temp2   =  (a | temp1) & 0xFF
-    _       <- setA(temp2)
-    _       <- setFlag(CpuFlags.Z, temp2 == 0x00)
-    _       <- setFlag(CpuFlags.N, temp2 & 0x80)
-  } yield ()
+  def SLO(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      temp1 = d << 1
+      _ <- modifyFlag(CpuFlags.C, temp1 & 0xff00)
+      _ <- address.write(temp1 & 0x00ff)
+      a <- getA
+      temp2 = (a | temp1) & 0xff
+      _ <- setA(temp2)
+      _ <- modifyFlag(CpuFlags.Z, temp2 == 0x00)
+      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
+    } yield ()
 
   // Equivalent to ROL value then AND value
-  def RLA(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    c       <- getFlag(CpuFlags.C)
-    lsb     =  if (c) 1 else 0
-    temp    =  (d << 1) | lsb
-    _       <- setFlag(CpuFlags.C, temp & 0xFF00)
-    _       <- address.write(temp & 0xFF)
-    a       <- getA
-    r       =  a & temp & 0xFF
-    _       <- setA(r)
-    _       <- setFlag(CpuFlags.Z, r == 0x00)
-    _       <- setFlag(CpuFlags.N, r & 0x80)
-  } yield ()
+  def RLA(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      c       <- getFlag(CpuFlags.C)
+      lsb  = if (c) 1 else 0
+      temp = (d << 1) | lsb
+      _ <- modifyFlag(CpuFlags.C, temp & 0xff00)
+      _ <- address.write(temp & 0xff)
+      a <- getA
+      r = a & temp & 0xff
+      _ <- setA(r)
+      _ <- modifyFlag(CpuFlags.Z, r == 0x00)
+      _ <- modifyFlag(CpuFlags.N, r & 0x80)
+    } yield ()
 
   // Equivalent to LSR value then EOR value
-  def SRE(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    _       <- setFlag(CpuFlags.C, d & 0x01)
-    temp1   =  (d >> 1) & 0xFF
-    _       <- address.write(temp1)
-    a       <- getA
-    temp2   =  (a ^ temp1) & 0xFF
-    _       <- setA(temp2)
-    _       <- setFlag(CpuFlags.Z, temp2 == 0x00)
-    _       <- setFlag(CpuFlags.N, temp2 & 0x80)
-  } yield ()
+  def SRE(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      _       <- modifyFlag(CpuFlags.C, d & 0x01)
+      temp1 = (d >> 1) & 0xff
+      _ <- address.write(temp1)
+      a <- getA
+      temp2 = (a ^ temp1) & 0xff
+      _ <- setA(temp2)
+      _ <- modifyFlag(CpuFlags.Z, temp2 == 0x00)
+      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
+    } yield ()
 
   // Equivalent to ROR value then ADC value
-  def RRA(addressMode: AddressMode): Op = for {
-    address <- addressMode
-    d       <- address.read()
-    c       <- getFlag(CpuFlags.C)
-    msb     =  if (c) 1 << 7 else 0
-    temp1   =  (d >> 1) | msb
-    _       <- setFlag(CpuFlags.C, d & 0x01)
-    _       <- address.write(temp1 & 0xFF)
-    a       <- getA
-    c       <- getFlag(CpuFlags.C)
-    lsb     =  if (c) 1 else 0
-    temp2   =  a + temp1 + lsb
-    _       <- setFlag(CpuFlags.C, temp2 & 0xFF00)
-    _       <- setFlag(CpuFlags.Z, (temp2 & 0x00FF) == 0x00)
-    _       <- setFlag(CpuFlags.V, (~(a ^ temp1) & (a ^ temp2)) & 0x80)
-    _       <- setFlag(CpuFlags.N, temp2 & 0x80)
-    _       <- setA(temp2 & 0xFF)
-  } yield ()
+  def RRA(addressMode: RwAddressMode): Op =
+    for {
+      address <- addressMode
+      d       <- address.read()
+      c       <- getFlag(CpuFlags.C)
+      msb   = if (c) 1 << 7 else 0
+      temp1 = (d >> 1) | msb
+      _ <- modifyFlag(CpuFlags.C, d & 0x01)
+      _ <- address.write(temp1 & 0xff)
+      a <- getA
+      c <- getFlag(CpuFlags.C)
+      lsb   = if (c) 1 else 0
+      temp2 = a + temp1 + lsb
+      _ <- modifyFlag(CpuFlags.C, temp2 & 0xff00)
+      _ <- modifyFlag(CpuFlags.Z, (temp2 & 0x00ff) == 0x00)
+      _ <- modifyFlag(CpuFlags.V, (~(a ^ temp1) & (a ^ temp2)) & 0x80)
+      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
+      _ <- setA(temp2 & 0xff)
+    } yield ()
+   */
 
-  def XXX: Op = State.pure(())
+  def XXX: Op = identity
 
   case class Instr(info: String, op: Op, cycles: Int)
 
   val lookup: Map[UInt8, Instr] = Map(
-    0x00 -> Instr("BRK/IMM", BRK,      7),     0x01 -> Instr("ORA/IMM", ORA(IZX), 6),
-    0x05 -> Instr("ORA/ZP0", ORA(ZP0), 3),     0x06 -> Instr("ASL/ZP0", ASL(ZP0), 5),
-    0x08 -> Instr("PHP/IMP", PHP,      3),     0x09 -> Instr("ORA/IMM", ORA(IMM), 2),
-    0x0A -> Instr("ASL/IMP", ASL(IMP), 2),     0x0D -> Instr("ORA/ABS", ORA(ABS), 4),
-    0x0E -> Instr("ASL/ABS", ASL(ABS), 6),     0x10 -> Instr("BPL/REL", BPL,      2),
-    0x11 -> Instr("ORA/IZY", ORA(IZY), 5),     0x15 -> Instr("ORA/ZPX", ORA(ZPX), 4),
-    0x16 -> Instr("ASL/ZPX", ASL(ZPX), 6),     0x18 -> Instr("CLC/IMP", CLC,      2),
-    0x19 -> Instr("ORA/ABY", ORA(ABY), 4),     0x1D -> Instr("ORA/ABX", ORA(ABX), 4),
-    0x1E -> Instr("ASL/ABX", ASL(ABX), 7),     0x20 -> Instr("JSR/ABS", JSR(ABS), 6),
-    0x21 -> Instr("AND/IZX", AND(IZX), 6),     0x24 -> Instr("BIT/ZP0", BIT(ZP0), 3),
-    0x25 -> Instr("AND/ZP0", AND(ZP0), 3),     0x26 -> Instr("ROL/IMM", ROL(ZP0), 5),
-    0x28 -> Instr("PLP/IMP", PLP,      4),     0x29 -> Instr("AND/IMM", AND(IMM), 2),
-    0x2A -> Instr("ROL/IMP", ROL(IMP), 2),     0x2C -> Instr("BIT/ABS", BIT(ABS), 4),
-    0x2D -> Instr("AND/ABS", AND(ABS), 4),     0x2E -> Instr("ROL/ABS", ROL(ABS), 6),
-    0x30 -> Instr("BMI/REL", BMI,      2),     0x31 -> Instr("AND/IZY", AND(IZY), 5),
-    0x35 -> Instr("AND/ZPX", AND(ZPX), 4),     0x36 -> Instr("ROL/ZPX", ROL(ZPX), 6),
-    0x38 -> Instr("SEC/IMP", SEC,      2),     0x39 -> Instr("AND/ABY", AND(ABY), 4),
-    0x3D -> Instr("AND/ABX", AND(ABX), 4),     0x3E -> Instr("ROL/ABX", ROL(ABX), 7),
-    0x40 -> Instr("RTI/IMP", RTI,      6),     0x41 -> Instr("EOR/IZX", EOR(IZX), 6),
-    0x45 -> Instr("EOR/ZP0", EOR(ZP0), 3),     0x46 -> Instr("LSR/ZP0", LSR(ZP0), 5),
-    0x48 -> Instr("PHA/IMP", PHA,      3),     0x49 -> Instr("EOR/IMM", EOR(IMM), 2),
-    0x4A -> Instr("LSR/IMP", LSR(IMP), 2),     0x4C -> Instr("JMP/ABS", JMP(ABS), 3),
-    0x4D -> Instr("EOR/ABS", EOR(ABS), 4),     0x4E -> Instr("LSR/ABS", LSR(ABS), 6),
-    0x50 -> Instr("BVC/REL", BVC,      2),     0x51 -> Instr("EOR/IZY", EOR(IZY), 5),
-    0x55 -> Instr("EOR/ZPX", EOR(ZPX), 4),     0x56 -> Instr("LSR/ZPX", LSR(ZPX), 6),
-    0x58 -> Instr("CLI/IMP", CLI,      2),     0x59 -> Instr("EOR/ABY", EOR(ABY), 4),
-    0x5D -> Instr("EOR/ABX", EOR(ABX), 4),     0x5E -> Instr("LSR/ABX", LSR(ABX), 7),
-    0x60 -> Instr("RTS/IMP", RTS,      6),     0x61 -> Instr("ADC/IZX", ADC(IZX), 6),
-    0x65 -> Instr("ADC/ZP0", ADC(ZP0), 3),     0x66 -> Instr("ROR/ZP0", ROR(ZP0), 5),
-    0x68 -> Instr("PLA/IMP", PLA,      4),     0x69 -> Instr("ADC/IMM", ADC(IMM), 2),
-    0x6A -> Instr("ROR/IMP", ROR(IMP), 2),     0x6C -> Instr("JMP/IND", JMP(IND), 5),
-    0x6D -> Instr("ADC/ABS", ADC(ABS), 4),     0x6E -> Instr("ROR/ABS", ROR(ABS), 6),
-    0x70 -> Instr("BVS/REL", BVS,      2),     0x71 -> Instr("ADC/IZY", ADC(IZY), 5),
-    0x75 -> Instr("ADC/ZPX", ADC(ZPX), 4),     0x76 -> Instr("ROR/ZPX", ROR(ZPX), 6),
-    0x78 -> Instr("SEI/IMP", SEI,      2),     0x79 -> Instr("ADC/ABY", ADC(ABY), 4),
-    0x7D -> Instr("ADC/ABX", ADC(ABX), 4),     0x7E -> Instr("ROR/ABX", ROR(ABX), 7),
-    0x81 -> Instr("STA/IZX", STA(IZX), 6),     0x84 -> Instr("STY/ZP0", STY(ZP0), 3),
-    0x85 -> Instr("STA/ZP0", STA(ZP0), 3),     0x86 -> Instr("STX/ZP0", STX(ZP0), 3),
-    0x88 -> Instr("DEY/IMP", DEY,      2),     0x8A -> Instr("TXA/IMP", TXA,      2),
-    0x8C -> Instr("STY/ABS", STY(ABS), 4),     0x8D -> Instr("STA/ABS", STA(ABS), 4),
-    0x8E -> Instr("STX/ABS", STX(ABS), 4),     0x90 -> Instr("BCC/REL", BCC,      2),
-    0x91 -> Instr("STA/IZY", STA(IZY), 6),     0x94 -> Instr("STY/ZPX", STY(ZPX), 4),
-    0x95 -> Instr("STA/ZPX", STA(ZPX), 4),     0x96 -> Instr("STX/ZPY", STX(ZPY), 4),
-    0x98 -> Instr("TYA/IMP", TYA,      2),     0x99 -> Instr("STA/ABY", STA(ABY), 5),
-    0x9A -> Instr("TXS/IMP", TXS,      2),     0x9D -> Instr("STA/ABX", STA(ABX), 5),
-    0xA0 -> Instr("LDY/IMM", LDY(IMM), 2),     0xA1 -> Instr("LDA/IZX", LDA(IZX), 6),
-    0xA2 -> Instr("LDX/IMM", LDX(IMM), 2),     0xA4 -> Instr("LDY/ZP0", LDY(ZP0), 3),
-    0xA5 -> Instr("LDA/ZP0", LDA(ZP0), 3),     0xA6 -> Instr("LDX/ZP0", LDX(ZP0), 3),
-    0xA8 -> Instr("TAY/IMP", TAY,      2),     0xA9 -> Instr("LDA/IMM", LDA(IMM), 2),
-    0xAA -> Instr("TAX/IMP", TAX,      2),     0xAC -> Instr("LDY/ABS", LDY(ABS), 4),
-    0xAD -> Instr("LDA/ABS", LDA(ABS), 4),     0xAE -> Instr("LDX/ABS", LDX(ABS), 4),
-    0xB0 -> Instr("BCS/REL", BCS,      2),     0xB1 -> Instr("LDA/IZY", LDA(IZY), 5),
-    0xB4 -> Instr("LDY/ZPX", LDY(ZPX), 4),     0xB5 -> Instr("LDA/ZPX", LDA(ZPX), 4),
-    0xB6 -> Instr("LDX/ZPY", LDX(ZPY), 4),     0xB8 -> Instr("CLV/IMP", CLV,      2),
-    0xB9 -> Instr("LDA/ABY", LDA(ABY), 4),     0xBA -> Instr("TSX/IMP", TSX,      2),
-    0xBC -> Instr("LDY/ABX", LDY(ABX), 4),     0xBD -> Instr("LDA/ABX", LDA(ABX), 4),
-    0xBE -> Instr("LDX/ABY", LDX(ABY), 4),     0xC0 -> Instr("CPY/IMM", CPY(IMM), 2),
-    0xC1 -> Instr("CMP/IZX", CMP(IZX), 6),     0xC4 -> Instr("CPY/ZP0", CPY(ZP0), 3),
-    0xC5 -> Instr("CMP/ZP0", CMP(ZP0), 3),     0xC6 -> Instr("DEC/ZP0", DEC(ZP0), 5),
-    0xC8 -> Instr("INY/IMP", INY,      2),     0xC9 -> Instr("CMP/IMM", CMP(IMM), 2),
-    0xCA -> Instr("DEX/IMP", DEX,      2),     0xCC -> Instr("CPY/ABS", CPY(ABS), 4),
-    0xCD -> Instr("CMP/ABS", CMP(ABS), 4),     0xCE -> Instr("DEC/ABS", DEC(ABS), 6),
-    0xD0 -> Instr("BNE/REL", BNE,      2),     0xD1 -> Instr("CMP/IZY", CMP(IZY), 5),
-    0xD5 -> Instr("CMP/ZPX", CMP(ZPX), 4),     0xD6 -> Instr("DEC/ZPX", DEC(ZPX), 6),
-    0xD8 -> Instr("CLD/IMP", CLD,      2),     0xD9 -> Instr("CMP/ABY", CMP(ABY), 4),
-    0xDD -> Instr("CMP/ABX", CMP(ABX), 4),     0xDE -> Instr("DEC/ABX", DEC(ABX), 7),
-    0xE0 -> Instr("CPX/IMM", CPX(IMM), 2),     0xE1 -> Instr("SBC/IZX", SBC(IZX), 6),
-    0xE4 -> Instr("CPX/ZP0", CPX(ZP0), 3),     0xE5 -> Instr("SBC/ZP0", SBC(ZP0), 3),
-    0xE6 -> Instr("INC/ZP0", INC(ZP0), 5),     0xE8 -> Instr("INX/IMP", INX,      2),
-    0xE9 -> Instr("SBC/IMM", SBC(IMM), 2),     0xEA -> Instr("NOP/IMP", NOP(IMP), 2),
-    0xEC -> Instr("CPX/ABS", CPX(ABS), 4),     0xED -> Instr("SBC/ABS", SBC(ABS), 4),
-    0xEE -> Instr("INC/ABS", INC(ABS), 6),     0xF0 -> Instr("BEQ/REL", BEQ,      2),
-    0xF1 -> Instr("SBC/IZY", SBC(IZY), 5),     0xF5 -> Instr("SBC/ZPX", SBC(ZPX), 4),
-    0xF6 -> Instr("INC/ZPX", INC(ZPX), 6),     0xF8 -> Instr("SED/IMP", SED,      2),
-    0xF9 -> Instr("SBC/ABY", SBC(ABY), 4),     0xFD -> Instr("SBC/ABX", SBC(ABX), 4),
-    0xFE -> Instr("INC/ABX", INC(ABX), 7),
-
+    0x00 -> Instr("BRK/IMM", BRK, 7),
+    0x01 -> Instr("ORA/IMM", ORA(IZX), 6),
+    0x05 -> Instr("ORA/ZP0", ORA(ZP0), 3),
+    0x06 -> Instr("ASL/ZP0", ASL(ZP0), 5),
+    0x08 -> Instr("PHP/IMP", PHP, 3),
+    0x09 -> Instr("ORA/IMM", ORA(IMM), 2),
+    0x0a -> Instr("ASL/IMP", ASL(IMP), 2),
+    0x0d -> Instr("ORA/ABS", ORA(ABS), 4),
+    0x0e -> Instr("ASL/ABS", ASL(ABS), 6),
+    0x10 -> Instr("BPL/REL", BPL, 2),
+    0x11 -> Instr("ORA/IZY", ORA(IZY), 5),
+    0x15 -> Instr("ORA/ZPX", ORA(ZPX), 4),
+    0x16 -> Instr("ASL/ZPX", ASL(ZPX), 6),
+    0x18 -> Instr("CLC/IMP", CLC, 2),
+    0x19 -> Instr("ORA/ABY", ORA(ABY), 4),
+    0x1d -> Instr("ORA/ABX", ORA(ABX), 4),
+    0x1e -> Instr("ASL/ABX", ASL(ABX), 7),
+    0x20 -> Instr("JSR/ABS", JSR(ABS), 6),
+    0x21 -> Instr("AND/IZX", AND(IZX), 6),
+    0x24 -> Instr("BIT/ZP0", BIT(ZP0), 3),
+    0x25 -> Instr("AND/ZP0", AND(ZP0), 3),
+    0x26 -> Instr("ROL/IMM", ROL(ZP0), 5),
+    0x28 -> Instr("PLP/IMP", PLP, 4),
+    0x29 -> Instr("AND/IMM", AND(IMM), 2),
+    0x2a -> Instr("ROL/IMP", ROL(IMP), 2),
+    0x2c -> Instr("BIT/ABS", BIT(ABS), 4),
+    0x2d -> Instr("AND/ABS", AND(ABS), 4),
+    0x2e -> Instr("ROL/ABS", ROL(ABS), 6),
+    0x30 -> Instr("BMI/REL", BMI, 2),
+    0x31 -> Instr("AND/IZY", AND(IZY), 5),
+    0x35 -> Instr("AND/ZPX", AND(ZPX), 4),
+    0x36 -> Instr("ROL/ZPX", ROL(ZPX), 6),
+    0x38 -> Instr("SEC/IMP", SEC, 2),
+    0x39 -> Instr("AND/ABY", AND(ABY), 4),
+    0x3d -> Instr("AND/ABX", AND(ABX), 4),
+    0x3e -> Instr("ROL/ABX", ROL(ABX), 7),
+    0x40 -> Instr("RTI/IMP", RTI, 6),
+    0x41 -> Instr("EOR/IZX", EOR(IZX), 6),
+    0x45 -> Instr("EOR/ZP0", EOR(ZP0), 3),
+    0x46 -> Instr("LSR/ZP0", LSR(ZP0), 5),
+    0x48 -> Instr("PHA/IMP", PHA, 3),
+    0x49 -> Instr("EOR/IMM", EOR(IMM), 2),
+    0x4a -> Instr("LSR/IMP", LSR(IMP), 2),
+    0x4c -> Instr("JMP/ABS", JMP(ABS), 3),
+    0x4d -> Instr("EOR/ABS", EOR(ABS), 4),
+    0x4e -> Instr("LSR/ABS", LSR(ABS), 6),
+    0x50 -> Instr("BVC/REL", BVC, 2),
+    0x51 -> Instr("EOR/IZY", EOR(IZY), 5),
+    0x55 -> Instr("EOR/ZPX", EOR(ZPX), 4),
+    0x56 -> Instr("LSR/ZPX", LSR(ZPX), 6),
+    0x58 -> Instr("CLI/IMP", CLI, 2),
+    0x59 -> Instr("EOR/ABY", EOR(ABY), 4),
+    0x5d -> Instr("EOR/ABX", EOR(ABX), 4),
+    0x5e -> Instr("LSR/ABX", LSR(ABX), 7),
+    0x60 -> Instr("RTS/IMP", RTS, 6),
+    0x61 -> Instr("ADC/IZX", ADC(IZX), 6),
+    0x65 -> Instr("ADC/ZP0", ADC(ZP0), 3),
+    0x66 -> Instr("ROR/ZP0", ROR(ZP0), 5),
+    0x68 -> Instr("PLA/IMP", PLA, 4),
+    0x69 -> Instr("ADC/IMM", ADC(IMM), 2),
+    0x6a -> Instr("ROR/IMP", ROR(IMP), 2),
+    0x6c -> Instr("JMP/IND", JMP(IND), 5),
+    0x6d -> Instr("ADC/ABS", ADC(ABS), 4),
+    0x6e -> Instr("ROR/ABS", ROR(ABS), 6),
+    0x70 -> Instr("BVS/REL", BVS, 2),
+    0x71 -> Instr("ADC/IZY", ADC(IZY), 5),
+    0x75 -> Instr("ADC/ZPX", ADC(ZPX), 4),
+    0x76 -> Instr("ROR/ZPX", ROR(ZPX), 6),
+    0x78 -> Instr("SEI/IMP", SEI, 2),
+    0x79 -> Instr("ADC/ABY", ADC(ABY), 4),
+    0x7d -> Instr("ADC/ABX", ADC(ABX), 4),
+    0x7e -> Instr("ROR/ABX", ROR(ABX), 7),
+    0x81 -> Instr("STA/IZX", STA(IZX), 6),
+    0x84 -> Instr("STY/ZP0", STY(ZP0), 3),
+    0x85 -> Instr("STA/ZP0", STA(ZP0), 3),
+    0x86 -> Instr("STX/ZP0", STX(ZP0), 3),
+    0x88 -> Instr("DEY/IMP", DEY, 2),
+    0x8a -> Instr("TXA/IMP", TXA, 2),
+    0x8c -> Instr("STY/ABS", STY(ABS), 4),
+    0x8d -> Instr("STA/ABS", STA(ABS), 4),
+    0x8e -> Instr("STX/ABS", STX(ABS), 4),
+    0x90 -> Instr("BCC/REL", BCC, 2),
+    0x91 -> Instr("STA/IZY", STA(IZY), 6),
+    0x94 -> Instr("STY/ZPX", STY(ZPX), 4),
+    0x95 -> Instr("STA/ZPX", STA(ZPX), 4),
+    0x96 -> Instr("STX/ZPY", STX(ZPY), 4),
+    0x98 -> Instr("TYA/IMP", TYA, 2),
+    0x99 -> Instr("STA/ABY", STA(ABY), 5),
+    0x9a -> Instr("TXS/IMP", TXS, 2),
+    0x9d -> Instr("STA/ABX", STA(ABX), 5),
+    0xa0 -> Instr("LDY/IMM", LDY(IMM), 2),
+    0xa1 -> Instr("LDA/IZX", LDA(IZX), 6),
+    0xa2 -> Instr("LDX/IMM", LDX(IMM), 2),
+    0xa4 -> Instr("LDY/ZP0", LDY(ZP0), 3),
+    0xa5 -> Instr("LDA/ZP0", LDA(ZP0), 3),
+    0xa6 -> Instr("LDX/ZP0", LDX(ZP0), 3),
+    0xa8 -> Instr("TAY/IMP", TAY, 2),
+    0xa9 -> Instr("LDA/IMM", LDA(IMM), 2),
+    0xaa -> Instr("TAX/IMP", TAX, 2),
+    0xac -> Instr("LDY/ABS", LDY(ABS), 4),
+    0xad -> Instr("LDA/ABS", LDA(ABS), 4),
+    0xae -> Instr("LDX/ABS", LDX(ABS), 4),
+    0xb0 -> Instr("BCS/REL", BCS, 2),
+    0xb1 -> Instr("LDA/IZY", LDA(IZY), 5),
+    0xb4 -> Instr("LDY/ZPX", LDY(ZPX), 4),
+    0xb5 -> Instr("LDA/ZPX", LDA(ZPX), 4),
+    0xb6 -> Instr("LDX/ZPY", LDX(ZPY), 4),
+    0xb8 -> Instr("CLV/IMP", CLV, 2),
+    0xb9 -> Instr("LDA/ABY", LDA(ABY), 4),
+    0xba -> Instr("TSX/IMP", TSX, 2),
+    0xbc -> Instr("LDY/ABX", LDY(ABX), 4),
+    0xbd -> Instr("LDA/ABX", LDA(ABX), 4),
+    0xbe -> Instr("LDX/ABY", LDX(ABY), 4),
+    0xc0 -> Instr("CPY/IMM", CPY(IMM), 2),
+    0xc1 -> Instr("CMP/IZX", CMP(IZX), 6),
+    0xc4 -> Instr("CPY/ZP0", CPY(ZP0), 3),
+    0xc5 -> Instr("CMP/ZP0", CMP(ZP0), 3),
+    0xc6 -> Instr("DEC/ZP0", DEC(ZP0), 5),
+    0xc8 -> Instr("INY/IMP", INY, 2),
+    0xc9 -> Instr("CMP/IMM", CMP(IMM), 2),
+    0xca -> Instr("DEX/IMP", DEX, 2),
+    0xcc -> Instr("CPY/ABS", CPY(ABS), 4),
+    0xcd -> Instr("CMP/ABS", CMP(ABS), 4),
+    0xce -> Instr("DEC/ABS", DEC(ABS), 6),
+    0xd0 -> Instr("BNE/REL", BNE, 2),
+    0xd1 -> Instr("CMP/IZY", CMP(IZY), 5),
+    0xd5 -> Instr("CMP/ZPX", CMP(ZPX), 4),
+    0xd6 -> Instr("DEC/ZPX", DEC(ZPX), 6),
+    0xd8 -> Instr("CLD/IMP", CLD, 2),
+    0xd9 -> Instr("CMP/ABY", CMP(ABY), 4),
+    0xdd -> Instr("CMP/ABX", CMP(ABX), 4),
+    0xde -> Instr("DEC/ABX", DEC(ABX), 7),
+    0xe0 -> Instr("CPX/IMM", CPX(IMM), 2),
+    0xe1 -> Instr("SBC/IZX", SBC(IZX), 6),
+    0xe4 -> Instr("CPX/ZP0", CPX(ZP0), 3),
+    0xe5 -> Instr("SBC/ZP0", SBC(ZP0), 3),
+    0xe6 -> Instr("INC/ZP0", INC(ZP0), 5),
+    0xe8 -> Instr("INX/IMP", INX, 2),
+    0xe9 -> Instr("SBC/IMM", SBC(IMM), 2),
+    0xea -> Instr("NOP/IMP", NOP(IMP), 2),
+    0xec -> Instr("CPX/ABS", CPX(ABS), 4),
+    0xed -> Instr("SBC/ABS", SBC(ABS), 4),
+    0xee -> Instr("INC/ABS", INC(ABS), 6),
+    0xf0 -> Instr("BEQ/REL", BEQ, 2),
+    0xf1 -> Instr("SBC/IZY", SBC(IZY), 5),
+    0xf5 -> Instr("SBC/ZPX", SBC(ZPX), 4),
+    0xf6 -> Instr("INC/ZPX", INC(ZPX), 6),
+    0xf8 -> Instr("SED/IMP", SED, 2),
+    0xf9 -> Instr("SBC/ABY", SBC(ABY), 4),
+    0xfd -> Instr("SBC/ABX", SBC(ABX), 4),
+    0xfe -> Instr("INC/ABX", INC(ABX), 7)
     // Unofficial opcodes
-    0xA3 -> Instr("LAX/IZX", LAX(IZX), 6),     0xA7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
-    0xAB -> Instr("LAX/IMM", LAX(IMM), 2),     0xAF -> Instr("LAX/ABS", LAX(ABS), 4),
-    0xB3 -> Instr("LAX/IZY", LAX(IZY), 5),     0xB7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
-    0xBF -> Instr("LAX/ABY", LAX(ABY), 4),     0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
-    0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),     0x8F -> Instr("SAX/ABS", SAX(ABS), 4),
-    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),     0xEB -> Instr("SBC/IMM", SBC(IMM), 2),
-    0xC3 -> Instr("DCP/IZX", DCP(IZX), 8),     0xC7 -> Instr("DCP/ZP0", DCP(ZP0), 5),
-    0xCF -> Instr("DCP/ABS", DCP(ABS), 6),     0xD3 -> Instr("DCP/IZY", DCP(IZY), 8),
-    0xD7 -> Instr("DCP/ZPX", DCP(ZPX), 6),     0xDB -> Instr("DCP/ABY", DCP(ABY), 7),
-    0xDF -> Instr("DCP/ABX", DCP(ABX), 7),     0xE3 -> Instr("ISC/IZX", ISC(IZX), 8),
-    0xE7 -> Instr("ISC/ZP0", ISC(ZP0), 5),     0xEF -> Instr("ISC/ABS", ISC(ABS), 6),
-    0xF3 -> Instr("ISC/IZY", ISC(IZY), 8),     0xF7 -> Instr("ISC/ZPX", ISC(ZPX), 6),
-    0xFB -> Instr("ISC/ABY", ISC(ABY), 7),     0xFF -> Instr("ISC/ABX", ISC(ABX), 7),
-    0x03 -> Instr("SLO/IZX", SLO(IZX), 8),     0x07 -> Instr("SLO/ZP0", SLO(ZP0), 5),
-    0x0F -> Instr("SLO/ABS", SLO(ABS), 6),     0x13 -> Instr("SLO/IZY", SLO(IZY), 8),
-    0x17 -> Instr("SLO/ZPX", SLO(ZPX), 6),     0x1B -> Instr("SLO/ABY", SLO(ABY), 7),
-    0x1F -> Instr("SLO/ABX", SLO(ABX), 7),     0x23 -> Instr("RLA/IZX", RLA(IZX), 8),
-    0x27 -> Instr("RLA/ZP0", RLA(ZP0), 5),     0x2F -> Instr("RLA/ABS", RLA(ABS), 6),
-    0x33 -> Instr("RLA/IZY", RLA(IZY), 8),     0x37 -> Instr("RLA/ZPX", RLA(ZPX), 6),
-    0x3B -> Instr("RLA/ABY", RLA(ABY), 7),     0x3F -> Instr("RLA/ABX", RLA(ABX), 7),
-    0x43 -> Instr("SRE/IZX", SRE(IZX), 8),     0x47 -> Instr("SRE/ZP0", SRE(ZP0), 5),
-    0x4F -> Instr("SRE/ABS", SRE(ABS), 6),     0x53 -> Instr("SRE/IZY", SRE(IZY), 8),
-    0x57 -> Instr("SRE/ZPX", SRE(ZPX), 6),     0x5B -> Instr("SRE/ABY", SRE(ABY), 7),
-    0x5F -> Instr("SRE/ABX", SRE(ABX), 7),     0x63 -> Instr("RRA/IZX", RRA(IZX), 8),
-    0x67 -> Instr("RRA/ZP0", RRA(ZP0), 5),     0x6F -> Instr("RRA/ABS", RRA(ABS), 6),
-    0x73 -> Instr("RRA/IZY", RRA(IZY), 8),     0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
-    0x7B -> Instr("RRA/ABY", RRA(ABY), 7),     0x7F -> Instr("RRA/ABX", RRA(ABX), 7)
+    /*
+    0xa3 -> Instr("LAX/IZX", LAX(IZX), 6),
+    0xa7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
+    0xab -> Instr("LAX/IMM", LAX(IMM), 2),
+    0xaf -> Instr("LAX/ABS", LAX(ABS), 4),
+    0xb3 -> Instr("LAX/IZY", LAX(IZY), 5),
+    0xb7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
+    0xbf -> Instr("LAX/ABY", LAX(ABY), 4),
+    0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
+    0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),
+    0x8f -> Instr("SAX/ABS", SAX(ABS), 4),
+    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),
+    0xeb -> Instr("SBC/IMM", SBC(IMM), 2),
+    0xc3 -> Instr("DCP/IZX", DCP(IZX), 8),
+    0xc7 -> Instr("DCP/ZP0", DCP(ZP0), 5),
+    0xcf -> Instr("DCP/ABS", DCP(ABS), 6),
+    0xd3 -> Instr("DCP/IZY", DCP(IZY), 8),
+    0xd7 -> Instr("DCP/ZPX", DCP(ZPX), 6),
+    0xdb -> Instr("DCP/ABY", DCP(ABY), 7),
+    0xdf -> Instr("DCP/ABX", DCP(ABX), 7),
+    0xe3 -> Instr("ISC/IZX", ISC(IZX), 8),
+    0xe7 -> Instr("ISC/ZP0", ISC(ZP0), 5),
+    0xef -> Instr("ISC/ABS", ISC(ABS), 6),
+    0xf3 -> Instr("ISC/IZY", ISC(IZY), 8),
+    0xf7 -> Instr("ISC/ZPX", ISC(ZPX), 6),
+    0xfb -> Instr("ISC/ABY", ISC(ABY), 7),
+    0xff -> Instr("ISC/ABX", ISC(ABX), 7),
+    0x03 -> Instr("SLO/IZX", SLO(IZX), 8),
+    0x07 -> Instr("SLO/ZP0", SLO(ZP0), 5),
+    0x0f -> Instr("SLO/ABS", SLO(ABS), 6),
+    0x13 -> Instr("SLO/IZY", SLO(IZY), 8),
+    0x17 -> Instr("SLO/ZPX", SLO(ZPX), 6),
+    0x1b -> Instr("SLO/ABY", SLO(ABY), 7),
+    0x1f -> Instr("SLO/ABX", SLO(ABX), 7),
+    0x23 -> Instr("RLA/IZX", RLA(IZX), 8),
+    0x27 -> Instr("RLA/ZP0", RLA(ZP0), 5),
+    0x2f -> Instr("RLA/ABS", RLA(ABS), 6),
+    0x33 -> Instr("RLA/IZY", RLA(IZY), 8),
+    0x37 -> Instr("RLA/ZPX", RLA(ZPX), 6),
+    0x3b -> Instr("RLA/ABY", RLA(ABY), 7),
+    0x3f -> Instr("RLA/ABX", RLA(ABX), 7),
+    0x43 -> Instr("SRE/IZX", SRE(IZX), 8),
+    0x47 -> Instr("SRE/ZP0", SRE(ZP0), 5),
+    0x4f -> Instr("SRE/ABS", SRE(ABS), 6),
+    0x53 -> Instr("SRE/IZY", SRE(IZY), 8),
+    0x57 -> Instr("SRE/ZPX", SRE(ZPX), 6),
+    0x5b -> Instr("SRE/ABY", SRE(ABY), 7),
+    0x5f -> Instr("SRE/ABX", SRE(ABX), 7),
+    0x63 -> Instr("RRA/IZX", RRA(IZX), 8),
+    0x67 -> Instr("RRA/ZP0", RRA(ZP0), 5),
+    0x6f -> Instr("RRA/ABS", RRA(ABS), 6),
+    0x73 -> Instr("RRA/IZY", RRA(IZY), 8),
+    0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
+    0x7b -> Instr("RRA/ABY", RRA(ABY), 7),
+    0x7f -> Instr("RRA/ABX", RRA(ABX), 7)
+     */
   ).withDefault { d =>
-    if (Set(0x80, 0x82, 0xC2, 0xE2, 0x89).contains(d))
+    if (Set(0x80, 0x82, 0xc2, 0xe2, 0x89).contains(d))
       Instr("NOP/IMM", NOP(IMM), 2)
-    else if (Set(0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA).contains(d))
+    else if (Set(0x1a, 0x3a, 0x5a, 0x7a, 0xda, 0xfa).contains(d))
       Instr("NOP/IMP", NOP(IMP), 2)
-    else if (Set(0x0C).contains(d))
+    else if (Set(0x0c).contains(d))
       Instr("NOP/ABS", NOP(ABS), 4)
-    else if (Set(0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4).contains(d))
+    else if (Set(0x14, 0x34, 0x54, 0x74, 0xd4, 0xf4).contains(d))
       Instr("NOP/ZPX", NOP(ZPX), 4)
-    else if (Set(0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC).contains(d))
+    else if (Set(0x1c, 0x3c, 0x5c, 0x7c, 0xdc, 0xfc).contains(d))
       Instr("NOP/ABX", NOP(ABX), 4)
     else if (Set(0x04, 0x44, 0x64).contains(d))
       Instr("NOP/ZP0", NOP(ZP0), 3)
-    else if (Set(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2, 0x0B, 0x2B, 0x4B, 0x6B, 0x8B, 0xCB).contains(d))
+    else if (
+      Set(0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xb2, 0xd2, 0xf2, 0x0b, 0x2b, 0x4b, 0x6b, 0x8b, 0xcb)
+        .contains(d)
+    )
       Instr("XXX/IMP", XXX, 2)
-    else if (Set(0xBB).contains(d))
+    else if (Set(0xbb).contains(d))
       Instr("XXX/IMP", XXX, 4)
-    else if (Set(0x9B, 0x9E, 0x9F).contains(d))
+    else if (Set(0x9b, 0x9e, 0x9f).contains(d))
       Instr("XXX/IMP", XXX, 5)
     else if (Set(0x93).contains(d))
       Instr("XXX/IMP", XXX, 6)
@@ -1122,25 +1132,29 @@ object Cpu extends LazyLogging {
   }
 
   def disassemble: State[NesState, (UInt16, String)] = {
-    def getNext: State[NesState, (UInt16, UInt8)] = for {
-      pc <- getPc
-      d <- cpuRead(pc)
-      _ <- incPc
-    } yield (pc, d)
+    def getNext: State[NesState, (UInt16, UInt8)] =
+      nes => {
+        val pc        = nes.cpuState.pc
+        val (nes1, d) = cpuRead(pc)(nes)
+        val nes2      = lift(CpuState.pc.modify(pc => (pc + 1) & 0xffff))(nes1)
+        (nes2, (pc, d))
+      }
 
     def getNextN(n: Int): State[NesState, List[UInt8]] =
       Monad[State[NesState, *]].replicateA(n, getNext).map(_.map(_._2))
 
     for {
       next <- getNext
-      (addr, d) = next
-      infoParts = lookup(d).info.split('/')
-      opcode = infoParts.head
+      (addr, d)   = next
+      infoParts   = lookup(d).info.split('/')
+      opcode      = infoParts.head
       addressMode = infoParts.last
-      cmdParts <- if (addressMode == "IMP") getNextN(0)
-      else if (Set("IMM", "ZP0", "ZPX", "ZPY", "IZX", "IZY", "REL").contains(addressMode)) getNextN(1)
-      else if (Set("ABS", "ABX", "ABY", "IND").contains(addressMode)) getNextN(2)
-      else throw new RuntimeException(s"Unexpected address mode: $addressMode")
+      cmdParts <-
+        if (addressMode == "IMP") getNextN(0)
+        else if (Set("IMM", "ZP0", "ZPX", "ZPY", "IZX", "IZY", "REL").contains(addressMode))
+          getNextN(1)
+        else if (Set("ABS", "ABX", "ABY", "IND").contains(addressMode)) getNextN(2)
+        else throw new RuntimeException(s"Unexpected address mode: $addressMode")
       res = addressMode match {
         case "IMP" =>
           s"$opcode {IMP}"
