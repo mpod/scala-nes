@@ -73,9 +73,11 @@ object Cpu extends LazyLogging {
   def setY(d: UInt8): NesState => NesState =
     lift(CpuState.y.set(d))
 
+  def setStkp(d: UInt8): NesState => NesState =
+    lift(CpuState.stkp.set(d))
+
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xffff) == address)
-
     if (address >= 0x0000 && address <= 0x1fff) // RAM
       State.inspect(_.ram(address % 0x800))
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
@@ -136,9 +138,6 @@ object Cpu extends LazyLogging {
       )
     )
 
-  def getFlag(flag: CpuFlags): State[NesState, Boolean] =
-    State.inspect(flag.bit & _.cpuState.status)
-
   val pop: State[NesState, UInt8] =
     nes => {
       val nes1      = lift(CpuState.stkp.modify(stkp => (stkp + 1) & 0xff))(nes)
@@ -149,9 +148,9 @@ object Cpu extends LazyLogging {
 
   def push(d: UInt8): NesState => NesState =
     nes => {
-      val address   = (0x0100 + nes.cpuState.stkp) & 0xffff
-      val modifyCpu = CpuState.stkp.modify(stkp => (stkp - 1) & 0xff)
-      (cpuWrite(address, d) andThen lift(modifyCpu))(nes)
+      val address = (0x0100 + nes.cpuState.stkp) & 0xffff
+      val decStkp = lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xff))
+      (cpuWrite(address, d) andThen decStkp)(nes)
     }
 
   private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xff00) != (a & 0xff00)
@@ -312,9 +311,12 @@ object Cpu extends LazyLogging {
   val ABX: AbsAddressMode =
     nes => {
       val (nes1, base) = ABS.prepareAddress(nes)
-      val c            = if (isPageChange(base, nes1.cpuState.x)) 1 else 0
-      val nes2         = incCycles(c)(nes1)
-      val address      = (base + nes2.cpuState.x) & 0xffff
+      val nes2 =
+        if (isPageChange(base, nes1.cpuState.x))
+          incCycles(1)(nes1)
+        else
+          nes1
+      val address = (base + nes2.cpuState.x) & 0xffff
       (nes2, address)
     }
 
@@ -322,9 +324,12 @@ object Cpu extends LazyLogging {
   val ABY: AbsAddressMode =
     nes => {
       val (nes1, base) = ABS.prepareAddress(nes)
-      val c            = if (isPageChange(base, nes1.cpuState.y)) 1 else 0
-      val nes2         = incCycles(c)(nes1)
-      val address      = (base + nes2.cpuState.y) & 0xffff
+      val nes2 =
+        if (isPageChange(base, nes1.cpuState.y))
+          incCycles(1)(nes1)
+        else
+          nes1
+      val address = (base + nes2.cpuState.y) & 0xffff
       (nes2, address)
     }
 
@@ -459,11 +464,13 @@ object Cpu extends LazyLogging {
   def BRK: Op =
     nes => {
       val nes1 = incPc(nes)
-      val nes2 = (
-        modifyFlag(CpuFlags.I, value = true) andThen
-          push((nes1.cpuState.pc >> 8) & 0xff) andThen push(nes1.cpuState.pc & 0xff)
-          andThen modifyFlag(CpuFlags.B, value = true)
-      )(nes1)
+      val pcHi = (nes1.cpuState.pc >> 8) & 0xff
+      val pcLo = nes1.cpuState.pc & 0xff
+      val flags = Map[CpuFlags, Boolean](
+        (CpuFlags.I, true),
+        (CpuFlags.B, true)
+      )
+      val nes2       = (modifyFlags(flags) andThen push(pcHi) andThen push(pcLo))(nes1)
       val status     = nes2.cpuState.status
       val nes3       = (push(status) andThen modifyFlag(CpuFlags.B, value = false))(nes2)
       val (nes4, d1) = cpuRead(0xfffe)(nes3)
@@ -777,7 +784,7 @@ object Cpu extends LazyLogging {
 
   // Transfer X to stack pointer
   val TXS: Op =
-    nes => lift(CpuState.stkp.set(nes.cpuState.x))(nes)
+    nes => setStkp(nes.cpuState.x)(nes)
 
   // Transfer Y to accumulator
   val TYA: Op =
