@@ -44,5 +44,3 @@ libraryDependencies ++= javaFXModules.map(m => "org.openjfx" % s"javafx-$m" % "1
 mainClass in (Compile, run) := Some("scalanes.mutable.Console")
 
 javaOptions in run += "-Xss100m"
-
-enablePlugins(JavaAppPackaging)
