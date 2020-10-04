@@ -27,8 +27,12 @@ object Cpu extends LazyLogging {
   }
 
   case class AbsAddressUnit(address: UInt16) extends AddressUnit {
-    override def read: NesState => (NesState, UInt8)   = cpuRead(address)
-    override def write(d: UInt8): NesState => NesState = cpuWrite(address, d)
+    override def read: NesState => (NesState, UInt8) = cpuRead(address)
+    override def write(d: UInt8): NesState => NesState =
+      nes => {
+        require((d & 0xff) == d)
+        cpuWrite(address, d)(nes)
+      }
   }
 
   case object AccAddressUnit extends AddressUnit {
@@ -107,6 +111,12 @@ object Cpu extends LazyLogging {
     for {
       lo <- cpuRead(address)
       hi <- cpuRead(address + 1)
+    } yield asUInt16(hi, lo)
+
+  def cpuRead16bug(address: UInt16): State[NesState, UInt16] =
+    for {
+      lo <- cpuRead(address)
+      hi <- cpuRead((address & 0xff00) | ((address + 1) & 0x00ff))
     } yield asUInt16(hi, lo)
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
@@ -255,7 +265,7 @@ object Cpu extends LazyLogging {
 
   val executeNextInstr: State[NesState, Unit] =
     nes => {
-      var nextNes = nes
+      var nextNes = clock.runS(nes)
       while (nextNes.cpuState.cycles > 0)
         nextNes = clock.runS(nextNes)
       (nextNes, ())
@@ -272,7 +282,10 @@ object Cpu extends LazyLogging {
   // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
   val IMM: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
-      nes => (incPc(1)(nes), AbsAddressUnit(nes.cpuState.pc + 1))
+      nes => {
+        val address = nes.cpuState.pc
+        (incPc(1)(nes), AbsAddressUnit(address))
+      }
   }
 
   // Zero page - d
@@ -280,7 +293,7 @@ object Cpu extends LazyLogging {
   val ZP0: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
         (incPc(1)(nes1), AbsAddressUnit(address))
       }
   }
@@ -289,7 +302,7 @@ object Cpu extends LazyLogging {
   val ZPX: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
         (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xff))
       }
   }
@@ -298,7 +311,7 @@ object Cpu extends LazyLogging {
   val ZPY: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
         (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xff))
       }
   }
@@ -307,7 +320,7 @@ object Cpu extends LazyLogging {
   val REL: RelAddressMode = new RelAddressMode {
     override def address: NesState => (NesState, Byte) =
       nes => {
-        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
         (incPc(1)(nes1), address.toByte)
       }
   }
@@ -317,7 +330,7 @@ object Cpu extends LazyLogging {
   val ABS: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead16(nes.cpuState.pc)(nes)
         (incPc(2)(nes1), AbsAddressUnit(address))
       }
   }
@@ -326,7 +339,7 @@ object Cpu extends LazyLogging {
   val ABX: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead16(nes.cpuState.pc)(nes)
         (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xffff))
       }
   }
@@ -335,7 +348,7 @@ object Cpu extends LazyLogging {
   val ABY: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        val (nes1, address) = cpuRead16(nes.cpuState.pc)(nes)
         (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xffff))
       }
   }
@@ -347,10 +360,9 @@ object Cpu extends LazyLogging {
   val IND: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, ptr) = cpuRead16(nes.cpuState.pc + 1)(nes)
-        val (nes2, lo)  = cpuRead(ptr)(nes1)
-        val (nes3, hi)  = cpuRead((ptr & 0xff00) | ((ptr + 1) & 0x00ff))(nes2)
-        (incPc(2)(nes3), AbsAddressUnit(asUInt16(hi, lo)))
+        val (nes1, ptr)     = cpuRead16(nes.cpuState.pc)(nes)
+        val (nes2, address) = cpuRead16bug(ptr)(nes1)
+        (incPc(2)(nes2), AbsAddressUnit(address))
       }
   }
 
@@ -358,8 +370,8 @@ object Cpu extends LazyLogging {
   val IZX: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, t)       = cpuRead(nes.cpuState.pc + 1)(nes)
-        val (nes2, address) = cpuRead16((t + nes1.cpuState.x) & 0x00ff)(nes1)
+        val (nes1, t)       = cpuRead(nes.cpuState.pc)(nes)
+        val (nes2, address) = cpuRead16bug((t + nes1.cpuState.x) & 0x00ff)(nes1)
         (incPc(1)(nes2), AbsAddressUnit(address))
       }
   }
@@ -368,8 +380,8 @@ object Cpu extends LazyLogging {
   val IZY: AbsRwAddressMode = new AbsRwAddressMode {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
-        val (nes1, t)       = cpuRead(nes.cpuState.pc + 1)(nes)
-        val (nes2, address) = cpuRead16((t + nes1.cpuState.y) & 0x00ff)(nes1)
+        val (nes1, t)       = cpuRead(nes.cpuState.pc)(nes)
+        val (nes2, address) = cpuRead16bug(t).map(a => (a + nes1.cpuState.y) & 0xffff).run(nes1)
         val c               = if (isPageChange(address, nes1.cpuState.y)) 1 else 0
         ((incPc(1) andThen incCycles(c))(nes2), AbsAddressUnit(address))
       }
@@ -421,7 +433,7 @@ object Cpu extends LazyLogging {
         val c                  = if (isPageChange(nes1.cpuState.pc, relAddress)) 2 else 1
         (setPc(address) andThen incCycles(c))(nes1)
       } else {
-        incPc(2)(nes)
+        incPc(1)(nes)
       }
     }
 
@@ -558,7 +570,10 @@ object Cpu extends LazyLogging {
 
   // Jump
   def JMP(addressMode: AbsRwAddressMode): Op =
-    addressMode.addressUnit.map(au => setPc(au.address)).runS
+    nes => {
+      val (nes1, au) = addressMode.addressUnit(nes)
+      setPc(au.address)(nes1)
+    }
 
   // Jump to subroutine
   def JSR(addressMode: AbsRwAddressMode): Op =
