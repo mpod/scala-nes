@@ -892,212 +892,113 @@ object Cpu extends LazyLogging {
   case class Instr(info: String, op: Op, cycles: Int)
 
   val lookup: Map[UInt8, Instr] = Map(
-    0x00 -> Instr("BRK/IMM", BRK, 7),
-    0x01 -> Instr("ORA/IMM", ORA(IZX), 6),
-    0x05 -> Instr("ORA/ZP0", ORA(ZP0), 3),
-    0x06 -> Instr("ASL/ZP0", ASL(ZP0), 5),
-    0x08 -> Instr("PHP/IMP", PHP, 3),
-    0x09 -> Instr("ORA/IMM", ORA(IMM), 2),
-    0x0a -> Instr("ASL/IMP", ASL(IMP), 2),
-    0x0d -> Instr("ORA/ABS", ORA(ABS), 4),
-    0x0e -> Instr("ASL/ABS", ASL(ABS), 6),
-    0x10 -> Instr("BPL/REL", BPL, 2),
-    0x11 -> Instr("ORA/IZY", ORA(IZY), 5),
-    0x15 -> Instr("ORA/ZPX", ORA(ZPX), 4),
-    0x16 -> Instr("ASL/ZPX", ASL(ZPX), 6),
-    0x18 -> Instr("CLC/IMP", CLC, 2),
-    0x19 -> Instr("ORA/ABY", ORA(ABY), 4),
-    0x1d -> Instr("ORA/ABX", ORA(ABX), 4),
-    0x1e -> Instr("ASL/ABX", ASL(ABX), 7),
-    0x20 -> Instr("JSR/ABS", JSR(ABS), 6),
-    0x21 -> Instr("AND/IZX", AND(IZX), 6),
-    0x24 -> Instr("BIT/ZP0", BIT(ZP0), 3),
-    0x25 -> Instr("AND/ZP0", AND(ZP0), 3),
-    0x26 -> Instr("ROL/IMM", ROL(ZP0), 5),
-    0x28 -> Instr("PLP/IMP", PLP, 4),
-    0x29 -> Instr("AND/IMM", AND(IMM), 2),
-    0x2a -> Instr("ROL/IMP", ROL(IMP), 2),
-    0x2c -> Instr("BIT/ABS", BIT(ABS), 4),
-    0x2d -> Instr("AND/ABS", AND(ABS), 4),
-    0x2e -> Instr("ROL/ABS", ROL(ABS), 6),
-    0x30 -> Instr("BMI/REL", BMI, 2),
-    0x31 -> Instr("AND/IZY", AND(IZY), 5),
-    0x35 -> Instr("AND/ZPX", AND(ZPX), 4),
-    0x36 -> Instr("ROL/ZPX", ROL(ZPX), 6),
-    0x38 -> Instr("SEC/IMP", SEC, 2),
-    0x39 -> Instr("AND/ABY", AND(ABY), 4),
-    0x3d -> Instr("AND/ABX", AND(ABX), 4),
-    0x3e -> Instr("ROL/ABX", ROL(ABX), 7),
-    0x40 -> Instr("RTI/IMP", RTI, 6),
-    0x41 -> Instr("EOR/IZX", EOR(IZX), 6),
-    0x45 -> Instr("EOR/ZP0", EOR(ZP0), 3),
-    0x46 -> Instr("LSR/ZP0", LSR(ZP0), 5),
-    0x48 -> Instr("PHA/IMP", PHA, 3),
-    0x49 -> Instr("EOR/IMM", EOR(IMM), 2),
-    0x4a -> Instr("LSR/IMP", LSR(IMP), 2),
-    0x4c -> Instr("JMP/ABS", JMP(ABS), 3),
-    0x4d -> Instr("EOR/ABS", EOR(ABS), 4),
-    0x4e -> Instr("LSR/ABS", LSR(ABS), 6),
-    0x50 -> Instr("BVC/REL", BVC, 2),
-    0x51 -> Instr("EOR/IZY", EOR(IZY), 5),
-    0x55 -> Instr("EOR/ZPX", EOR(ZPX), 4),
-    0x56 -> Instr("LSR/ZPX", LSR(ZPX), 6),
-    0x58 -> Instr("CLI/IMP", CLI, 2),
-    0x59 -> Instr("EOR/ABY", EOR(ABY), 4),
-    0x5d -> Instr("EOR/ABX", EOR(ABX), 4),
-    0x5e -> Instr("LSR/ABX", LSR(ABX), 7),
-    0x60 -> Instr("RTS/IMP", RTS, 6),
-    0x61 -> Instr("ADC/IZX", ADC(IZX), 6),
-    0x65 -> Instr("ADC/ZP0", ADC(ZP0), 3),
-    0x66 -> Instr("ROR/ZP0", ROR(ZP0), 5),
-    0x68 -> Instr("PLA/IMP", PLA, 4),
-    0x69 -> Instr("ADC/IMM", ADC(IMM), 2),
-    0x6a -> Instr("ROR/IMP", ROR(IMP), 2),
-    0x6c -> Instr("JMP/IND", JMP(IND), 5),
-    0x6d -> Instr("ADC/ABS", ADC(ABS), 4),
-    0x6e -> Instr("ROR/ABS", ROR(ABS), 6),
-    0x70 -> Instr("BVS/REL", BVS, 2),
-    0x71 -> Instr("ADC/IZY", ADC(IZY), 5),
-    0x75 -> Instr("ADC/ZPX", ADC(ZPX), 4),
-    0x76 -> Instr("ROR/ZPX", ROR(ZPX), 6),
-    0x78 -> Instr("SEI/IMP", SEI, 2),
-    0x79 -> Instr("ADC/ABY", ADC(ABY), 4),
-    0x7d -> Instr("ADC/ABX", ADC(ABX), 4),
-    0x7e -> Instr("ROR/ABX", ROR(ABX), 7),
-    0x81 -> Instr("STA/IZX", STA(IZX), 6),
-    0x84 -> Instr("STY/ZP0", STY(ZP0), 3),
-    0x85 -> Instr("STA/ZP0", STA(ZP0), 3),
-    0x86 -> Instr("STX/ZP0", STX(ZP0), 3),
-    0x88 -> Instr("DEY/IMP", DEY, 2),
-    0x8a -> Instr("TXA/IMP", TXA, 2),
-    0x8c -> Instr("STY/ABS", STY(ABS), 4),
-    0x8d -> Instr("STA/ABS", STA(ABS), 4),
-    0x8e -> Instr("STX/ABS", STX(ABS), 4),
-    0x90 -> Instr("BCC/REL", BCC, 2),
-    0x91 -> Instr("STA/IZY", STA(IZY), 6),
-    0x94 -> Instr("STY/ZPX", STY(ZPX), 4),
-    0x95 -> Instr("STA/ZPX", STA(ZPX), 4),
-    0x96 -> Instr("STX/ZPY", STX(ZPY), 4),
-    0x98 -> Instr("TYA/IMP", TYA, 2),
-    0x99 -> Instr("STA/ABY", STA(ABY), 5),
-    0x9a -> Instr("TXS/IMP", TXS, 2),
-    0x9d -> Instr("STA/ABX", STA(ABX), 5),
-    0xa0 -> Instr("LDY/IMM", LDY(IMM), 2),
-    0xa1 -> Instr("LDA/IZX", LDA(IZX), 6),
-    0xa2 -> Instr("LDX/IMM", LDX(IMM), 2),
-    0xa4 -> Instr("LDY/ZP0", LDY(ZP0), 3),
-    0xa5 -> Instr("LDA/ZP0", LDA(ZP0), 3),
-    0xa6 -> Instr("LDX/ZP0", LDX(ZP0), 3),
-    0xa8 -> Instr("TAY/IMP", TAY, 2),
-    0xa9 -> Instr("LDA/IMM", LDA(IMM), 2),
-    0xaa -> Instr("TAX/IMP", TAX, 2),
-    0xac -> Instr("LDY/ABS", LDY(ABS), 4),
-    0xad -> Instr("LDA/ABS", LDA(ABS), 4),
-    0xae -> Instr("LDX/ABS", LDX(ABS), 4),
-    0xb0 -> Instr("BCS/REL", BCS, 2),
-    0xb1 -> Instr("LDA/IZY", LDA(IZY), 5),
-    0xb4 -> Instr("LDY/ZPX", LDY(ZPX), 4),
-    0xb5 -> Instr("LDA/ZPX", LDA(ZPX), 4),
-    0xb6 -> Instr("LDX/ZPY", LDX(ZPY), 4),
-    0xb8 -> Instr("CLV/IMP", CLV, 2),
-    0xb9 -> Instr("LDA/ABY", LDA(ABY), 4),
-    0xba -> Instr("TSX/IMP", TSX, 2),
-    0xbc -> Instr("LDY/ABX", LDY(ABX), 4),
-    0xbd -> Instr("LDA/ABX", LDA(ABX), 4),
-    0xbe -> Instr("LDX/ABY", LDX(ABY), 4),
-    0xc0 -> Instr("CPY/IMM", CPY(IMM), 2),
-    0xc1 -> Instr("CMP/IZX", CMP(IZX), 6),
-    0xc4 -> Instr("CPY/ZP0", CPY(ZP0), 3),
-    0xc5 -> Instr("CMP/ZP0", CMP(ZP0), 3),
-    0xc6 -> Instr("DEC/ZP0", DEC(ZP0), 5),
-    0xc8 -> Instr("INY/IMP", INY, 2),
-    0xc9 -> Instr("CMP/IMM", CMP(IMM), 2),
-    0xca -> Instr("DEX/IMP", DEX, 2),
-    0xcc -> Instr("CPY/ABS", CPY(ABS), 4),
-    0xcd -> Instr("CMP/ABS", CMP(ABS), 4),
-    0xce -> Instr("DEC/ABS", DEC(ABS), 6),
-    0xd0 -> Instr("BNE/REL", BNE, 2),
-    0xd1 -> Instr("CMP/IZY", CMP(IZY), 5),
-    0xd5 -> Instr("CMP/ZPX", CMP(ZPX), 4),
-    0xd6 -> Instr("DEC/ZPX", DEC(ZPX), 6),
-    0xd8 -> Instr("CLD/IMP", CLD, 2),
-    0xd9 -> Instr("CMP/ABY", CMP(ABY), 4),
-    0xdd -> Instr("CMP/ABX", CMP(ABX), 4),
-    0xde -> Instr("DEC/ABX", DEC(ABX), 7),
-    0xe0 -> Instr("CPX/IMM", CPX(IMM), 2),
-    0xe1 -> Instr("SBC/IZX", SBC(IZX), 6),
-    0xe4 -> Instr("CPX/ZP0", CPX(ZP0), 3),
-    0xe5 -> Instr("SBC/ZP0", SBC(ZP0), 3),
-    0xe6 -> Instr("INC/ZP0", INC(ZP0), 5),
-    0xe8 -> Instr("INX/IMP", INX, 2),
-    0xe9 -> Instr("SBC/IMM", SBC(IMM), 2),
-    0xea -> Instr("NOP/IMP", NOP(IMP), 2),
-    0xec -> Instr("CPX/ABS", CPX(ABS), 4),
-    0xed -> Instr("SBC/ABS", SBC(ABS), 4),
-    0xee -> Instr("INC/ABS", INC(ABS), 6),
-    0xf0 -> Instr("BEQ/REL", BEQ, 2),
-    0xf1 -> Instr("SBC/IZY", SBC(IZY), 5),
-    0xf5 -> Instr("SBC/ZPX", SBC(ZPX), 4),
-    0xf6 -> Instr("INC/ZPX", INC(ZPX), 6),
-    0xf8 -> Instr("SED/IMP", SED, 2),
-    0xf9 -> Instr("SBC/ABY", SBC(ABY), 4),
-    0xfd -> Instr("SBC/ABX", SBC(ABX), 4),
-    0xfe -> Instr("INC/ABX", INC(ABX), 7),
+    // format: off
+    0x00 -> Instr("BRK/IMM", BRK,      7),     0x01 -> Instr("ORA/IMM", ORA(IZX), 6),
+    0x05 -> Instr("ORA/ZP0", ORA(ZP0), 3),     0x06 -> Instr("ASL/ZP0", ASL(ZP0), 5),
+    0x08 -> Instr("PHP/IMP", PHP,      3),     0x09 -> Instr("ORA/IMM", ORA(IMM), 2),
+    0x0A -> Instr("ASL/IMP", ASL(IMP), 2),     0x0D -> Instr("ORA/ABS", ORA(ABS), 4),
+    0x0E -> Instr("ASL/ABS", ASL(ABS), 6),     0x10 -> Instr("BPL/REL", BPL,      2),
+    0x11 -> Instr("ORA/IZY", ORA(IZY), 5),     0x15 -> Instr("ORA/ZPX", ORA(ZPX), 4),
+    0x16 -> Instr("ASL/ZPX", ASL(ZPX), 6),     0x18 -> Instr("CLC/IMP", CLC,      2),
+    0x19 -> Instr("ORA/ABY", ORA(ABY), 4),     0x1D -> Instr("ORA/ABX", ORA(ABX), 4),
+    0x1E -> Instr("ASL/ABX", ASL(ABX), 7),     0x20 -> Instr("JSR/ABS", JSR(ABS), 6),
+    0x21 -> Instr("AND/IZX", AND(IZX), 6),     0x24 -> Instr("BIT/ZP0", BIT(ZP0), 3),
+    0x25 -> Instr("AND/ZP0", AND(ZP0), 3),     0x26 -> Instr("ROL/IMM", ROL(ZP0), 5),
+    0x28 -> Instr("PLP/IMP", PLP,      4),     0x29 -> Instr("AND/IMM", AND(IMM), 2),
+    0x2A -> Instr("ROL/IMP", ROL(IMP), 2),     0x2C -> Instr("BIT/ABS", BIT(ABS), 4),
+    0x2D -> Instr("AND/ABS", AND(ABS), 4),     0x2E -> Instr("ROL/ABS", ROL(ABS), 6),
+    0x30 -> Instr("BMI/REL", BMI,      2),     0x31 -> Instr("AND/IZY", AND(IZY), 5),
+    0x35 -> Instr("AND/ZPX", AND(ZPX), 4),     0x36 -> Instr("ROL/ZPX", ROL(ZPX), 6),
+    0x38 -> Instr("SEC/IMP", SEC,      2),     0x39 -> Instr("AND/ABY", AND(ABY), 4),
+    0x3D -> Instr("AND/ABX", AND(ABX), 4),     0x3E -> Instr("ROL/ABX", ROL(ABX), 7),
+    0x40 -> Instr("RTI/IMP", RTI,      6),     0x41 -> Instr("EOR/IZX", EOR(IZX), 6),
+    0x45 -> Instr("EOR/ZP0", EOR(ZP0), 3),     0x46 -> Instr("LSR/ZP0", LSR(ZP0), 5),
+    0x48 -> Instr("PHA/IMP", PHA,      3),     0x49 -> Instr("EOR/IMM", EOR(IMM), 2),
+    0x4A -> Instr("LSR/IMP", LSR(IMP), 2),     0x4C -> Instr("JMP/ABS", JMP(ABS), 3),
+    0x4D -> Instr("EOR/ABS", EOR(ABS), 4),     0x4E -> Instr("LSR/ABS", LSR(ABS), 6),
+    0x50 -> Instr("BVC/REL", BVC,      2),     0x51 -> Instr("EOR/IZY", EOR(IZY), 5),
+    0x55 -> Instr("EOR/ZPX", EOR(ZPX), 4),     0x56 -> Instr("LSR/ZPX", LSR(ZPX), 6),
+    0x58 -> Instr("CLI/IMP", CLI,      2),     0x59 -> Instr("EOR/ABY", EOR(ABY), 4),
+    0x5D -> Instr("EOR/ABX", EOR(ABX), 4),     0x5E -> Instr("LSR/ABX", LSR(ABX), 7),
+    0x60 -> Instr("RTS/IMP", RTS,      6),     0x61 -> Instr("ADC/IZX", ADC(IZX), 6),
+    0x65 -> Instr("ADC/ZP0", ADC(ZP0), 3),     0x66 -> Instr("ROR/ZP0", ROR(ZP0), 5),
+    0x68 -> Instr("PLA/IMP", PLA,      4),     0x69 -> Instr("ADC/IMM", ADC(IMM), 2),
+    0x6A -> Instr("ROR/IMP", ROR(IMP), 2),     0x6C -> Instr("JMP/IND", JMP(IND), 5),
+    0x6D -> Instr("ADC/ABS", ADC(ABS), 4),     0x6E -> Instr("ROR/ABS", ROR(ABS), 6),
+    0x70 -> Instr("BVS/REL", BVS,      2),     0x71 -> Instr("ADC/IZY", ADC(IZY), 5),
+    0x75 -> Instr("ADC/ZPX", ADC(ZPX), 4),     0x76 -> Instr("ROR/ZPX", ROR(ZPX), 6),
+    0x78 -> Instr("SEI/IMP", SEI,      2),     0x79 -> Instr("ADC/ABY", ADC(ABY), 4),
+    0x7D -> Instr("ADC/ABX", ADC(ABX), 4),     0x7E -> Instr("ROR/ABX", ROR(ABX), 7),
+    0x81 -> Instr("STA/IZX", STA(IZX), 6),     0x84 -> Instr("STY/ZP0", STY(ZP0), 3),
+    0x85 -> Instr("STA/ZP0", STA(ZP0), 3),     0x86 -> Instr("STX/ZP0", STX(ZP0), 3),
+    0x88 -> Instr("DEY/IMP", DEY,      2),     0x8A -> Instr("TXA/IMP", TXA,      2),
+    0x8C -> Instr("STY/ABS", STY(ABS), 4),     0x8D -> Instr("STA/ABS", STA(ABS), 4),
+    0x8E -> Instr("STX/ABS", STX(ABS), 4),     0x90 -> Instr("BCC/REL", BCC,      2),
+    0x91 -> Instr("STA/IZY", STA(IZY), 6),     0x94 -> Instr("STY/ZPX", STY(ZPX), 4),
+    0x95 -> Instr("STA/ZPX", STA(ZPX), 4),     0x96 -> Instr("STX/ZPY", STX(ZPY), 4),
+    0x98 -> Instr("TYA/IMP", TYA,      2),     0x99 -> Instr("STA/ABY", STA(ABY), 5),
+    0x9A -> Instr("TXS/IMP", TXS,      2),     0x9D -> Instr("STA/ABX", STA(ABX), 5),
+    0xA0 -> Instr("LDY/IMM", LDY(IMM), 2),     0xA1 -> Instr("LDA/IZX", LDA(IZX), 6),
+    0xA2 -> Instr("LDX/IMM", LDX(IMM), 2),     0xA4 -> Instr("LDY/ZP0", LDY(ZP0), 3),
+    0xA5 -> Instr("LDA/ZP0", LDA(ZP0), 3),     0xA6 -> Instr("LDX/ZP0", LDX(ZP0), 3),
+    0xA8 -> Instr("TAY/IMP", TAY,      2),     0xA9 -> Instr("LDA/IMM", LDA(IMM), 2),
+    0xAA -> Instr("TAX/IMP", TAX,      2),     0xAC -> Instr("LDY/ABS", LDY(ABS), 4),
+    0xAD -> Instr("LDA/ABS", LDA(ABS), 4),     0xAE -> Instr("LDX/ABS", LDX(ABS), 4),
+    0xB0 -> Instr("BCS/REL", BCS,      2),     0xB1 -> Instr("LDA/IZY", LDA(IZY), 5),
+    0xB4 -> Instr("LDY/ZPX", LDY(ZPX), 4),     0xB5 -> Instr("LDA/ZPX", LDA(ZPX), 4),
+    0xB6 -> Instr("LDX/ZPY", LDX(ZPY), 4),     0xB8 -> Instr("CLV/IMP", CLV,      2),
+    0xB9 -> Instr("LDA/ABY", LDA(ABY), 4),     0xBA -> Instr("TSX/IMP", TSX,      2),
+    0xBC -> Instr("LDY/ABX", LDY(ABX), 4),     0xBD -> Instr("LDA/ABX", LDA(ABX), 4),
+    0xBE -> Instr("LDX/ABY", LDX(ABY), 4),     0xC0 -> Instr("CPY/IMM", CPY(IMM), 2),
+    0xC1 -> Instr("CMP/IZX", CMP(IZX), 6),     0xC4 -> Instr("CPY/ZP0", CPY(ZP0), 3),
+    0xC5 -> Instr("CMP/ZP0", CMP(ZP0), 3),     0xC6 -> Instr("DEC/ZP0", DEC(ZP0), 5),
+    0xC8 -> Instr("INY/IMP", INY,      2),     0xC9 -> Instr("CMP/IMM", CMP(IMM), 2),
+    0xCA -> Instr("DEX/IMP", DEX,      2),     0xCC -> Instr("CPY/ABS", CPY(ABS), 4),
+    0xCD -> Instr("CMP/ABS", CMP(ABS), 4),     0xCE -> Instr("DEC/ABS", DEC(ABS), 6),
+    0xD0 -> Instr("BNE/REL", BNE,      2),     0xD1 -> Instr("CMP/IZY", CMP(IZY), 5),
+    0xD5 -> Instr("CMP/ZPX", CMP(ZPX), 4),     0xD6 -> Instr("DEC/ZPX", DEC(ZPX), 6),
+    0xD8 -> Instr("CLD/IMP", CLD,      2),     0xD9 -> Instr("CMP/ABY", CMP(ABY), 4),
+    0xDD -> Instr("CMP/ABX", CMP(ABX), 4),     0xDE -> Instr("DEC/ABX", DEC(ABX), 7),
+    0xE0 -> Instr("CPX/IMM", CPX(IMM), 2),     0xE1 -> Instr("SBC/IZX", SBC(IZX), 6),
+    0xE4 -> Instr("CPX/ZP0", CPX(ZP0), 3),     0xE5 -> Instr("SBC/ZP0", SBC(ZP0), 3),
+    0xE6 -> Instr("INC/ZP0", INC(ZP0), 5),     0xE8 -> Instr("INX/IMP", INX,      2),
+    0xE9 -> Instr("SBC/IMM", SBC(IMM), 2),     0xEA -> Instr("NOP/IMP", NOP(IMP), 2),
+    0xEC -> Instr("CPX/ABS", CPX(ABS), 4),     0xED -> Instr("SBC/ABS", SBC(ABS), 4),
+    0xEE -> Instr("INC/ABS", INC(ABS), 6),     0xF0 -> Instr("BEQ/REL", BEQ,      2),
+    0xF1 -> Instr("SBC/IZY", SBC(IZY), 5),     0xF5 -> Instr("SBC/ZPX", SBC(ZPX), 4),
+    0xF6 -> Instr("INC/ZPX", INC(ZPX), 6),     0xF8 -> Instr("SED/IMP", SED,      2),
+    0xF9 -> Instr("SBC/ABY", SBC(ABY), 4),     0xFD -> Instr("SBC/ABX", SBC(ABX), 4),
+    0xFE -> Instr("INC/ABX", INC(ABX), 7),
+
     // Unofficial opcodes
-    0xa3 -> Instr("LAX/IZX", LAX(IZX), 6),
-    0xa7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
-    0xab -> Instr("LAX/IMM", LAX(IMM), 2),
-    0xaf -> Instr("LAX/ABS", LAX(ABS), 4),
-    0xb3 -> Instr("LAX/IZY", LAX(IZY), 5),
-    0xb7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
-    0xbf -> Instr("LAX/ABY", LAX(ABY), 4),
-    0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
-    0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),
-    0x8f -> Instr("SAX/ABS", SAX(ABS), 4),
-    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),
-    0xeb -> Instr("SBC/IMM", SBC(IMM), 2),
-    0xc3 -> Instr("DCP/IZX", DCP(IZX), 8),
-    0xc7 -> Instr("DCP/ZP0", DCP(ZP0), 5),
-    0xcf -> Instr("DCP/ABS", DCP(ABS), 6),
-    0xd3 -> Instr("DCP/IZY", DCP(IZY), 8),
-    0xd7 -> Instr("DCP/ZPX", DCP(ZPX), 6),
-    0xdb -> Instr("DCP/ABY", DCP(ABY), 7),
-    0xdf -> Instr("DCP/ABX", DCP(ABX), 7),
-    0xe3 -> Instr("ISC/IZX", ISC(IZX), 8),
-    0xe7 -> Instr("ISC/ZP0", ISC(ZP0), 5),
-    0xef -> Instr("ISC/ABS", ISC(ABS), 6),
-    0xf3 -> Instr("ISC/IZY", ISC(IZY), 8),
-    0xf7 -> Instr("ISC/ZPX", ISC(ZPX), 6),
-    0xfb -> Instr("ISC/ABY", ISC(ABY), 7),
-    0xff -> Instr("ISC/ABX", ISC(ABX), 7),
-    0x03 -> Instr("SLO/IZX", SLO(IZX), 8),
-    0x07 -> Instr("SLO/ZP0", SLO(ZP0), 5),
-    0x0f -> Instr("SLO/ABS", SLO(ABS), 6),
-    0x13 -> Instr("SLO/IZY", SLO(IZY), 8),
-    0x17 -> Instr("SLO/ZPX", SLO(ZPX), 6),
-    0x1b -> Instr("SLO/ABY", SLO(ABY), 7),
-    0x1f -> Instr("SLO/ABX", SLO(ABX), 7),
-    0x23 -> Instr("RLA/IZX", RLA(IZX), 8),
-    0x27 -> Instr("RLA/ZP0", RLA(ZP0), 5),
-    0x2f -> Instr("RLA/ABS", RLA(ABS), 6),
-    0x33 -> Instr("RLA/IZY", RLA(IZY), 8),
-    0x37 -> Instr("RLA/ZPX", RLA(ZPX), 6),
-    0x3b -> Instr("RLA/ABY", RLA(ABY), 7),
-    0x3f -> Instr("RLA/ABX", RLA(ABX), 7),
-    0x43 -> Instr("SRE/IZX", SRE(IZX), 8),
-    0x47 -> Instr("SRE/ZP0", SRE(ZP0), 5),
-    0x4f -> Instr("SRE/ABS", SRE(ABS), 6),
-    0x53 -> Instr("SRE/IZY", SRE(IZY), 8),
-    0x57 -> Instr("SRE/ZPX", SRE(ZPX), 6),
-    0x5b -> Instr("SRE/ABY", SRE(ABY), 7),
-    0x5f -> Instr("SRE/ABX", SRE(ABX), 7),
-    0x63 -> Instr("RRA/IZX", RRA(IZX), 8),
-    0x67 -> Instr("RRA/ZP0", RRA(ZP0), 5),
-    0x6f -> Instr("RRA/ABS", RRA(ABS), 6),
-    0x73 -> Instr("RRA/IZY", RRA(IZY), 8),
-    0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
-    0x7b -> Instr("RRA/ABY", RRA(ABY), 7),
-    0x7f -> Instr("RRA/ABX", RRA(ABX), 7)
+    0xA3 -> Instr("LAX/IZX", LAX(IZX), 6),     0xA7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
+    0xAB -> Instr("LAX/IMM", LAX(IMM), 2),     0xAF -> Instr("LAX/ABS", LAX(ABS), 4),
+    0xB3 -> Instr("LAX/IZY", LAX(IZY), 5),     0xB7 -> Instr("LAX/ZPY", LAX(ZPY), 4),
+    0xBF -> Instr("LAX/ABY", LAX(ABY), 4),     0x83 -> Instr("SAX/IZX", SAX(IZX), 6),
+    0x87 -> Instr("SAX/ZP0", SAX(ZP0), 3),     0x8F -> Instr("SAX/ABS", SAX(ABS), 4),
+    0x97 -> Instr("SAX/ZPY", SAX(ZPY), 4),     0xEB -> Instr("SBC/IMM", SBC(IMM), 2),
+    0xC3 -> Instr("DCP/IZX", DCP(IZX), 8),     0xC7 -> Instr("DCP/ZP0", DCP(ZP0), 5),
+    0xCF -> Instr("DCP/ABS", DCP(ABS), 6),     0xD3 -> Instr("DCP/IZY", DCP(IZY), 8),
+    0xD7 -> Instr("DCP/ZPX", DCP(ZPX), 6),     0xDB -> Instr("DCP/ABY", DCP(ABY), 7),
+    0xDF -> Instr("DCP/ABX", DCP(ABX), 7),     0xE3 -> Instr("ISC/IZX", ISC(IZX), 8),
+    0xE7 -> Instr("ISC/ZP0", ISC(ZP0), 5),     0xEF -> Instr("ISC/ABS", ISC(ABS), 6),
+    0xF3 -> Instr("ISC/IZY", ISC(IZY), 8),     0xF7 -> Instr("ISC/ZPX", ISC(ZPX), 6),
+    0xFB -> Instr("ISC/ABY", ISC(ABY), 7),     0xFF -> Instr("ISC/ABX", ISC(ABX), 7),
+    0x03 -> Instr("SLO/IZX", SLO(IZX), 8),     0x07 -> Instr("SLO/ZP0", SLO(ZP0), 5),
+    0x0F -> Instr("SLO/ABS", SLO(ABS), 6),     0x13 -> Instr("SLO/IZY", SLO(IZY), 8),
+    0x17 -> Instr("SLO/ZPX", SLO(ZPX), 6),     0x1B -> Instr("SLO/ABY", SLO(ABY), 7),
+    0x1F -> Instr("SLO/ABX", SLO(ABX), 7),     0x23 -> Instr("RLA/IZX", RLA(IZX), 8),
+    0x27 -> Instr("RLA/ZP0", RLA(ZP0), 5),     0x2F -> Instr("RLA/ABS", RLA(ABS), 6),
+    0x33 -> Instr("RLA/IZY", RLA(IZY), 8),     0x37 -> Instr("RLA/ZPX", RLA(ZPX), 6),
+    0x3B -> Instr("RLA/ABY", RLA(ABY), 7),     0x3F -> Instr("RLA/ABX", RLA(ABX), 7),
+    0x43 -> Instr("SRE/IZX", SRE(IZX), 8),     0x47 -> Instr("SRE/ZP0", SRE(ZP0), 5),
+    0x4F -> Instr("SRE/ABS", SRE(ABS), 6),     0x53 -> Instr("SRE/IZY", SRE(IZY), 8),
+    0x57 -> Instr("SRE/ZPX", SRE(ZPX), 6),     0x5B -> Instr("SRE/ABY", SRE(ABY), 7),
+    0x5F -> Instr("SRE/ABX", SRE(ABX), 7),     0x63 -> Instr("RRA/IZX", RRA(IZX), 8),
+    0x67 -> Instr("RRA/ZP0", RRA(ZP0), 5),     0x6F -> Instr("RRA/ABS", RRA(ABS), 6),
+    0x73 -> Instr("RRA/IZY", RRA(IZY), 8),     0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
+    0x7B -> Instr("RRA/ABY", RRA(ABY), 7),     0x7F -> Instr("RRA/ABX", RRA(ABX), 7)
+    // format: on
   ).withDefault { d =>
     if (Set(0x80, 0x82, 0xc2, 0xe2, 0x89).contains(d))
       Instr("NOP/IMM", NOP(IMM), 2)
@@ -1127,68 +1028,5 @@ object Cpu extends LazyLogging {
       Instr("XXX/IMP", XXX, 8)
     }
   }
-
-  def disassemble: State[NesState, (UInt16, String)] = {
-    def getNext: State[NesState, (UInt16, UInt8)] =
-      nes => {
-        val pc        = nes.cpuState.pc
-        val (nes1, d) = cpuRead(pc)(nes)
-        val nes2      = incPc(nes1)
-        (nes2, (pc, d))
-      }
-
-    def getNextN(n: Int): State[NesState, List[UInt8]] =
-      Monad[State[NesState, *]].replicateA(n, getNext).map(_.map(_._2))
-
-    for {
-      next <- getNext
-      (addr, d)   = next
-      infoParts   = lookup(d).info.split('/')
-      opcode      = infoParts.head
-      addressMode = infoParts.last
-      cmdParts <-
-        if (addressMode == "IMP") getNextN(0)
-        else if (Set("IMM", "ZP0", "ZPX", "ZPY", "IZX", "IZY", "REL").contains(addressMode))
-          getNextN(1)
-        else if (Set("ABS", "ABX", "ABY", "IND").contains(addressMode)) getNextN(2)
-        else throw new RuntimeException(s"Unexpected address mode: $addressMode")
-      res = addressMode match {
-        case "IMP" =>
-          s"$opcode {IMP}"
-        case "IMM" =>
-          s"$opcode #$$${hex(cmdParts.head, 2)} {IMM}"
-        case "ZP0" =>
-          s"$opcode $$${hex(cmdParts.head, 2)} {ZP0}"
-        case "ZPX" =>
-          s"$opcode $$${hex(cmdParts.head, 2)}, X {ZPX}"
-        case "ZPY" =>
-          s"$opcode $$${hex(cmdParts.head, 2)}, Y {ZPY}"
-        case "IZX" =>
-          s"$opcode ($$${hex(cmdParts.head, 2)}, X) {IZX}"
-        case "IZY" =>
-          s"$opcode ($$${hex(cmdParts.head, 2)}, Y) {IZY}"
-        case "ABS" =>
-          val a = asUInt16(cmdParts(1), cmdParts.head)
-          s"$opcode $$${hex(a, 4)} {ABS}"
-        case "ABX" =>
-          val a = asUInt16(cmdParts(1), cmdParts.head)
-          s"$opcode $$${hex(a, 4)}, X {ABX}"
-        case "ABY" =>
-          val a = asUInt16(cmdParts(1), cmdParts.head)
-          s"$opcode $$${hex(a, 4)}, Y {ABY}"
-        case "IND" =>
-          val a = asUInt16(cmdParts(1), cmdParts.head)
-          s"$opcode ($$${hex(a, 4)}) {IND}"
-        case "REL" =>
-          val a = cmdParts.head
-          s"$opcode $$${hex(a, 2)} [$$${hex(addr + 2 + a.toByte, 4)}] {REL}"
-        case _ =>
-          throw new RuntimeException(s"Unexpected address mode: $addressMode")
-      }
-    } yield addr -> res
-  }
-
-  def disassemble(n: Int): State[NesState, List[(UInt16, String)]] =
-    Monad[State[NesState, *]].replicateA(n, disassemble)
 
 }
