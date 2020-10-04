@@ -9,32 +9,40 @@ object Cpu extends LazyLogging {
 
   trait AddressMode
 
-  trait RwAddressMode {
+  trait RwAddressMode extends AddressMode {
+    def addressUnit: NesState => (NesState, AddressUnit)
+  }
+
+  trait RelAddressMode extends AddressMode {
+    def address: NesState => (NesState, Byte)
+  }
+
+  trait AbsRwAddressMode extends RwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit)
+  }
+
+  trait AddressUnit {
     def read: NesState => (NesState, UInt8)
     def write(d: UInt8): NesState => NesState
   }
 
-  trait AbsAddressMode extends RwAddressMode {
-    def prepareAddress(nes: NesState): (NesState, UInt16)
-
-    override def read: NesState => (NesState, UInt8) =
-      nes => {
-        val (nes1, address) = prepareAddress(nes)
-        cpuRead(address)(nes1)
-      }
-
-    override def write(d: UInt8): NesState => NesState =
-      nes => {
-        val (nes1, address) = prepareAddress(nes)
-        cpuWrite(address, d)(nes1)
-      }
+  case class AbsAddressUnit(address: UInt16) extends AddressUnit {
+    override def read: NesState => (NesState, UInt8)   = cpuRead(address)
+    override def write(d: UInt8): NesState => NesState = cpuWrite(address, d)
   }
 
-  trait RelAddressMode extends AddressMode {
-    def prepareAddress(nes: NesState): (NesState, Byte)
+  case object AccAddressUnit extends AddressUnit {
+    override def read: NesState => (NesState, UInt8)   = nes => (nes, nes.cpuState.a)
+    override def write(d: UInt8): NesState => NesState = setA(d)
   }
 
   type Op = NesState => NesState
+
+  private def rwOp(addressMode: RwAddressMode)(op: (NesState, AddressUnit) => NesState): Op =
+    nes => {
+      val (nes1, au) = addressMode.addressUnit(nes)
+      op(nes1, au)
+    }
 
   implicit class CpuStateOps[A](val a: State[CpuState, A]) extends AnyVal {
     def toNesState: State[NesState, A] = a.transformS(
@@ -47,7 +55,10 @@ object Cpu extends LazyLogging {
     NesState.cpuState.modify(f)
 
   val incPc: NesState => NesState =
-    lift(CpuState.pc.modify(pc => (pc + 1) & 0xffff))
+    incPc(1)
+
+  def incPc(delta: Int): NesState => NesState =
+    lift(CpuState.pc.modify(pc => (pc + delta) & 0xffff))
 
   val decPc: NesState => NesState =
     lift(CpuState.pc.modify(pc => (pc - 1) & 0xffff))
@@ -91,6 +102,12 @@ object Cpu extends LazyLogging {
     else
       State.pure(0x00)
   }
+
+  def cpuRead16(address: UInt16): State[NesState, UInt16] =
+    for {
+      lo <- cpuRead(address)
+      hi <- cpuRead(address + 1)
+    } yield asUInt16(hi, lo)
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
     nes => {
@@ -152,6 +169,12 @@ object Cpu extends LazyLogging {
       val decStkp = lift(CpuState.stkp.modify(stkp => (stkp - 1) & 0xff))
       (cpuWrite(address, d) andThen decStkp)(nes)
     }
+
+  def push16(d: UInt16): NesState => NesState = {
+    val hi = (d >> 8) & 0xff
+    val lo = d & 0xff
+    push(hi) andThen push(lo)
+  }
 
   private def isPageChange(a: Int, i: Int): Boolean = ((a + i) & 0xff00) != (a & 0xff00)
 
@@ -241,145 +264,121 @@ object Cpu extends LazyLogging {
   // Implicit
   // It may operate on the accumulator.
   val IMP: RwAddressMode = new RwAddressMode {
-    override def read: NesState => (NesState, UInt8) =
-      nes => (nes, nes.cpuState.a)
-
-    override def write(d: UInt8): NesState => NesState =
-      setA(d)
+    override def addressUnit: NesState => (NesState, AddressUnit) =
+      (_, AccAddressUnit)
   }
 
   // Immediate - #v
   // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
-  val IMM: AbsAddressMode =
-    nes => {
-      val address = nes.cpuState.pc
-      val nes1    = incPc(nes)
-      (nes1, address)
-    }
+  val IMM: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => (incPc(1)(nes), AbsAddressUnit(nes.cpuState.pc + 1))
+  }
 
   // Zero page - d
   // Fetches the value from an 8-bit address on the zero page.
-  val ZP0: AbsAddressMode =
-    nes => {
-      val pc              = nes.cpuState.pc
-      val (nes1, address) = cpuRead(pc)(nes)
-      val nes2            = incPc(nes1)
-      (nes2, address)
-    }
+  val ZP0: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        (incPc(1)(nes1), AbsAddressUnit(address))
+      }
+  }
 
   // Zero page indexed - d,x
-  val ZPX: AbsAddressMode =
-    nes => {
-      val pc        = nes.cpuState.pc
-      val (nes1, d) = cpuRead(pc)(nes)
-      val address   = (d + nes1.cpuState.x) & 0xff
-      val nes2      = incPc(nes1)
-      (nes2, address)
-    }
+  val ZPX: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xff))
+      }
+  }
 
   // Zero page indexed - d,y
-  val ZPY: AbsAddressMode =
-    nes => {
-      val pc        = nes.cpuState.pc
-      val (nes1, d) = cpuRead(pc)(nes)
-      val address   = (d + nes1.cpuState.y) & 0xff
-      val nes2      = incPc(nes1)
-      (nes2, address)
-    }
+  val ZPY: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xff))
+      }
+  }
 
-  val REL: RelAddressMode =
-    nes => {
-      val pc              = nes.cpuState.pc
-      val (nes1, address) = cpuRead(pc)(nes)
-      val nes2            = incPc(nes1)
-      (nes2, address.toByte)
-    }
+  // Relative
+  val REL: RelAddressMode = new RelAddressMode {
+    override def address: NesState => (NesState, Byte) =
+      nes => {
+        val (nes1, address) = cpuRead(nes.cpuState.pc + 1)(nes)
+        (incPc(1)(nes1), address.toByte)
+      }
+  }
 
   // Absolute - a
   // Fetches the value from a 16-bit address anywhere in memory.
-  val ABS: AbsAddressMode =
-    nes => {
-      val pc         = nes.cpuState.pc
-      val (nes1, lo) = cpuRead(pc)(nes)
-      val (nes2, hi) = cpuRead(pc + 1)(nes1)
-      val address    = asUInt16(hi, lo)
-      val nes3       = incPc(nes2)
-      (nes3, address)
-    }
+  val ABS: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        (incPc(2)(nes1), AbsAddressUnit(address))
+      }
+  }
 
   // Absolute indexed - a,x
-  val ABX: AbsAddressMode =
-    nes => {
-      val (nes1, base) = ABS.prepareAddress(nes)
-      val nes2 =
-        if (isPageChange(base, nes1.cpuState.x))
-          incCycles(1)(nes1)
-        else
-          nes1
-      val address = (base + nes2.cpuState.x) & 0xffff
-      (nes2, address)
-    }
+  val ABX: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xffff))
+      }
+  }
 
   // Absolute indexed - a,y
-  val ABY: AbsAddressMode =
-    nes => {
-      val (nes1, base) = ABS.prepareAddress(nes)
-      val nes2 =
-        if (isPageChange(base, nes1.cpuState.y))
-          incCycles(1)(nes1)
-        else
-          nes1
-      val address = (base + nes2.cpuState.y) & 0xffff
-      (nes2, address)
-    }
+  val ABY: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, address) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xffff))
+      }
+  }
 
   // Indirect - (a)
   // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a
-  // 16-bit pointer anywhere in memory.
-  val IND: AbsAddressMode =
-    nes => {
-      val (nes1, ptr) = ABS.prepareAddress(nes)
-      val (nes2, lo)  = cpuRead(ptr)(nes1)
-      val (nes3, hi) =
-        if ((ptr & 0x00ff) == 0x00ff)
-          cpuRead(ptr & 0xff00)(nes2)
-        else
-          cpuRead((ptr + 1) & 0xffff)(nes2)
-      val address = asUInt16(hi, lo)
-      (nes3, address)
-    }
+  // 16-bit pointer anywhere in memory. It emulates a bug in the hardware that causes the low byte to wrap
+  // without incrementing the high byte.
+  val IND: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, ptr) = cpuRead16(nes.cpuState.pc + 1)(nes)
+        val (nes2, lo)  = cpuRead(ptr)(nes1)
+        val (nes3, hi)  = cpuRead((ptr & 0xff00) | ((ptr + 1) & 0x00ff))(nes2)
+        (incPc(2)(nes3), AbsAddressUnit(asUInt16(hi, lo)))
+      }
+  }
 
   // Indexed indirect - (d,x)
-  val IZX: AbsAddressMode =
-    nes => {
-      val pc         = nes.cpuState.pc
-      val (nes1, t)  = cpuRead(pc)(nes)
-      val x          = nes.cpuState.x
-      val (nes2, lo) = cpuRead((t + x + 0) & 0x00ff)(nes1)
-      val (nes3, hi) = cpuRead((t + x + 1) & 0x00ff)(nes2)
-      val address    = asUInt16(hi, lo)
-      val nes4       = incPc(nes3)
-      (nes4, address)
-    }
+  val IZX: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, t)       = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes2, address) = cpuRead16((t + nes1.cpuState.x) & 0x00ff)(nes1)
+        (incPc(1)(nes2), AbsAddressUnit(address))
+      }
+  }
 
   // Indirect indexed - (d),y
-  val IZY: AbsAddressMode =
-    nes => {
-      val pc         = nes.cpuState.pc
-      val (nes1, t)  = cpuRead(pc)(nes)
-      val y          = nes.cpuState.y
-      val (nes2, lo) = cpuRead((t + 0) & 0x00ff)(nes1)
-      val (nes3, hi) = cpuRead((t + 1) & 0x00ff)(nes2)
-      val address    = asUInt16(hi, lo)
-      val c          = if (isPageChange(address, y)) 1 else 0
-      val nes4       = (incCycles(c) andThen incPc)(nes3)
-      (nes4, (address + y) & 0xffff)
-    }
+  val IZY: AbsRwAddressMode = new AbsRwAddressMode {
+    override def addressUnit: NesState => (NesState, AbsAddressUnit) =
+      nes => {
+        val (nes1, t)       = cpuRead(nes.cpuState.pc + 1)(nes)
+        val (nes2, address) = cpuRead16((t + nes1.cpuState.y) & 0x00ff)(nes1)
+        val c               = if (isPageChange(address, nes1.cpuState.y)) 1 else 0
+        ((incPc(1) andThen incCycles(c))(nes2), AbsAddressUnit(address))
+      }
+  }
 
   // Add with carry
   def ADC(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val cpu       = nes1.cpuState
       val c         = cpu.getFlag(CpuFlags.C)
       val lsb       = if (c) 1 else 0
@@ -395,36 +394,34 @@ object Cpu extends LazyLogging {
 
   // Logical AND
   def AND(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
-      val cpu       = nes1.cpuState
-      val r         = cpu.a & d & 0xff
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
+      val r         = nes1.cpuState.a & d & 0xff
       (setA(r) andThen setZnFlags(r))(nes1)
     }
 
   // Arithmetic shift left
   def ASL(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val temp      = d << 1
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (temp & 0xff00),
         CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
         CpuFlags.N -> (temp & 0x80)
       )
-      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
+      (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
 
   def branchIf(p: NesState => Boolean): Op =
     nes => {
       if (p(nes)) {
-        val (nes1, relAddress) = REL.prepareAddress(nes)
-        val cpu                = nes.cpuState
-        val absAddress         = (cpu.pc + relAddress) & 0xffff
-        val cycles             = cpu.cycles + (if (isPageChange(cpu.pc, relAddress)) 2 else 1)
-        (setPc(absAddress) andThen setCycles(cycles))(nes1)
+        val (nes1, relAddress) = REL.address(nes)
+        val address            = (nes1.cpuState.pc + relAddress) & 0xffff
+        val c                  = if (isPageChange(nes1.cpuState.pc, relAddress)) 2 else 1
+        (setPc(address) andThen incCycles(c))(nes1)
       } else {
-        incPc(nes)
+        incPc(2)(nes)
       }
     }
 
@@ -439,10 +436,9 @@ object Cpu extends LazyLogging {
 
   // Bit test
   def BIT(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
-      val cpu       = nes1.cpuState
-      val temp      = cpu.a & d
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
+      val temp      = nes1.cpuState.a & d
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
         CpuFlags.N -> (d & (1 << 7)),
@@ -463,20 +459,9 @@ object Cpu extends LazyLogging {
   // Force interrupt
   def BRK: Op =
     nes => {
-      val nes1 = incPc(nes)
-      val pcHi = (nes1.cpuState.pc >> 8) & 0xff
-      val pcLo = nes1.cpuState.pc & 0xff
-      val flags = Map[CpuFlags, Boolean](
-        (CpuFlags.I, true),
-        (CpuFlags.B, true)
-      )
-      val nes2       = (modifyFlags(flags) andThen push(pcHi) andThen push(pcLo))(nes1)
-      val status     = nes2.cpuState.status
-      val nes3       = (push(status) andThen modifyFlag(CpuFlags.B, value = false))(nes2)
-      val (nes4, d1) = cpuRead(0xfffe)(nes3)
-      val (nes5, d2) = cpuRead(0xffff)(nes4)
-      val pc         = asUInt16(d2, d1)
-      setPc(pc)(nes5)
+      val nes1       = (push16(nes.cpuState.pc) andThen PHP andThen SEI)(nes)
+      val (nes2, pc) = cpuRead16(0xfffe)(nes1)
+      setPc(pc)(nes2)
     }
 
   // Branch if overflow clear
@@ -497,11 +482,10 @@ object Cpu extends LazyLogging {
   // Clear overflow flag
   val CLV: Op = modifyFlag(CpuFlags.V, value = false)
 
-  def compare(addressMode: RwAddressMode, getter: CpuState => UInt8): NesState => NesState =
-    nes => {
-      val (nes1, d1) = addressMode.read(nes)
-      val cpu        = nes1.cpuState
-      val d2         = getter(cpu)
+  def compare(addressMode: RwAddressMode, getter: CpuState => UInt8): Op =
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val d2         = getter(nes1.cpuState)
       val temp       = d2 - d1
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (d2 >= d1),
@@ -522,10 +506,10 @@ object Cpu extends LazyLogging {
 
   // Decrement memory
   def DEC(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val temp      = (d - 1) & 0xff
-      (setZnFlags(temp) andThen addressMode.write(temp))(nes1)
+      (setZnFlags(temp) andThen au.write(temp))(nes1)
     }
 
   // Decrement X register
@@ -544,19 +528,18 @@ object Cpu extends LazyLogging {
 
   // Exclusive OR
   def EOR(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
-      val cpu       = nes1.cpuState
-      val temp      = (cpu.a ^ d) & 0xff
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
+      val temp      = (nes1.cpuState.a ^ d) & 0xff
       (setA(temp) andThen setZnFlags(temp))(nes1)
     }
 
   // Increment memory
   def INC(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val temp      = (d + 1) & 0xff
-      (setZnFlags(temp) andThen addressMode.write(temp))(nes1)
+      (setZnFlags(temp) andThen au.write(temp))(nes1)
     }
 
   // Increment X register
@@ -574,65 +557,60 @@ object Cpu extends LazyLogging {
     }
 
   // Jump
-  def JMP(addressMode: AbsAddressMode): Op =
-    nes => {
-      val (nes1, address) = addressMode.prepareAddress(nes)
-      setPc(address)(nes1)
-    }
+  def JMP(addressMode: AbsRwAddressMode): Op =
+    addressMode.addressUnit.map(au => setPc(au.address)).runS
 
   // Jump to subroutine
-  def JSR(addressMode: AbsAddressMode): Op =
+  def JSR(addressMode: AbsRwAddressMode): Op =
     nes => {
-      val (nes1, address) = addressMode.prepareAddress(nes)
-      val nes2            = decPc(nes1)
-      val pcHi            = (nes2.cpuState.pc >> 8) & 0xff
-      val pcLo            = nes2.cpuState.pc & 0xff
-      val nes3            = (push(pcHi) andThen push(pcLo))(nes2)
-      setPc(address)(nes3)
+      val (nes1, au) = addressMode.addressUnit(nes)
+      (push16(nes1.cpuState.pc - 1) andThen setPc(au.address))(nes1)
     }
 
   // Load accumulator
   def LDA(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       (setA(d) andThen setZnFlags(d))(nes1)
     }
 
   // Load X register
   def LDX(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       (setX(d) andThen setZnFlags(d))(nes1)
     }
 
   // Load Y register
   def LDY(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       (setY(d) andThen setZnFlags(d))(nes1)
     }
 
   // Logical shift right
   def LSR(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val temp      = (d >> 1) & 0xff
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (d & 0x01),
         CpuFlags.Z -> ((temp & 0xff) == 0x00),
         CpuFlags.N -> (temp & 0x80)
       )
-      (modifyFlags(flags) andThen addressMode.write(temp))(nes1)
+      (modifyFlags(flags) andThen au.write(temp))(nes1)
     }
 
   // No operation
   def NOP(addressMode: RwAddressMode): Op =
-    nes => addressMode.read(nes)._1
+    rwOp(addressMode) { (nes, au) =>
+      au.read.runS(nes)
+    }
 
   // Logical inclusive OR
   def ORA(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val temp      = (nes1.cpuState.a | d) & 0xff
       (setA(temp) andThen setZnFlags(temp))(nes1)
     }
@@ -668,32 +646,30 @@ object Cpu extends LazyLogging {
 
   // Rotate left
   def ROL(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
-      val c         = nes1.cpuState.getFlag(CpuFlags.C)
-      val lsb       = if (c) 1 else 0
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
+      val lsb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
       val temp      = (d << 1) | lsb
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (temp & 0xff00),
         CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
         CpuFlags.N -> (temp & 0x80)
       )
-      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
+      (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
 
   // Rotate right
   def ROR(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
-      val c         = nes1.cpuState.getFlag(CpuFlags.C)
-      val msb       = if (c) 1 << 7 else 0
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
+      val msb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 << 7 else 0
       val temp      = (d >> 1) | msb
       val flags = Map[CpuFlags, Boolean](
         CpuFlags.C -> (d & 0x01),
         CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
         CpuFlags.N -> (temp & 0x80)
       )
-      (modifyFlags(flags) andThen addressMode.write(temp & 0xff))(nes1)
+      (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
 
   // Return from interrupt
@@ -718,11 +694,10 @@ object Cpu extends LazyLogging {
 
   // Subtract with carry
   def SBC(addressMode: RwAddressMode): Op =
-    nes => {
-      val (nes1, d) = addressMode.read(nes)
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d) = au.read(nes)
       val value     = d ^ 0x00ff
-      val c         = nes1.cpuState.getFlag(CpuFlags.C)
-      val lsb       = if (c) 1 else 0
+      val lsb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
       val temp      = nes1.cpuState.a + value + lsb
       val flags = Map[CpuFlags, Boolean](
         (CpuFlags.C, temp & 0xff00),
@@ -744,15 +719,21 @@ object Cpu extends LazyLogging {
 
   // Store accumulator
   def STA(addressMode: RwAddressMode): Op =
-    nes => addressMode.write(nes.cpuState.a)(nes)
+    rwOp(addressMode) { (nes, au) =>
+      au.write(nes.cpuState.a)(nes)
+    }
 
   // Store X register
   def STX(addressMode: RwAddressMode): Op =
-    nes => addressMode.write(nes.cpuState.x)(nes)
+    rwOp(addressMode) { (nes, au) =>
+      au.write(nes.cpuState.x)(nes)
+    }
 
   // Store Y register
   def STY(addressMode: RwAddressMode): Op =
-    nes => addressMode.write(nes.cpuState.y)(nes)
+    rwOp(addressMode) { (nes, au) =>
+      au.write(nes.cpuState.y)(nes)
+    }
 
   // Transfer accumulator to X
   val TAX: Op =
