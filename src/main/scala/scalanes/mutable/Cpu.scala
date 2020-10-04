@@ -729,7 +729,7 @@ object Cpu extends LazyLogging {
   // Set decimal flag
   val SED: Op = modifyFlag(CpuFlags.D, value = true)
 
-  // Set interrupt disable
+  // Set enable interrupt
   val SEI: Op = modifyFlag(CpuFlags.I, value = true)
 
   // Store accumulator
@@ -791,123 +791,101 @@ object Cpu extends LazyLogging {
 
   // *** Unofficial instructions ***
 
-  /*
   // Shortcut for LDA value then TAX
   def LAX(addressMode: RwAddressMode): Op =
-    for {
-      _ <- LDA(addressMode)
-      _ <- TAX
-    } yield ()
+    LDA(addressMode) andThen TAX
 
   // Stores the bitwise AND of A and X. As with STA and STX, no flags are affected.
   def SAX(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      a       <- getA
-      x       <- getX
-      d = a & x
-      _ <- address.write(d)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val d = nes.cpuState.a & nes.cpuState.x
+      au.write(d)(nes)
+    }
 
   // Equivalent to DEC value then CMP value
   def DCP(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      temp = (d - 1) & 0xff
-      _ <- address.write(temp)
-      _ <- modifyFlag(CpuFlags.Z, temp == 0x00)
-      _ <- modifyFlag(CpuFlags.N, temp & 0x80)
-      _ <- compareS(address.read(), getA)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val nes2       = au.write((d1 - 1) & 0xff)(nes1)
+      val (nes3, d2) = au.read(nes2)
+      val d3         = nes3.cpuState.a
+      val temp       = d3 - d2
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (d3 >= d2),
+        CpuFlags.Z -> ((temp & 0x00ff) == 0x0000),
+        CpuFlags.N -> (temp & 0x0080)
+      )
+      modifyFlags(flags)(nes3)
+    }
 
   // Equivalent to INC value then SBC value
   def ISC(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      temp1 = (d + 1) & 0xff
-      _ <- address.write(temp1)
-      value = temp1 ^ 0x00ff
-      a <- getA
-      c <- getFlag(CpuFlags.C)
-      lsb   = if (c) 1 else 0
-      temp2 = a + value + lsb
-      _ <- modifyFlag(CpuFlags.C, temp2 & 0xff00)
-      _ <- modifyFlag(CpuFlags.Z, (temp2 & 0x00ff) == 0x00)
-      _ <- modifyFlag(CpuFlags.V, (temp2 ^ a) & (temp2 ^ value) & 0x80)
-      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
-      _ <- setA(temp2 & 0xff)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val nes2       = au.write((d1 + 1) & 0xff)(nes1)
+      val (nes3, d2) = au.read(nes2)
+      val value      = d2 ^ 0x00ff
+      val lsb        = if (nes3.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val temp       = nes3.cpuState.a + value + lsb
+      val flags = Map[CpuFlags, Boolean](
+        (CpuFlags.C, temp & 0xff00),
+        (CpuFlags.Z, (temp & 0x00ff) == 0x00),
+        (CpuFlags.V, (temp ^ nes3.cpuState.a) & (temp ^ value) & 0x80),
+        (CpuFlags.N, temp & 0x80)
+      )
+      (setA(temp & 0xff) andThen modifyFlags(flags))(nes3)
+    }
 
   // Equivalent to ASL value then ORA value
   def SLO(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      temp1 = d << 1
-      _ <- modifyFlag(CpuFlags.C, temp1 & 0xff00)
-      _ <- address.write(temp1 & 0x00ff)
-      a <- getA
-      temp2 = (a | temp1) & 0xff
-      _ <- setA(temp2)
-      _ <- modifyFlag(CpuFlags.Z, temp2 == 0x00)
-      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val temp1      = d1 << 1
+      val nes2       = (modifyFlag(CpuFlags.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
+      val temp2      = (nes2.cpuState.a | temp1) & 0xff
+      (setA(temp2) andThen setZnFlags(temp2))(nes2)
+    }
 
   // Equivalent to ROL value then AND value
   def RLA(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      c       <- getFlag(CpuFlags.C)
-      lsb  = if (c) 1 else 0
-      temp = (d << 1) | lsb
-      _ <- modifyFlag(CpuFlags.C, temp & 0xff00)
-      _ <- address.write(temp & 0xff)
-      a <- getA
-      r = a & temp & 0xff
-      _ <- setA(r)
-      _ <- modifyFlag(CpuFlags.Z, r == 0x00)
-      _ <- modifyFlag(CpuFlags.N, r & 0x80)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val lsb        = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val temp1      = (d1 << 1) | lsb
+      val nes2       = (modifyFlag(CpuFlags.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
+      val temp2      = nes2.cpuState.a & temp1 & 0xff
+      (setA(temp2) andThen setZnFlags(temp2))(nes2)
+    }
 
   // Equivalent to LSR value then EOR value
   def SRE(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      _       <- modifyFlag(CpuFlags.C, d & 0x01)
-      temp1 = (d >> 1) & 0xff
-      _ <- address.write(temp1)
-      a <- getA
-      temp2 = (a ^ temp1) & 0xff
-      _ <- setA(temp2)
-      _ <- modifyFlag(CpuFlags.Z, temp2 == 0x00)
-      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
-    } yield ()
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val temp1      = (d1 >> 1) & 0xff
+      val nes2       = (modifyFlag(CpuFlags.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
+      val temp2      = (nes2.cpuState.a ^ temp1) & 0xff
+      (setA(temp2) andThen setZnFlags(temp2))(nes2)
+    }
 
   // Equivalent to ROR value then ADC value
   def RRA(addressMode: RwAddressMode): Op =
-    for {
-      address <- addressMode
-      d       <- address.read()
-      c       <- getFlag(CpuFlags.C)
-      msb   = if (c) 1 << 7 else 0
-      temp1 = (d >> 1) | msb
-      _ <- modifyFlag(CpuFlags.C, d & 0x01)
-      _ <- address.write(temp1 & 0xff)
-      a <- getA
-      c <- getFlag(CpuFlags.C)
-      lsb   = if (c) 1 else 0
-      temp2 = a + temp1 + lsb
-      _ <- modifyFlag(CpuFlags.C, temp2 & 0xff00)
-      _ <- modifyFlag(CpuFlags.Z, (temp2 & 0x00ff) == 0x00)
-      _ <- modifyFlag(CpuFlags.V, (~(a ^ temp1) & (a ^ temp2)) & 0x80)
-      _ <- modifyFlag(CpuFlags.N, temp2 & 0x80)
-      _ <- setA(temp2 & 0xff)
-    } yield ()
-   */
+    rwOp(addressMode) { (nes, au) =>
+      val (nes1, d1) = au.read(nes)
+      val msb        = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 << 7 else 0
+      val temp1      = (d1 >> 1) | msb
+      val nes2       = (modifyFlag(CpuFlags.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
+      val cpu        = nes2.cpuState
+      val c          = cpu.getFlag(CpuFlags.C)
+      val lsb        = if (c) 1 else 0
+      val temp2      = cpu.a + temp1 + lsb
+      val flags = Map[CpuFlags, Boolean](
+        CpuFlags.C -> (temp2 & 0xff00),
+        CpuFlags.Z -> ((temp2 & 0x00ff) == 0x00),
+        CpuFlags.V -> ((~(cpu.a ^ temp1) & (cpu.a ^ temp2)) & 0x80),
+        CpuFlags.N -> (temp2 & 0x80)
+      )
+      (setA(temp2 & 0xff) andThen modifyFlags(flags))(nes1)
+    }
 
   def XXX: Op = identity
 
@@ -1064,9 +1042,8 @@ object Cpu extends LazyLogging {
     0xf8 -> Instr("SED/IMP", SED, 2),
     0xf9 -> Instr("SBC/ABY", SBC(ABY), 4),
     0xfd -> Instr("SBC/ABX", SBC(ABX), 4),
-    0xfe -> Instr("INC/ABX", INC(ABX), 7)
+    0xfe -> Instr("INC/ABX", INC(ABX), 7),
     // Unofficial opcodes
-    /*
     0xa3 -> Instr("LAX/IZX", LAX(IZX), 6),
     0xa7 -> Instr("LAX/ZP0", LAX(ZP0), 3),
     0xab -> Instr("LAX/IMM", LAX(IMM), 2),
@@ -1121,7 +1098,6 @@ object Cpu extends LazyLogging {
     0x77 -> Instr("RRA/ZPX", RRA(ZPX), 6),
     0x7b -> Instr("RRA/ABY", RRA(ABY), 7),
     0x7f -> Instr("RRA/ABX", RRA(ABX), 7)
-     */
   ).withDefault { d =>
     if (Set(0x80, 0x82, 0xc2, 0xe2, 0x89).contains(d))
       Instr("NOP/IMM", NOP(IMM), 2)
