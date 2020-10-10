@@ -1,8 +1,6 @@
 package scalanes.mutable
 
-import cats.data.Nested
 import monocle.Lens
-import scalanes.PpuCtrl
 import scalanes.mutable.Mirroring.Mirroring
 import scalanes.mutable.SpriteOverflow.SpriteOverflow
 import scalanes.mutable.SpritePriority.SpritePriority
@@ -29,7 +27,6 @@ class PpuState(
   var t: UInt15,
   var x: UInt3,
   var w: UInt1,
-  val mirroring: Mirroring,
   // Background
   var shifterPatternLo: UInt16,
   var shifterPatternHi: UInt16,
@@ -41,7 +38,8 @@ class PpuState(
   var nextTileAttr: UInt8,
   // Sprite
   var spritesState: SpritesState,
-  var pixels: Vector[Rgb]
+  val canvas: Array[Int],
+  val mirroring: Mirroring
 ) {
   def reset: PpuState = ???
 }
@@ -69,7 +67,6 @@ object PpuState {
   val nextTileHi: Lens[PpuState, UInt8]          = lens(_.nextTileHi, _.nextTileHi_=)
   val nextTileAttr: Lens[PpuState, UInt8]        = lens(_.nextTileAttr, _.nextTileAttr_=)
   val spritesState: Lens[PpuState, SpritesState] = lens(_.spritesState, _.spritesState_=)
-  val pixels: Lens[PpuState, Vector[Rgb]]        = lens(_.pixels, _.pixels_=)
 
   def initial(mirroring: Mirroring): PpuState = ???
 }
@@ -269,7 +266,7 @@ case class Rgb(r: Int, g: Int, b: Int)
 
 object Rgb {
   // format: off
-  val palette: Vector[Rgb] = Vector(
+  val palette: Vector[Int] = Vector(
     Rgb(84, 84, 84),    Rgb(0, 30, 116),    Rgb(8, 16, 144),    Rgb(48, 0, 136),
     Rgb(68, 0, 100),    Rgb(92, 0, 48),     Rgb(84, 4, 0),      Rgb(60, 24, 0),
     Rgb(32, 42, 0),     Rgb(8, 58, 0),      Rgb(0, 64, 0),      Rgb(0, 60, 0),
@@ -289,9 +286,10 @@ object Rgb {
     Rgb(236, 174, 236), Rgb(236, 174, 212), Rgb(236, 180, 176), Rgb(228, 196, 144),
     Rgb(204, 210, 120), Rgb(180, 222, 120), Rgb(168, 226, 144), Rgb(152, 226, 180),
     Rgb(160, 214, 228), Rgb(160, 162, 160), Rgb(0, 0, 0),       Rgb(0, 0, 0)
-  )
-  // format: on
-  val initial: Rgb = Rgb(0, 0, 0)
+    // format: on
+  ).map { rgb =>
+    (rgb.b & 0xff) | ((rgb.g & 0xff) << 8) | ((rgb.r & 0xff) << 16) | (0xff << 24)
+  }
 }
 
 class OamEntry(
@@ -540,16 +538,16 @@ object Ppu {
     if ((addr & 0x13) == 0x10) addr & ~0x10 else addr
   }
 
-  def getColor(palette: Int, pixel: Int)(ppu: PpuState): Rgb = {
+  def getColor(palette: Int, pixel: Int)(ppu: PpuState): Int = {
     require(palette >= 0 && palette < 8)
     require(pixel >= 0 && pixel < 4)
 
-    val colorAddress = 0x3f00 + (palette << 2) + pixel
-    val colorValue =
+    val colorAddress =
       if (RenderBackground.extractFromReg(ppu.mask))
-        ppu.palettes(mapToPalettesIndex(colorAddress))
+        0x3f00 + (palette << 2) + pixel
       else
-        ppu.palettes(mapToPalettesIndex(0x0000))
+        0x0000
+    val colorValue = ppu.palettes(mapToPalettesIndex(colorAddress))
     Rgb.palette(colorValue)
   }
 
@@ -675,18 +673,20 @@ object Ppu {
       case 0x0000 => writeCtrl(d)
       case 0x0001 => writeMask(d)
       case 0x0002 => identity
-      case 0x0003 => ???
-      case 0x0004 => ??? // writeOam(ppu.spritesState.oamAddress, d)
+      case 0x0003 => ??? // OAMADDR
+      case 0x0004 => ??? // OAMDATA
       case 0x0005 => writeScroll(d)
       case 0x0006 => writeAddr(d)
       case 0x0007 => writeData(d)
+      // DMA
     }
   }
 
   def writeCtrl(d: UInt8): NesState => NesState =
     nes => {
+      // Set nametables select
       val nametables = NametableAddress.extractFromReg(d).id
-      val t          = Loopy.setNametables(nametables)(nes.ppuState.t)
+      val t          = (nes.ppuState.t & 0xf3ff) | (nametables << 10)
       lift(PpuState.ctrl.set(d) andThen PpuState.t.set(t))(nes)
     }
 
@@ -696,11 +696,11 @@ object Ppu {
   def writeScroll(d: UInt8): NesState => NesState =
     nes =>
       if (nes.ppuState.w) {
-        // Set coarseY and fineY
+        // Set coarse Y and fine Y
         val t = (nes.ppuState.t & 0x8c1f) | ((d & 0x07) << 12) | ((d & 0xf8) << 2)
         lift(PpuState.t.set(t) andThen PpuState.w.set(0))(nes)
       } else {
-        // Set coarseX and x
+        // Set coarse X and fine X
         val t = (nes.ppuState.t & 0xffe0) | (d >> 3)
         val x = d & 0x7
         lift(PpuState.t.set(t) andThen PpuState.x.set(x) andThen PpuState.w.set(1))(nes)
@@ -776,6 +776,30 @@ object Ppu {
     else
       lift(writePalettes(address, d))
   }
+
+  def backgroundPixel(ppu: PpuState): Int = {
+    val bitMux    = 0x8000 >> ppu.x
+    val pixel0    = if (ppu.shifterPatternLo & bitMux) 0x1 else 0x0
+    val pixel1    = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
+    val bgPixel   = (pixel1 << 1) | pixel0
+    val palette0  = if (ppu.shifterAttrLo & bitMux) 0x1 else 0x0
+    val palette1  = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
+    val bgPalette = (palette1 << 1) | palette0
+    getColor(bgPalette, bgPixel)(ppu)
+  }
+
+  val renderPixel: NesState => NesState =
+    nes => {
+      val ppu     = nes.ppuState
+      val x       = ppu.cycle - 1
+      val y       = ppu.scanline
+      val bgColor = backgroundPixel(ppu)
+      ppu.canvas.update(y * 2 * 256 + x, bgColor)
+      ppu.canvas.update(y * 2 * 256 + x + 1, bgColor)
+      ppu.canvas.update((y + 1) * 2 * 256 + x, bgColor)
+      ppu.canvas.update((y + 1) * 2 * 256 + x + 1, bgColor)
+      nes
+    }
 
   /*
   private def pixel(x: Int, tileHi: UInt8, tileLo: UInt8, tileAttr: UInt2, ppu: PpuState): (Rgb, Boolean) = {
@@ -889,10 +913,10 @@ object Ppu {
       val backgroundRendering =
         if (isRendering && isRenderLine) {
           val f1 =
-            if (isVisibleLine && isVisibleCycle) noOp // render a pixel
+            if (isVisibleLine && isVisibleCycle) renderPixel
             else noOp
           val f2 =
-            if (isFetchCycle) {
+            if (isFetchCycle)
               cycle % 8 match {
                 case 1                 => lift(updateShifters) andThen fetchNametableByte
                 case 3                 => lift(updateShifters) andThen fetchAttributeTableByte
@@ -902,7 +926,7 @@ object Ppu {
                 case 0                 => lift(updateShifters andThen loadShifters andThen incScrollX)
                 case _                 => lift(updateShifters)
               }
-            } else if (isPreRenderLine && cycle >= 280 && cycle <= 304) lift(transferAddressY)
+            else if (isPreRenderLine && cycle >= 280 && cycle <= 304) lift(transferAddressY)
             else if (cycle == 257) lift(transferAddressX)
             else noOp
           f1 andThen f2
@@ -914,7 +938,7 @@ object Ppu {
       backgroundRendering(nes)
     }
 
-  def isNmiReady(scanline: Int, cycle: Int, ppu: PpuState): Boolean = ???
+  def isNmiReady(ppu: PpuState): Boolean = ???
 
   def reset: State[NesState, Unit] = ???
 }
