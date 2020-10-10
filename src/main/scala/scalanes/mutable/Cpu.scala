@@ -1,9 +1,7 @@
 package scalanes.mutable
 
-import cats.Monad
 import com.typesafe.scalalogging.LazyLogging
 import scalanes.mutable.CpuFlags.CpuFlags
-import scalanes.mutable.State.stateMonad
 
 object Cpu extends LazyLogging {
 
@@ -48,13 +46,6 @@ object Cpu extends LazyLogging {
       op(nes1, au)
     }
 
-  implicit class CpuStateOps[A](val a: State[CpuState, A]) extends AnyVal {
-    def toNesState: State[NesState, A] = a.transformS(
-      NesState.cpuState.get,
-      (nesState, cpuState) => NesState.cpuState.set(cpuState)(nesState)
-    )
-  }
-
   private def lift(f: CpuState => CpuState): NesState => NesState =
     NesState.cpuState.modify(f)
 
@@ -96,7 +87,8 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1fff) // RAM
       State.inspect(_.ram(address % 0x800))
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
-      Ppu.cpuRead(address)
+//      Ppu.cpuRead(address)
+      ???
     else if (address == 0x4016) // Controller 1
       Controller.serialReadController1
     else if (address == 0x4017) // Controller 2
@@ -120,30 +112,28 @@ object Cpu extends LazyLogging {
     } yield asUInt16(hi, lo)
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
-    nes => {
-      if (address >= 0x0000 && address <= 0x1fff) //RAM
-        NesState.ram.modify(_.updated(address, d))(nes)
-      else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
-        Ppu.cpuWrite(address, d).runS(nes)
-      else if (address == 0x4014) { // OAM DMA
-        ???
-        /*
+    if (address >= 0x0000 && address <= 0x1fff) //RAM
+      NesState.ram.modify(_.updated(address, d))
+    else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
+      Ppu.cpuWrite(address, d)
+    else if (address == 0x4014) { // OAM DMA
+      ???
+      /*
         val page = d << 8
         incCycles(513) *> (0 until 256)
           .map { oamAddress =>
             cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
           }
           .reduce(_ *> _)
-         */
-      } else if (address == 0x4016 && (d & 0x01)) // Controller 1
-        Controller.writeController1.runS(nes)
-      else if (address == 0x4017 && (d & 0x01)) // Controller 2
-        Controller.writeController2.runS(nes)
-      else if (address >= 0x6000 && address <= 0xffff) // Cartridge
-        Cartridge.cpuWrite(address, d).runS(nes)
-      else
-        nes
-    }
+       */
+    } else if (address == 0x4016 && (d & 0x01)) // Controller 1
+      Controller.writeController1.runS
+    else if (address == 0x4017 && (d & 0x01)) // Controller 2
+      Controller.writeController2.runS
+    else if (address >= 0x6000 && address <= 0xffff) // Cartridge
+      Cartridge.cpuWrite(address, d).runS
+    else
+      identity[NesState]
 
   def modifyFlag(flag: CpuFlags, value: Boolean): NesState => NesState =
     modifyFlags(Map(flag -> value))
@@ -891,8 +881,8 @@ object Cpu extends LazyLogging {
 
   case class Instr(info: String, op: Op, cycles: Int)
 
+  // format: off
   val lookup: Map[UInt8, Instr] = Map(
-    // format: off
     0x00 -> Instr("BRK/IMM", BRK,      7),     0x01 -> Instr("ORA/IMM", ORA(IZX), 6),
     0x05 -> Instr("ORA/ZP0", ORA(ZP0), 3),     0x06 -> Instr("ASL/ZP0", ASL(ZP0), 5),
     0x08 -> Instr("PHP/IMP", PHP,      3),     0x09 -> Instr("ORA/IMM", ORA(IMM), 2),
