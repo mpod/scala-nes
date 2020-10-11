@@ -4,6 +4,8 @@ import com.typesafe.scalalogging.LazyLogging
 import monocle.Lens
 import scalanes.mutable.CpuFlag.CpuFlag
 
+import scala.language.implicitConversions
+
 class CpuState(
   var a: UInt8,
   var x: UInt8,
@@ -38,16 +40,17 @@ object CpuState {
 }
 
 object CpuFlag extends Enumeration {
-  protected case class Val(bit: Int) extends super.Val
   type CpuFlag = Val
-  val C: CpuFlag = Val(1 << 0)
-  val Z: CpuFlag = Val(1 << 1)
-  val I: CpuFlag = Val(1 << 2)
-  val D: CpuFlag = Val(1 << 3)
-  val B: CpuFlag = Val(1 << 4)
-  val U: CpuFlag = Val(1 << 5)
-  val V: CpuFlag = Val(1 << 6)
-  val N: CpuFlag = Val(1 << 7)
+  protected case class Val(bit: Int) extends super.Val
+  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
+  val C: CpuFlag                         = Val(1 << 0)
+  val Z: CpuFlag                         = Val(1 << 1)
+  val I: CpuFlag                         = Val(1 << 2)
+  val D: CpuFlag                         = Val(1 << 3)
+  val B: CpuFlag                         = Val(1 << 4)
+  val U: CpuFlag                         = Val(1 << 5)
+  val V: CpuFlag                         = Val(1 << 6)
+  val N: CpuFlag                         = Val(1 << 7)
 }
 
 object Cpu extends LazyLogging {
@@ -139,7 +142,7 @@ object Cpu extends LazyLogging {
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
       Cartridge.cpuRead(address)
     else
-      State.pure(0x00)
+      throw new RuntimeException(f"Invalid cpu memory read at address $address%#04x")
   }
 
   def cpuRead16(address: UInt16): State[NesState, UInt16] =
@@ -158,25 +161,23 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1fff) //RAM
       NesState.ram.modify(_.updated(address, d))
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
-      Ppu.cpuWrite(address, d)
-    else if (address == 0x4014) { // OAM DMA
-      ???
-      /*
-        val page = d << 8
-        incCycles(513) *> (0 until 256)
-          .map { oamAddress =>
-            cpuRead(page | oamAddress).flatMap(Ppu.writeOam(oamAddress, _))
-          }
-          .reduce(_ *> _)
-       */
-    } else if (address == 0x4016 && (d & 0x01)) // Controller 1
+      Ppu.cpuWrite(0x2000 + (address & 0x7), d)
+    else if (address == 0x4014) // OAM DMA
+      lift(
+        CpuState.cycles.modify(c => if ((c + 513) % 2 == 1) c + 513 + 1 else c + 513)
+      ) andThen Ppu.cpuWrite(address, d)
+    else if (address == 0x4015)
+      identity[NesState]                      // TODO: APU
+    else if (address == 0x4016 && (d & 0x01)) // Controller 1
       Controller.writeController1.runS
     else if (address == 0x4017 && (d & 0x01)) // Controller 2
       Controller.writeController2.runS
+    else if (address > 0x4000 && address <= 0x5fff)
+      identity[NesState]
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
       Cartridge.cpuWrite(address, d).runS
     else
-      identity[NesState]
+      throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
 
   def modifyFlag(flag: CpuFlag, value: Boolean): NesState => NesState =
     modifyFlags(Map(flag -> value))
