@@ -41,10 +41,10 @@ object Console extends JFXApp {
     NesState
       .fromFile[IO](file, controller)
       .head
-      .map(NesState.reset.runS)
+      .map(NesState.reset)
       .flatMap { initial =>
         Stream.unfoldEval(initial) { s =>
-          val next = NesState.executeFrame.runS(s)
+          val next = NesState.executeFrame(s)
           IO(Option(next, next))
         }
       }

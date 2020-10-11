@@ -32,8 +32,9 @@ object Cartridge {
   def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
     State.modify[Cartridge](_.chrWrite(address, d)).toNesState
 
-  def reset: State[NesState, Unit] =
-    State.modify[Cartridge](_.reset).toNesState
+  // TODO: Simplify
+  def reset: NesState => NesState =
+    State.modify[Cartridge](_.reset).toNesState.runS
 
   def fromString(initial: Cartridge, program: String, offset: UInt16): Cartridge =
     program
@@ -43,7 +44,7 @@ object Cartridge {
       .foldLeft(initial) { case (acc, (d, i)) =>
         acc.prgWrite(offset + i, d)
       }
-      .prgWrite(0xFFFC, offset & 0xFF)
-      .prgWrite(0xFFFD, (offset >> 8) & 0xFF)
+      .prgWrite(0xfffc, offset & 0xff)
+      .prgWrite(0xfffd, (offset >> 8) & 0xff)
 
 }

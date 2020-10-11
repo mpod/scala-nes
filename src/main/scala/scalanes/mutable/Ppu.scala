@@ -40,9 +40,7 @@ class PpuState(
   var spritesState: SpritesState,
   val canvas: Array[Int],
   val mirroring: Mirroring
-) {
-  def reset: PpuState = ???
-}
+)
 
 object PpuState {
   val cycle: Lens[PpuState, Int]                 = lens(_.cycle, _.cycle_=)
@@ -68,7 +66,32 @@ object PpuState {
   val nextTileAttr: Lens[PpuState, UInt8]        = lens(_.nextTileAttr, _.nextTileAttr_=)
   val spritesState: Lens[PpuState, SpritesState] = lens(_.spritesState, _.spritesState_=)
 
-  def initial(mirroring: Mirroring): PpuState = ???
+  def apply(mirroring: Mirroring): PpuState = new PpuState(
+    cycle = 0,
+    scanline = 0,
+    frame = 0,
+    nametables = Vector.fill(2 * 1024)(0x00),
+    palettes = Vector.fill(32)(0x00),
+    ctrl = 0x00,
+    mask = 0x00,
+    status = 0x00,
+    bufferedData = 0,
+    v = 0x0000,
+    t = 0x0000,
+    x = 0x0,
+    w = 0x0,
+    shifterPatternLo = 0x0000,
+    shifterPatternHi = 0x0000,
+    shifterAttrLo = 0x0000,
+    shifterAttrHi = 0x0000,
+    nextTileId = 0x00,
+    nextTileLo = 0x00,
+    nextTileHi = 0x00,
+    nextTileAttr = 0x00,
+    spritesState = SpritesState.initial,
+    canvas = Array.fill(2 * 256 * 2 * 240)(0),
+    mirroring = mirroring
+  )
 }
 
 abstract class RegFlag(mask: Int) extends Enumeration {
@@ -219,44 +242,6 @@ object Loopy {
   val fineY: UInt15 => UInt3                    = loopy => (loopy & maskFineY) >> posFineY
 }
 
-class BgRenderingState(
-  var tileLo: UInt8,
-  var tileHi: UInt8,
-  var tileAttr: UInt8,
-  var nextTileLo: UInt8,
-  var nextTileHi: UInt8,
-  var nextTileAttr: UInt8
-) {
-  def loadRegisters: BgRenderingState = {
-    tileLo = nextTileLo
-    tileHi = nextTileHi
-    tileAttr = nextTileAttr
-    this
-  }
-
-  def setNextTileAttr(d: UInt8): BgRenderingState = {
-    nextTileAttr = d
-    this
-  }
-
-  def setNextTileLo(d: UInt8): BgRenderingState = {
-    nextTileLo = d
-    this
-  }
-
-  def setNextTileHi(d: UInt8): BgRenderingState = {
-    nextTileHi = d
-    this
-  }
-
-  def reset: BgRenderingState = BgRenderingState.initial
-}
-
-object BgRenderingState {
-  def initial: BgRenderingState =
-    new BgRenderingState(0, 0, 0, 0, 0, 0)
-}
-
 object Mirroring extends Enumeration {
   type Mirroring = Value
   val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
@@ -383,9 +368,6 @@ object Ppu {
 
   def liftS(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
-
-  def liftS2(f: PpuState => PpuState): State[NesState, NesState] =
-    State.get[NesState].map(NesState.ppuState.modify(f))
 
   def setVerticalBlank(d: VerticalBlank): PpuState => PpuState =
     PpuState.status.modify(VerticalBlank.modifyReg(d))
@@ -749,7 +731,7 @@ object Ppu {
       for {
         result <- fetch
         (buffer, d) = result
-        nes <- liftS2(PpuState.bufferedData.set(buffer))
+        nes <- liftS(PpuState.bufferedData.set(buffer)).flatMap(_ => State.get)
         delta = AddressIncrementMode.extractFromReg(nes.ppuState.ctrl).delta
         _ <- liftS(PpuState.v.modify(_ + delta))
       } yield d
@@ -909,36 +891,35 @@ object Ppu {
       val isVisibleCycle  = cycle >= 1 && cycle <= 256
       val isFetchCycle    = isPreFetchCycle || isVisibleCycle
 
+      // Render a pixel
+      val pixel =
+        if (isVisibleLine && isVisibleCycle) renderPixel
+        else noOp
+
       // Background rendering
-      val backgroundRendering =
-        if (isRendering && isRenderLine) {
-          val f1 =
-            if (isVisibleLine && isVisibleCycle) renderPixel
-            else noOp
-          val f2 =
-            if (isFetchCycle)
-              cycle % 8 match {
-                case 1                 => lift(updateShifters) andThen fetchNametableByte
-                case 3                 => lift(updateShifters) andThen fetchAttributeTableByte
-                case 5                 => lift(updateShifters) andThen fetchLowTileByte
-                case 7                 => lift(updateShifters) andThen fetchHighTileByte
-                case 0 if cycle == 256 => lift(updateShifters andThen loadShifters andThen incScrollY)
-                case 0                 => lift(updateShifters andThen loadShifters andThen incScrollX)
-                case _                 => lift(updateShifters)
-              }
-            else if (isPreRenderLine && cycle >= 280 && cycle <= 304) lift(transferAddressY)
-            else if (cycle == 257) lift(transferAddressX)
-            else noOp
-          f1 andThen f2
-        } else noOp
+      val background =
+        if (isRendering && isRenderLine & isFetchCycle)
+          cycle % 8 match {
+            case 1                 => lift(updateShifters) andThen fetchNametableByte
+            case 3                 => lift(updateShifters) andThen fetchAttributeTableByte
+            case 5                 => lift(updateShifters) andThen fetchLowTileByte
+            case 7                 => lift(updateShifters) andThen fetchHighTileByte
+            case 0 if cycle == 256 => lift(updateShifters andThen loadShifters andThen incScrollY)
+            case 0                 => lift(updateShifters andThen loadShifters andThen incScrollX)
+            case _                 => lift(updateShifters)
+          }
+        else if (isRendering && isPreRenderLine && cycle >= 280 && cycle <= 304) lift(transferAddressY)
+        else if (isRendering && isRenderLine && cycle == 257) lift(transferAddressX)
+        else noOp
 
       // Sprite rendering
       ???
 
-      backgroundRendering(nes)
+      (pixel andThen background)(nes)
     }
 
   def isNmiReady(ppu: PpuState): Boolean = ???
 
-  def reset: State[NesState, Unit] = ???
+  def reset: NesState => NesState =
+    NesState.ppuState.modify(ppu => PpuState(ppu.mirroring))
 }

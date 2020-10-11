@@ -1,7 +1,54 @@
 package scalanes.mutable
 
 import com.typesafe.scalalogging.LazyLogging
-import scalanes.mutable.CpuFlags.CpuFlags
+import monocle.Lens
+import scalanes.mutable.CpuFlag.CpuFlag
+
+class CpuState(
+  var a: UInt8,
+  var x: UInt8,
+  var y: UInt8,
+  var stkp: UInt8,
+  var pc: UInt16,
+  var status: UInt8,
+  var cycles: Long
+) {
+  def getFlag(flag: CpuFlag): Boolean = status & flag.bit
+}
+
+object CpuState {
+  val a: Lens[CpuState, UInt8]      = lens(_.a, _.a_=)
+  val x: Lens[CpuState, UInt8]      = lens(_.x, _.x_=)
+  val y: Lens[CpuState, UInt8]      = lens(_.x, _.y_=)
+  val stkp: Lens[CpuState, UInt8]   = lens(_.stkp, _.stkp_=)
+  val pc: Lens[CpuState, UInt16]    = lens(_.pc, _.pc_=)
+  val status: Lens[CpuState, UInt8] = lens(_.status, _.status_=)
+  val cycles: Lens[CpuState, Long]  = lens(_.cycles, _.cycles_=)
+
+  def apply(): CpuState =
+    new CpuState(
+      a = 0x00,
+      x = 0x00,
+      y = 0x00,
+      stkp = 0xfd,
+      pc = 0x0000,
+      status = 0x00 | CpuFlag.U.bit | CpuFlag.I.bit,
+      cycles = 0
+    )
+}
+
+object CpuFlag extends Enumeration {
+  protected case class Val(bit: Int) extends super.Val
+  type CpuFlag = Val
+  val C: CpuFlag = Val(1 << 0)
+  val Z: CpuFlag = Val(1 << 1)
+  val I: CpuFlag = Val(1 << 2)
+  val D: CpuFlag = Val(1 << 3)
+  val B: CpuFlag = Val(1 << 4)
+  val U: CpuFlag = Val(1 << 5)
+  val V: CpuFlag = Val(1 << 6)
+  val N: CpuFlag = Val(1 << 7)
+}
 
 object Cpu extends LazyLogging {
 
@@ -61,9 +108,6 @@ object Cpu extends LazyLogging {
   def setPc(d: UInt16): NesState => NesState =
     lift(CpuState.pc.set(d))
 
-  def setCycles(d: UInt16): NesState => NesState =
-    lift(CpuState.cycles.set(d))
-
   def incCycles(d: Int): NesState => NesState =
     lift(CpuState.cycles.modify(_ + d))
 
@@ -87,8 +131,7 @@ object Cpu extends LazyLogging {
     if (address >= 0x0000 && address <= 0x1fff) // RAM
       State.inspect(_.ram(address % 0x800))
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
-//      Ppu.cpuRead(address)
-      ???
+      Ppu.cpuRead(address)
     else if (address == 0x4016) // Controller 1
       Controller.serialReadController1
     else if (address == 0x4017) // Controller 2
@@ -135,10 +178,10 @@ object Cpu extends LazyLogging {
     else
       identity[NesState]
 
-  def modifyFlag(flag: CpuFlags, value: Boolean): NesState => NesState =
+  def modifyFlag(flag: CpuFlag, value: Boolean): NesState => NesState =
     modifyFlags(Map(flag -> value))
 
-  def modifyFlags(flags: Map[CpuFlags, Boolean]): NesState => NesState =
+  def modifyFlags(flags: Map[CpuFlag, Boolean]): NesState => NesState =
     lift(
       CpuState.status.modify(s =>
         flags.foldLeft(s) { case (acc, (f, v)) =>
@@ -150,8 +193,8 @@ object Cpu extends LazyLogging {
   def setZnFlags(d: UInt8): NesState => NesState =
     modifyFlags(
       Map(
-        (CpuFlags.Z, d == 0x00),
-        (CpuFlags.N, d & 0x80)
+        (CpuFlag.Z, d == 0x00),
+        (CpuFlag.N, d & 0x80)
       )
     )
 
@@ -185,21 +228,12 @@ object Cpu extends LazyLogging {
     (hi << 8) | lo
   }
 
-  def reset: State[NesState, Unit] =
+  def reset: NesState => NesState =
     nes => {
       val (nes1, lo) = cpuRead(0xfffc)(nes)
       val (nes2, hi) = cpuRead(0xfffd)(nes1)
       val pc         = asUInt16(hi, lo)
-      val nes3 = lift(
-        CpuState.pc.set(pc) andThen
-          CpuState.a.set(0) andThen
-          CpuState.x.set(0) andThen
-          CpuState.y.set(0) andThen
-          CpuState.stkp.set(0xfd) andThen
-          CpuState.status.set(0x00 | CpuFlags.U.bit | CpuFlags.I.bit) andThen
-          CpuState.cycles.set(0)
-      )(nes2)
-      (nes3, ())
+      NesState.cpuState.set(CpuState.pc.set(pc)(CpuState()))(nes2)
     }
 
   def irq: Op =
@@ -207,10 +241,10 @@ object Cpu extends LazyLogging {
       val pc1  = nes.cpuState.pc
       val pcHi = (pc1 >> 8) & 0xff
       val pcLo = pc1 & 0xff
-      val flags = Map[CpuFlags, Boolean](
-        (CpuFlags.B, false),
-        (CpuFlags.U, true),
-        (CpuFlags.I, true)
+      val flags = Map[CpuFlag, Boolean](
+        (CpuFlag.B, false),
+        (CpuFlag.U, true),
+        (CpuFlag.I, true)
       )
       val nes1       = (push(pcHi) andThen push(pcLo) andThen modifyFlags(flags))(nes)
       val status     = nes1.cpuState.status
@@ -218,7 +252,7 @@ object Cpu extends LazyLogging {
       val (nes3, lo) = cpuRead(0xfffe)(nes2)
       val (nes4, hi) = cpuRead(0xfffe + 1)(nes3)
       val pc2        = asUInt16(hi, lo)
-      (setPc(pc2) andThen setCycles(7))(nes4)
+      (setPc(pc2) andThen incCycles(7))(nes4)
     }
 
   def nmi: State[NesState, NesState] =
@@ -226,10 +260,10 @@ object Cpu extends LazyLogging {
       val pc1  = nes.cpuState.pc
       val pcHi = (pc1 >> 8) & 0xff
       val pcLo = pc1 & 0xff
-      val flags = Map[CpuFlags, Boolean](
-        (CpuFlags.B, false),
-        (CpuFlags.U, true),
-        (CpuFlags.I, true)
+      val flags = Map[CpuFlag, Boolean](
+        (CpuFlag.B, false),
+        (CpuFlag.U, true),
+        (CpuFlag.I, true)
       )
       val nes1       = (push(pcHi) andThen push(pcLo) andThen modifyFlags(flags))(nes)
       val status     = nes1.cpuState.status
@@ -237,28 +271,15 @@ object Cpu extends LazyLogging {
       val (nes3, lo) = cpuRead(0xfffa)(nes2)
       val (nes4, hi) = cpuRead(0xfffa + 1)(nes3)
       val pc2        = asUInt16(hi, lo)
-      val nes5       = (setPc(pc2) andThen setCycles(7))(nes4)
+      val nes5       = (setPc(pc2) andThen incCycles(7))(nes4)
       (nes5, nes5)
     }
 
-  val clock: State[NesState, NesState] =
+  val clock: NesState => NesState =
     nes => {
-      val nes2 = if (nes.cpuState.cycles == 0) {
-        val (nes1, opCode) = cpuRead(nes.cpuState.pc)(nes)
-        val instr          = lookup(opCode)
-        (setCycles(instr.cycles) andThen incPc andThen instr.op andThen modifyFlag(CpuFlags.U, true))(nes1)
-      } else {
-        lift(CpuState.cycles.modify(_ - 1))(nes)
-      }
-      (nes2, nes2)
-    }
-
-  val executeNextInstr: State[NesState, Unit] =
-    nes => {
-      var nextNes = clock.runS(nes)
-      while (nextNes.cpuState.cycles > 0)
-        nextNes = clock.runS(nextNes)
-      (nextNes, ())
+      val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
+      val instr           = lookup(address)
+      (incCycles(instr.cycles) andThen incPc andThen instr.op andThen modifyFlag(CpuFlag.U, true))(nes1)
     }
 
   // Implicit
@@ -382,14 +403,14 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val cpu       = nes1.cpuState
-      val c         = cpu.getFlag(CpuFlags.C)
+      val c         = cpu.getFlag(CpuFlag.C)
       val lsb       = if (c) 1 else 0
       val temp      = cpu.a + d + lsb
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (temp & 0xff00),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
-        CpuFlags.V -> ((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
-        CpuFlags.N -> (temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (temp & 0xff00),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlag.V -> ((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
+        CpuFlag.N -> (temp & 0x80)
       )
       (setA(temp & 0xff) andThen modifyFlags(flags))(nes1)
     }
@@ -407,10 +428,10 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = d << 1
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (temp & 0xff00),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
-        CpuFlags.N -> (temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (temp & 0xff00),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlag.N -> (temp & 0x80)
       )
       (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
@@ -428,35 +449,35 @@ object Cpu extends LazyLogging {
     }
 
   // Branch if carry clear
-  val BCC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.C))
+  val BCC: Op = branchIf(!_.cpuState.getFlag(CpuFlag.C))
 
   // Branch if carry set
-  val BCS: Op = branchIf(_.cpuState.getFlag(CpuFlags.C))
+  val BCS: Op = branchIf(_.cpuState.getFlag(CpuFlag.C))
 
   // Branch if equal
-  val BEQ: Op = branchIf(_.cpuState.getFlag(CpuFlags.Z))
+  val BEQ: Op = branchIf(_.cpuState.getFlag(CpuFlag.Z))
 
   // Bit test
   def BIT(addressMode: RwAddressMode): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = nes1.cpuState.a & d
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
-        CpuFlags.N -> (d & (1 << 7)),
-        CpuFlags.V -> (d & (1 << 6))
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlag.N -> (d & (1 << 7)),
+        CpuFlag.V -> (d & (1 << 6))
       )
       modifyFlags(flags)(nes1)
     }
 
   // Branch if minus
-  val BMI: Op = branchIf(_.cpuState.getFlag(CpuFlags.N))
+  val BMI: Op = branchIf(_.cpuState.getFlag(CpuFlag.N))
 
   // Branch if not equal
-  val BNE: Op = branchIf(!_.cpuState.getFlag(CpuFlags.Z))
+  val BNE: Op = branchIf(!_.cpuState.getFlag(CpuFlag.Z))
 
   // Branch if positive
-  val BPL: Op = branchIf(!_.cpuState.getFlag(CpuFlags.N))
+  val BPL: Op = branchIf(!_.cpuState.getFlag(CpuFlag.N))
 
   // Force interrupt
   def BRK: Op =
@@ -467,32 +488,32 @@ object Cpu extends LazyLogging {
     }
 
   // Branch if overflow clear
-  val BVC: Op = branchIf(!_.cpuState.getFlag(CpuFlags.V))
+  val BVC: Op = branchIf(!_.cpuState.getFlag(CpuFlag.V))
 
   // Branch if overflow set
-  val BVS: Op = branchIf(_.cpuState.getFlag(CpuFlags.V))
+  val BVS: Op = branchIf(_.cpuState.getFlag(CpuFlag.V))
 
   // Clear carry flag
-  val CLC: Op = modifyFlag(CpuFlags.C, value = false)
+  val CLC: Op = modifyFlag(CpuFlag.C, value = false)
 
   // Clear decimal mode
-  val CLD: Op = modifyFlag(CpuFlags.D, value = false)
+  val CLD: Op = modifyFlag(CpuFlag.D, value = false)
 
   // Clear interrupt disable
-  val CLI: Op = modifyFlag(CpuFlags.I, value = false)
+  val CLI: Op = modifyFlag(CpuFlag.I, value = false)
 
   // Clear overflow flag
-  val CLV: Op = modifyFlag(CpuFlags.V, value = false)
+  val CLV: Op = modifyFlag(CpuFlag.V, value = false)
 
   def compare(addressMode: RwAddressMode, getter: CpuState => UInt8): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d1) = au.read(nes)
       val d2         = getter(nes1.cpuState)
       val temp       = d2 - d1
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (d2 >= d1),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x0000),
-        CpuFlags.N -> (temp & 0x0080)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (d2 >= d1),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x0000),
+        CpuFlag.N -> (temp & 0x0080)
       )
       modifyFlags(flags)(nes1)
     }
@@ -598,10 +619,10 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = (d >> 1) & 0xff
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (d & 0x01),
-        CpuFlags.Z -> ((temp & 0xff) == 0x00),
-        CpuFlags.N -> (temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (d & 0x01),
+        CpuFlag.Z -> ((temp & 0xff) == 0x00),
+        CpuFlag.N -> (temp & 0x80)
       )
       (modifyFlags(flags) andThen au.write(temp))(nes1)
     }
@@ -627,10 +648,10 @@ object Cpu extends LazyLogging {
   // Push processor status
   val PHP: Op =
     nes => {
-      val status = nes.cpuState.status | CpuFlags.B.bit | CpuFlags.U.bit
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.B -> false,
-        CpuFlags.U -> false
+      val status = nes.cpuState.status | CpuFlag.B.bit | CpuFlag.U.bit
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.B -> false,
+        CpuFlag.U -> false
       )
       (push(status) andThen modifyFlags(flags))(nes)
     }
@@ -646,19 +667,19 @@ object Cpu extends LazyLogging {
   val PLP: Op =
     nes => {
       val (nes1, d) = pop(nes)
-      (setStatus(d) andThen modifyFlag(CpuFlags.U, value = true))(nes1)
+      (setStatus(d) andThen modifyFlag(CpuFlag.U, value = true))(nes1)
     }
 
   // Rotate left
   def ROL(addressMode: RwAddressMode): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
-      val lsb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val lsb       = if (nes1.cpuState.getFlag(CpuFlag.C)) 1 else 0
       val temp      = (d << 1) | lsb
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (temp & 0xff00),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
-        CpuFlags.N -> (temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (temp & 0xff00),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlag.N -> (temp & 0x80)
       )
       (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
@@ -667,12 +688,12 @@ object Cpu extends LazyLogging {
   def ROR(addressMode: RwAddressMode): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
-      val msb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 << 7 else 0
+      val msb       = if (nes1.cpuState.getFlag(CpuFlag.C)) 1 << 7 else 0
       val temp      = (d >> 1) | msb
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (d & 0x01),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x00),
-        CpuFlags.N -> (temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (d & 0x01),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x00),
+        CpuFlag.N -> (temp & 0x80)
       )
       (modifyFlags(flags) andThen au.write(temp & 0xff))(nes1)
     }
@@ -681,7 +702,7 @@ object Cpu extends LazyLogging {
   val RTI: Op =
     nes => {
       val (nes1, d)   = pop(nes)
-      val status      = d & ~CpuFlags.B.bit & ~CpuFlags.U.bit
+      val status      = d & ~CpuFlag.B.bit & ~CpuFlag.U.bit
       val (nes2, pc1) = (setStatus(status) andThen pop)(nes1)
       val (nes3, pc2) = pop(nes2)
       val pc          = asUInt16(pc2, pc1)
@@ -702,25 +723,25 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val value     = d ^ 0x00ff
-      val lsb       = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val lsb       = if (nes1.cpuState.getFlag(CpuFlag.C)) 1 else 0
       val temp      = nes1.cpuState.a + value + lsb
-      val flags = Map[CpuFlags, Boolean](
-        (CpuFlags.C, temp & 0xff00),
-        (CpuFlags.Z, (temp & 0x00ff) == 0x00),
-        (CpuFlags.V, (temp ^ nes1.cpuState.a) & (temp ^ value) & 0x80),
-        (CpuFlags.N, temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        (CpuFlag.C, temp & 0xff00),
+        (CpuFlag.Z, (temp & 0x00ff) == 0x00),
+        (CpuFlag.V, (temp ^ nes1.cpuState.a) & (temp ^ value) & 0x80),
+        (CpuFlag.N, temp & 0x80)
       )
       (setA(temp & 0xff) andThen modifyFlags(flags))(nes1)
     }
 
   // Set carry flag
-  val SEC: Op = modifyFlag(CpuFlags.C, value = true)
+  val SEC: Op = modifyFlag(CpuFlag.C, value = true)
 
   // Set decimal flag
-  val SED: Op = modifyFlag(CpuFlags.D, value = true)
+  val SED: Op = modifyFlag(CpuFlag.D, value = true)
 
   // Set enable interrupt
-  val SEI: Op = modifyFlag(CpuFlags.I, value = true)
+  val SEI: Op = modifyFlag(CpuFlag.I, value = true)
 
   // Store accumulator
   def STA(addressMode: RwAddressMode): Op =
@@ -800,10 +821,10 @@ object Cpu extends LazyLogging {
       val (nes3, d2) = au.read(nes2)
       val d3         = nes3.cpuState.a
       val temp       = d3 - d2
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (d3 >= d2),
-        CpuFlags.Z -> ((temp & 0x00ff) == 0x0000),
-        CpuFlags.N -> (temp & 0x0080)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (d3 >= d2),
+        CpuFlag.Z -> ((temp & 0x00ff) == 0x0000),
+        CpuFlag.N -> (temp & 0x0080)
       )
       modifyFlags(flags)(nes3)
     }
@@ -815,13 +836,13 @@ object Cpu extends LazyLogging {
       val nes2       = au.write((d1 + 1) & 0xff)(nes1)
       val (nes3, d2) = au.read(nes2)
       val value      = d2 ^ 0x00ff
-      val lsb        = if (nes3.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val lsb        = if (nes3.cpuState.getFlag(CpuFlag.C)) 1 else 0
       val temp       = nes3.cpuState.a + value + lsb
-      val flags = Map[CpuFlags, Boolean](
-        (CpuFlags.C, temp & 0xff00),
-        (CpuFlags.Z, (temp & 0x00ff) == 0x00),
-        (CpuFlags.V, (temp ^ nes3.cpuState.a) & (temp ^ value) & 0x80),
-        (CpuFlags.N, temp & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        (CpuFlag.C, temp & 0xff00),
+        (CpuFlag.Z, (temp & 0x00ff) == 0x00),
+        (CpuFlag.V, (temp ^ nes3.cpuState.a) & (temp ^ value) & 0x80),
+        (CpuFlag.N, temp & 0x80)
       )
       (setA(temp & 0xff) andThen modifyFlags(flags))(nes3)
     }
@@ -831,7 +852,7 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d1) = au.read(nes)
       val temp1      = d1 << 1
-      val nes2       = (modifyFlag(CpuFlags.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
+      val nes2       = (modifyFlag(CpuFlag.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
       val temp2      = (nes2.cpuState.a | temp1) & 0xff
       (setA(temp2) andThen setZnFlags(temp2))(nes2)
     }
@@ -840,9 +861,9 @@ object Cpu extends LazyLogging {
   def RLA(addressMode: RwAddressMode): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d1) = au.read(nes)
-      val lsb        = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 else 0
+      val lsb        = if (nes1.cpuState.getFlag(CpuFlag.C)) 1 else 0
       val temp1      = (d1 << 1) | lsb
-      val nes2       = (modifyFlag(CpuFlags.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
+      val nes2       = (modifyFlag(CpuFlag.C, temp1 & 0xff00) andThen au.write(temp1 & 0xff))(nes1)
       val temp2      = nes2.cpuState.a & temp1 & 0xff
       (setA(temp2) andThen setZnFlags(temp2))(nes2)
     }
@@ -852,7 +873,7 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d1) = au.read(nes)
       val temp1      = (d1 >> 1) & 0xff
-      val nes2       = (modifyFlag(CpuFlags.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
+      val nes2       = (modifyFlag(CpuFlag.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
       val temp2      = (nes2.cpuState.a ^ temp1) & 0xff
       (setA(temp2) andThen setZnFlags(temp2))(nes2)
     }
@@ -861,18 +882,18 @@ object Cpu extends LazyLogging {
   def RRA(addressMode: RwAddressMode): Op =
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d1) = au.read(nes)
-      val msb        = if (nes1.cpuState.getFlag(CpuFlags.C)) 1 << 7 else 0
+      val msb        = if (nes1.cpuState.getFlag(CpuFlag.C)) 1 << 7 else 0
       val temp1      = (d1 >> 1) | msb
-      val nes2       = (modifyFlag(CpuFlags.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
+      val nes2       = (modifyFlag(CpuFlag.C, d1 & 0x01) andThen au.write(temp1 & 0xff))(nes1)
       val cpu        = nes2.cpuState
-      val c          = cpu.getFlag(CpuFlags.C)
+      val c          = cpu.getFlag(CpuFlag.C)
       val lsb        = if (c) 1 else 0
       val temp2      = cpu.a + temp1 + lsb
-      val flags = Map[CpuFlags, Boolean](
-        CpuFlags.C -> (temp2 & 0xff00),
-        CpuFlags.Z -> ((temp2 & 0x00ff) == 0x00),
-        CpuFlags.V -> ((~(cpu.a ^ temp1) & (cpu.a ^ temp2)) & 0x80),
-        CpuFlags.N -> (temp2 & 0x80)
+      val flags = Map[CpuFlag, Boolean](
+        CpuFlag.C -> (temp2 & 0xff00),
+        CpuFlag.Z -> ((temp2 & 0x00ff) == 0x00),
+        CpuFlag.V -> ((~(cpu.a ^ temp1) & (cpu.a ^ temp2)) & 0x80),
+        CpuFlag.N -> (temp2 & 0x80)
       )
       (setA(temp2 & 0xff) andThen modifyFlags(flags))(nes1)
     }

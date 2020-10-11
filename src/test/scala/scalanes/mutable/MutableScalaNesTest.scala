@@ -39,7 +39,7 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
     ).unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState =
-      NesState.reset.flatMap(_ => State.get).map(nes => Cpu.setPc(0xc000)(nes)).runS(decodedNesRom.head)
+      (NesState.reset andThen Cpu.setPc(0xc000))(decodedNesRom.head)
 
     var nesTestLog: List[String] = Stream
       .resource(Blocker[IO])
@@ -55,7 +55,7 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
 
     var next = initialNesState
     while (nesTestLog.nonEmpty && compare(nesTestLog.head, next)) {
-      next = Cpu.executeNextInstr.runS(next)
+      next = Cpu.clock(next)
       nesTestLog = nesTestLog.tail
     }
     if (nesTestLog.nonEmpty) {

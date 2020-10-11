@@ -100,5 +100,6 @@ package object mutable {
       s
     }
 
-  def hex(n: Int, d: Int): String = (d - 1 to 0 by -1).map(i => "0123456789ABCDEF" ((n >> (i * 4)) & 0xf)).mkString("")
+  def hex(n: Int, d: Int = 4): String =
+    (d - 1 to 0 by -1).map(i => "0123456789ABCDEF" ((n >> (i * 4)) & 0xf)).mkString("")
 }
