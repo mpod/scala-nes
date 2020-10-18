@@ -3,6 +3,7 @@ package scalanes.mutable
 import monocle.Lens
 import scalanes.mutable.Mirroring.Mirroring
 import scalanes.mutable.SpriteOverflow.SpriteOverflow
+import scalanes.mutable.SpritePriority.SpritePriority
 import scalanes.mutable.VerticalBlank.VerticalBlank
 
 import scala.annotation.tailrec
@@ -38,35 +39,37 @@ class PpuState(
   // Sprite
   var oamData: Vector[UInt8],
   var oamAddress: UInt16,
+  var spritesInfo: Seq[SpriteInfo],
   // Other
   val canvas: Array[Int],
   val mirroring: Mirroring
 )
 
 object PpuState {
-  val cycle: Lens[PpuState, Int]                = lens(_.cycle, _.cycle_=)
-  val scanline: Lens[PpuState, Int]             = lens(_.scanline, _.scanline_=)
-  val frame: Lens[PpuState, Long]               = lens(_.frame, _.frame_=)
-  val nametables: Lens[PpuState, Vector[UInt8]] = lens(_.nametables, _.nametables_=)
-  val palettes: Lens[PpuState, Vector[UInt8]]   = lens(_.palettes, _.palettes_=)
-  val ctrl: Lens[PpuState, UInt8]               = lens(_.ctrl, _.ctrl_=)
-  val mask: Lens[PpuState, UInt8]               = lens(_.mask, _.mask_=)
-  val status: Lens[PpuState, UInt8]             = lens(_.status, _.status_=)
-  val bufferedData: Lens[PpuState, UInt8]       = lens(_.bufferedData, _.bufferedData_=)
-  val v: Lens[PpuState, UInt15]                 = lens(_.v, _.v_=)
-  val t: Lens[PpuState, UInt15]                 = lens(_.t, _.t_=)
-  val x: Lens[PpuState, UInt3]                  = lens(_.x, _.x_=)
-  val w: Lens[PpuState, UInt1]                  = lens(_.w, _.w_=)
-  val shifterPatternLo: Lens[PpuState, UInt16]  = lens(_.shifterPatternLo, _.shifterPatternLo_=)
-  val shifterPatternHi: Lens[PpuState, UInt16]  = lens(_.shifterPatternHi, _.shifterPatternHi_=)
-  val shifterAttrLo: Lens[PpuState, UInt16]     = lens(_.shifterAttrLo, _.shifterAttrLo_=)
-  val shifterAttrHi: Lens[PpuState, UInt16]     = lens(_.shifterAttrHi, _.shifterAttrHi_=)
-  val nextTileId: Lens[PpuState, UInt8]         = lens(_.nextTileId, _.nextTileId_=)
-  val nextTileLo: Lens[PpuState, UInt8]         = lens(_.nextTileLo, _.nextTileLo_=)
-  val nextTileHi: Lens[PpuState, UInt8]         = lens(_.nextTileHi, _.nextTileHi_=)
-  val nextTileAttr: Lens[PpuState, UInt8]       = lens(_.nextTileAttr, _.nextTileAttr_=)
-  val oamData: Lens[PpuState, Vector[UInt8]]    = lens(_.oamData, _.oamData_=)
-  val oamAddress: Lens[PpuState, UInt16]        = lens(_.oamAddress, _.oamAddress_=)
+  val cycle: Lens[PpuState, Int]                   = lens(_.cycle, _.cycle_=)
+  val scanline: Lens[PpuState, Int]                = lens(_.scanline, _.scanline_=)
+  val frame: Lens[PpuState, Long]                  = lens(_.frame, _.frame_=)
+  val nametables: Lens[PpuState, Vector[UInt8]]    = lens(_.nametables, _.nametables_=)
+  val palettes: Lens[PpuState, Vector[UInt8]]      = lens(_.palettes, _.palettes_=)
+  val ctrl: Lens[PpuState, UInt8]                  = lens(_.ctrl, _.ctrl_=)
+  val mask: Lens[PpuState, UInt8]                  = lens(_.mask, _.mask_=)
+  val status: Lens[PpuState, UInt8]                = lens(_.status, _.status_=)
+  val bufferedData: Lens[PpuState, UInt8]          = lens(_.bufferedData, _.bufferedData_=)
+  val v: Lens[PpuState, UInt15]                    = lens(_.v, _.v_=)
+  val t: Lens[PpuState, UInt15]                    = lens(_.t, _.t_=)
+  val x: Lens[PpuState, UInt3]                     = lens(_.x, _.x_=)
+  val w: Lens[PpuState, UInt1]                     = lens(_.w, _.w_=)
+  val shifterPatternLo: Lens[PpuState, UInt16]     = lens(_.shifterPatternLo, _.shifterPatternLo_=)
+  val shifterPatternHi: Lens[PpuState, UInt16]     = lens(_.shifterPatternHi, _.shifterPatternHi_=)
+  val shifterAttrLo: Lens[PpuState, UInt16]        = lens(_.shifterAttrLo, _.shifterAttrLo_=)
+  val shifterAttrHi: Lens[PpuState, UInt16]        = lens(_.shifterAttrHi, _.shifterAttrHi_=)
+  val nextTileId: Lens[PpuState, UInt8]            = lens(_.nextTileId, _.nextTileId_=)
+  val nextTileLo: Lens[PpuState, UInt8]            = lens(_.nextTileLo, _.nextTileLo_=)
+  val nextTileHi: Lens[PpuState, UInt8]            = lens(_.nextTileHi, _.nextTileHi_=)
+  val nextTileAttr: Lens[PpuState, UInt8]          = lens(_.nextTileAttr, _.nextTileAttr_=)
+  val oamData: Lens[PpuState, Vector[UInt8]]       = lens(_.oamData, _.oamData_=)
+  val oamAddress: Lens[PpuState, UInt16]           = lens(_.oamAddress, _.oamAddress_=)
+  val spritesInfo: Lens[PpuState, Seq[SpriteInfo]] = lens(_.spritesInfo, _.spritesInfo_=)
 
   def apply(mirroring: Mirroring): PpuState = new PpuState(
     cycle = 0,
@@ -92,29 +95,31 @@ object PpuState {
     nextTileAttr = 0x00,
     oamData = Vector.fill(256)(0x00),
     oamAddress = 0x0000,
+    spritesInfo = List.empty,
     canvas = Array.fill(2 * 256 * 2 * 240)(0),
     mirroring = mirroring
   )
 }
 
-abstract class RegFlag(mask: Int) extends Enumeration {
+abstract class RegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends Enumeration {
   @tailrec
   private def findPos(m: Int, p: Int): Int =
     if ((m & 0x1) == 1) p
     else if (m == 0) p
     else findPos(m >> 1, p + 1)
-  val pos: Int                        = findPos(mask, 0)
-  def extractFromReg(reg: Int): Value = super.apply((reg & mask) >> pos)
-  def modifyReg(v: Value): Int => Int = reg => (reg & ~mask) | ((v.id << pos) & mask)
+  val pos: Int                               = findPos(mask, 0)
+  def get(v: UInt8): Value                   = super.apply((v & mask) >> pos)
+  def get: PpuState => Value                 = ppu => get(lens.get(ppu))
+  def modify(v: Value): PpuState => PpuState = lens.modify(reg => (reg & ~mask) | ((v.id << pos) & mask))
 }
 
-abstract class BooleanRegFlag(mask: Int) extends RegFlag(mask) {
+abstract class BooleanRegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends RegFlag(mask, lens) {
   implicit def valueToBoolean(x: Value): Boolean = x == On
   val On, Off                                    = Value
 }
 
 // PPUCTRL flags
-object NametableAddress extends RegFlag(0x03) {
+object NametableAddress extends RegFlag(0x03, PpuState.ctrl) {
   type NametableAddress = Val
   protected case class Val(address: UInt16) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
@@ -124,7 +129,7 @@ object NametableAddress extends RegFlag(0x03) {
   val Fourth: NametableAddress           = Val(0x2c00)
 }
 
-object AddressIncrementMode extends RegFlag(0x1 << 2) {
+object AddressIncrementMode extends RegFlag(0x1 << 2, PpuState.ctrl) {
   type AddressIncrementMode = Val
   protected case class Val(delta: Int) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
@@ -132,7 +137,7 @@ object AddressIncrementMode extends RegFlag(0x1 << 2) {
   val Add32: AddressIncrementMode        = Val(32)
 }
 
-object SpriteTableAddress extends RegFlag(0x1 << 3) {
+object SpriteTableAddress extends RegFlag(0x1 << 3, PpuState.ctrl) {
   type SpriteTableAddress = Val
   protected case class Val(address: UInt16) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
@@ -140,7 +145,7 @@ object SpriteTableAddress extends RegFlag(0x1 << 3) {
   val Second: SpriteTableAddress         = Val(0x1000)
 }
 
-object BackgroundTableAddress extends RegFlag(0x1 << 4) {
+object BackgroundTableAddress extends RegFlag(0x1 << 4, PpuState.ctrl) {
   type BackgroundTableAddress = Val
   protected case class Val(address: UInt16) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
@@ -148,7 +153,7 @@ object BackgroundTableAddress extends RegFlag(0x1 << 4) {
   val Second: BackgroundTableAddress     = Val(0x1000)
 }
 
-object SpriteSize extends RegFlag(0x1 << 5) {
+object SpriteSize extends RegFlag(0x1 << 5, PpuState.ctrl) {
   type SpriteSize = Val
   protected case class Val(height: Int) extends super.Val
   implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
@@ -156,58 +161,58 @@ object SpriteSize extends RegFlag(0x1 << 5) {
   val Large: SpriteSize                  = Val(16)
 }
 
-object MasterSlaveMode extends RegFlag(0x1 << 6) {
+object MasterSlaveMode extends RegFlag(0x1 << 6, PpuState.ctrl) {
   type MasterSlaveMode = Value
   val ReadBackdropFromExtPins, OutputColorOnExtPins = Value
 }
 
-object NmiMode extends BooleanRegFlag(0x1 << 7) {
+object NmiMode extends BooleanRegFlag(0x1 << 7, PpuState.ctrl) {
   type NmiMode = Value
 }
 
 // PPUMASK flags
-object Greyscale extends BooleanRegFlag(0x1) {
+object Greyscale extends BooleanRegFlag(0x1, PpuState.mask) {
   type Greyscale = Value
 }
 
-object RenderBackgroundLeft extends BooleanRegFlag(0x1 << 1) {
+object RenderBackgroundLeft extends BooleanRegFlag(0x1 << 1, PpuState.mask) {
   type RenderBackgroundLeft = Value
 }
 
-object RenderSpritesLeft extends BooleanRegFlag(0x1 << 2) {
+object RenderSpritesLeft extends BooleanRegFlag(0x1 << 2, PpuState.mask) {
   type RenderSpritesLeft = Value
 }
 
-object RenderBackground extends BooleanRegFlag(0x1 << 3) {
+object RenderBackground extends BooleanRegFlag(0x1 << 3, PpuState.mask) {
   type RenderBackground = Value
 }
 
-object RenderSprites extends BooleanRegFlag(0x1 << 4) {
+object RenderSprites extends BooleanRegFlag(0x1 << 4, PpuState.mask) {
   type RenderSprites = Value
 }
 
-object EnhanceRed extends BooleanRegFlag(0x1 << 5) {
+object EnhanceRed extends BooleanRegFlag(0x1 << 5, PpuState.mask) {
   type EnhanceRed = Value
 }
 
-object EnhanceGreen extends BooleanRegFlag(0x1 << 6) {
+object EnhanceGreen extends BooleanRegFlag(0x1 << 6, PpuState.mask) {
   type EnhanceGreen = Value
 }
 
-object EnhanceBlue extends BooleanRegFlag(0x1 << 7) {
+object EnhanceBlue extends BooleanRegFlag(0x1 << 7, PpuState.mask) {
   type EnhanceBlue = Value
 }
 
 // PPUSTATUS flags
-object SpriteOverflow extends BooleanRegFlag(0x1 << 5) {
+object SpriteOverflow extends BooleanRegFlag(0x1 << 5, PpuState.status) {
   type SpriteOverflow = Value
 }
 
-object SpriteZeroHit extends BooleanRegFlag(0x1 << 6) {
+object SpriteZeroHit extends BooleanRegFlag(0x1 << 6, PpuState.status) {
   type SpriteZeroHit = Value
 }
 
-object VerticalBlank extends BooleanRegFlag(0x1 << 7) {
+object VerticalBlank extends BooleanRegFlag(0x1 << 7, PpuState.status) {
   type VerticalBlank = Value
 }
 
@@ -250,6 +255,20 @@ object Mirroring extends Enumeration {
   val Vertical, Horizontal, OneScreenLowerBank, OneScreenUpperBank = Value
 }
 
+object SpritePriority extends Enumeration {
+  type SpritePriority = Value
+  val InFrontOfBackground, BehindBackground = Value
+}
+
+case class SpriteInfo(
+  x: UInt8,
+  palette: UInt2,
+  priority: SpritePriority,
+  spriteLo: UInt8,
+  spriteHi: UInt8,
+  index: Int
+)
+
 case class Rgb(r: Int, g: Int, b: Int)
 
 object Rgb {
@@ -291,16 +310,16 @@ object Ppu {
     State.modify(NesState.ppuState.modify(f))
 
   def setVerticalBlank(d: VerticalBlank): PpuState => PpuState =
-    PpuState.status.modify(VerticalBlank.modifyReg(d))
+    VerticalBlank.modify(d)
 
   val setSpriteZeroHit: PpuState => PpuState =
-    PpuState.status.modify(SpriteZeroHit.modifyReg(SpriteZeroHit.On))
+    SpriteZeroHit.modify(SpriteZeroHit.On)
 
   val clearSpriteZeroHit: PpuState => PpuState =
-    PpuState.status.modify(SpriteZeroHit.modifyReg(SpriteZeroHit.Off))
+    SpriteZeroHit.modify(SpriteZeroHit.Off)
 
   def setSpriteOverflow(d: SpriteOverflow): PpuState => PpuState =
-    PpuState.status.modify(SpriteOverflow.modifyReg(d))
+    SpriteOverflow.modify(d)
 
   val clearLoopyW: PpuState => PpuState =
     PpuState.w.set(0x0)
@@ -392,7 +411,7 @@ object Ppu {
   val fetchLowTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = BackgroundTableAddress.extractFromReg(ppu.ctrl).address
+      val backgroundTableAddress = BackgroundTableAddress.get(ppu).address
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v)
       ppuRead(address).runS(nes)
     }
@@ -401,7 +420,7 @@ object Ppu {
   val fetchHighTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = BackgroundTableAddress.extractFromReg(ppu.ctrl).address
+      val backgroundTableAddress = BackgroundTableAddress.get(ppu).address
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v) + 8
       ppuRead(address).runS(nes)
     }
@@ -443,7 +462,7 @@ object Ppu {
     require(pixel >= 0 && pixel < 4)
 
     val colorAddress =
-      if (RenderBackground.extractFromReg(ppu.mask))
+      if (RenderBackground.get(ppu))
         0x3f00 + (palette << 2) + pixel
       else
         0x0000
@@ -457,7 +476,7 @@ object Ppu {
 
     val addr  = mapToPalettesIndex(address)
     val color = ppu.palettes(addr)
-    if (Greyscale.extractFromReg(ppu.mask)) color & 0x30
+    if (Greyscale.get(ppu)) color & 0x30
     else color
   }
 
@@ -504,7 +523,7 @@ object Ppu {
   def writeCtrl(d: UInt8): NesState => NesState =
     nes => {
       // Set nametables select
-      val nametables = NametableAddress.extractFromReg(d).id
+      val nametables = NametableAddress.get(d).id
       val t          = (nes.ppuState.t & 0xf3ff) | (nametables << 10)
       lift(PpuState.ctrl.set(d) andThen PpuState.t.set(t))(nes)
     }
@@ -549,7 +568,7 @@ object Ppu {
 
   def writeData(d: UInt8): NesState => NesState =
     nes => {
-      val delta = AddressIncrementMode.extractFromReg(nes.ppuState.ctrl).delta
+      val delta = AddressIncrementMode.get(nes.ppuState).delta
       (ppuWrite(nes.ppuState.v, d) andThen lift(PpuState.v.modify(_ + delta)))(nes)
     }
 
@@ -596,7 +615,7 @@ object Ppu {
         result <- fetch
         (buffer, d) = result
         nes <- liftS(PpuState.bufferedData.set(buffer)).flatMap(_ => State.get)
-        delta = AddressIncrementMode.extractFromReg(nes.ppuState.ctrl).delta
+        delta = AddressIncrementMode.get(nes.ppuState).delta
         _ <- liftS(PpuState.v.modify(_ + delta))
       } yield d
     }
@@ -634,6 +653,9 @@ object Ppu {
     getColor(bgPalette, bgPixel)(ppu)
   }
 
+  def spritePixel(ppu: PpuState): Option[(Int, SpriteInfo)] =
+    ???
+
   val renderPixel: NesState => NesState =
     nes => {
       val ppu     = nes.ppuState
@@ -645,6 +667,88 @@ object Ppu {
       ppu.canvas.update((y + 1) * 2 * 256 + x, bgColor)
       ppu.canvas.update((y + 1) * 2 * 256 + x + 1, bgColor)
       nes
+    }
+
+  private def flipByte(d: UInt8): UInt8 = {
+    val d1 = (d & 0xf0) >> 4 | (d & 0x0f) << 4
+    val d2 = (d1 & 0xcc) >> 2 | (d1 & 0x33) << 2
+    val d3 = (d2 & 0xaa) >> 1 | (d2 & 0x55) << 1
+    d3
+  }
+
+  private def fetchSpriteInfo(i: Int, nes: NesState): (NesState, SpriteInfo) = {
+    val oamData    = nes.ppuState.oamData
+    val y          = oamData(i * 4 + 0)
+    val tile       = oamData(i * 4 + 1)
+    val attr       = oamData(i * 4 + 2)
+    val x          = oamData(i * 4 + 3)
+    val row        = nes.ppuState.scanline - y
+    val palette    = attr & 0x3
+    val flipHor    = attr & 0x40
+    val flipVert   = attr & 0x80
+    val priority   = SpritePriority((attr >> 5) & 0x1)
+    val spriteSize = SpriteSize.get(nes.ppuState.ctrl)
+    val table =
+      if (spriteSize == SpriteSize.Small)
+        SpriteTableAddress.get(nes.ppuState).address
+      else
+        0x1000 * (tile & 0x1)
+
+    val address =
+      if (spriteSize == SpriteSize.Small) {
+        // 8x8 mode
+        table + tile * 16 + (if (flipVert) row else 7 - row)
+      } else if (!flipVert & row < 8) {
+        // 8x16 mode, no vertical flip, top half tile
+        table + tile * 16 + row
+      } else if (!flipVert & row > 8) {
+        // 8x16 mode, no vertical flip, bottom half tile
+        table + (tile + 1) * 16 + (row - 8)
+      } else if (flipVert & (15 - row) < 8) {
+        // 8x16 mode, vertical flip, top half tile
+        table + tile * 16 + (15 - row)
+      } else {
+        // 8x16 mode, vertical flip, bottom half tile
+        table + (tile + 1) * 16 + (15 - row - 8)
+      }
+
+    val (nes1, (spriteLo, spriteHi)) = (
+      for {
+        lo <- ppuRead(address)
+        hi <- ppuRead(address + 8)
+      } yield
+        if (flipHor)
+          (flipByte(lo), flipByte(hi))
+        else
+          (lo, hi)
+    )(nes)
+
+    val spriteInfo = SpriteInfo(x, palette, priority, spriteLo, spriteHi, i)
+
+    (nes1, spriteInfo)
+  }
+
+  val evaluateSprites: NesState => NesState =
+    nes => {
+      val h        = SpriteSize.get(nes.ppuState).height
+      val scanline = nes.ppuState.scanline
+      val oamData  = nes.ppuState.oamData
+      val (nes1, spritesInfo) = (0 until 64)
+        .filter { i =>
+          val y   = oamData(i * 4 + 0)
+          val row = scanline - y
+          row >= 0 && row < h
+        }
+        .foldRight((nes, List.empty[SpriteInfo])) { case (i, (nes, spritesInfo)) =>
+          val (nes1, spriteInfo) = fetchSpriteInfo(i, nes)
+          (nes1, spriteInfo :: spritesInfo)
+        }
+      if (spritesInfo.size > 8)
+        lift(
+          SpriteOverflow.modify(SpriteOverflow.On) andThen PpuState.spritesInfo.set(spritesInfo.take(8))
+        )(nes1)
+      else
+        lift(PpuState.spritesInfo.set(spritesInfo))(nes1)
     }
 
   def incCounters: PpuState => PpuState =
@@ -665,7 +769,7 @@ object Ppu {
       val isVisibleLine   = scanline < 240
       val isPreRenderLine = scanline == 261
       val isRenderLine    = isVisibleLine || isPreRenderLine
-      val isRendering     = RenderBackground.extractFromReg(ppu.mask) || RenderSprites.extractFromReg(ppu.mask)
+      val isRendering     = RenderBackground.get(ppu) || RenderSprites.get(ppu)
       val isPreFetchCycle = cycle >= 321 && cycle <= 336
       val isVisibleCycle  = cycle >= 1 && cycle <= 256
       val isFetchCycle    = isPreFetchCycle || isVisibleCycle
@@ -675,7 +779,7 @@ object Ppu {
         if (isVisibleLine && isVisibleCycle) renderPixel
         else noOp
 
-      // Background rendering
+      // Background logic
       val background =
         if (isRendering && isRenderLine & isFetchCycle)
           cycle % 8 match {
@@ -691,13 +795,15 @@ object Ppu {
         else if (isRendering && isRenderLine && cycle == 257) lift(transferAddressX)
         else noOp
 
-      // Sprite rendering
-      ???
+      // Sprite logic
+      val sprite =
+        if (isRendering && cycle == 257)
+          if (isVisibleLine) evaluateSprites
+          else lift(PpuState.spritesInfo.set(Seq.empty))
+        else noOp
 
-      (pixel andThen background)(nes)
+      (pixel andThen background andThen sprite)(nes)
     }
-
-  def isNmiReady(ppu: PpuState): Boolean = ???
 
   def reset: NesState => NesState =
     NesState.ppuState.modify(ppu => PpuState(ppu.mirroring))
