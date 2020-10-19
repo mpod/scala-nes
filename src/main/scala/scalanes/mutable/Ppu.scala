@@ -457,7 +457,7 @@ object Ppu {
     if ((addr & 0x13) == 0x10) addr & ~0x10 else addr
   }
 
-  def getColor(palette: Int, pixel: Int)(ppu: PpuState): Int = {
+  def getColor(pixel: Int, palette: Int)(ppu: PpuState): Int = {
     require(palette >= 0 && palette < 8)
     require(pixel >= 0 && pixel < 4)
 
@@ -642,7 +642,7 @@ object Ppu {
       lift(writePalettes(address, d))
   }
 
-  def backgroundPixel(ppu: PpuState): Int = {
+  def backgroundPixel(ppu: PpuState): Option[(Int, Int)] = {
     val bitMux    = 0x8000 >> ppu.x
     val pixel0    = if (ppu.shifterPatternLo & bitMux) 0x1 else 0x0
     val pixel1    = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
@@ -650,23 +650,58 @@ object Ppu {
     val palette0  = if (ppu.shifterAttrLo & bitMux) 0x1 else 0x0
     val palette1  = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
     val bgPalette = (palette1 << 1) | palette0
-    getColor(bgPalette, bgPixel)(ppu)
+    if (bgPixel != 0)
+      Option((bgPixel, bgPalette))
+    else
+      None
   }
 
   def spritePixel(ppu: PpuState): Option[(Int, SpriteInfo)] =
-    ???
+    ppu.spritesInfo
+      .filter { s =>
+        val offset = (ppu.cycle - 1) - s.x
+        RenderSprites.get(ppu) && offset >= 0 && offset < 8
+      }
+      .map { s =>
+        val bitMux  = 0x8000 >> ((ppu.cycle - 1) - s.x)
+        val pixel0  = if (s.spriteLo & bitMux) 0x1 else 0x0
+        val pixel1  = if (s.spriteHi & bitMux) 0x1 else 0x0
+        val fgPixel = (pixel1 << 1) | pixel0
+        (fgPixel, s)
+      }
+      .find { case (fgPixel, _) => fgPixel != 0 }
 
   val renderPixel: NesState => NesState =
     nes => {
-      val ppu     = nes.ppuState
-      val x       = ppu.cycle - 1
-      val y       = ppu.scanline
-      val bgColor = backgroundPixel(ppu)
-      ppu.canvas.update(y * 2 * 256 + x, bgColor)
-      ppu.canvas.update(y * 2 * 256 + x + 1, bgColor)
-      ppu.canvas.update((y + 1) * 2 * 256 + x, bgColor)
-      ppu.canvas.update((y + 1) * 2 * 256 + x + 1, bgColor)
-      nes
+      val ppu = nes.ppuState
+      val x   = ppu.cycle - 1
+      val y   = ppu.scanline
+      val (pixel, palette, spriteZero) =
+        (backgroundPixel(ppu), spritePixel(ppu)) match {
+          case (None, None) =>
+            (0, 0, false)
+          case (None, Some((fgPixel, spriteInfo))) =>
+            (fgPixel, spriteInfo.palette, false)
+          case (Some((bgPixel, bgPalette)), None) =>
+            (bgPixel, bgPalette, false)
+          case (Some((bgPixel, bgPalette)), Some((fgPixel, spriteInfo))) =>
+            val spriteZero = spriteInfo.index == 0 && x < 255
+            if (spriteInfo.priority == SpritePriority.BehindBackground)
+              (bgPixel, bgPalette, spriteZero)
+            else
+              (fgPixel, spriteInfo.palette, spriteZero)
+        }
+
+      val color = getColor(pixel, palette)(ppu)
+      ppu.canvas.update(y * 2 * 256 + x, color)
+      ppu.canvas.update(y * 2 * 256 + x + 1, color)
+      ppu.canvas.update((y + 1) * 2 * 256 + x, color)
+      ppu.canvas.update((y + 1) * 2 * 256 + x + 1, color)
+
+      if (spriteZero)
+        lift(setSpriteZeroHit)(nes)
+      else
+        nes
     }
 
   private def flipByte(d: UInt8): UInt8 = {
@@ -683,7 +718,7 @@ object Ppu {
     val attr       = oamData(i * 4 + 2)
     val x          = oamData(i * 4 + 3)
     val row        = nes.ppuState.scanline - y
-    val palette    = attr & 0x3
+    val palette    = attr & 0x03 + 0x04 // Sprite palettes are the later 4 in the palette memory
     val flipHor    = attr & 0x40
     val flipVert   = attr & 0x80
     val priority   = SpritePriority((attr >> 5) & 0x1)
