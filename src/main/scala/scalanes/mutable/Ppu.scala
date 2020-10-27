@@ -2,9 +2,7 @@ package scalanes.mutable
 
 import monocle.Lens
 import scalanes.mutable.Mirroring.Mirroring
-import scalanes.mutable.SpriteOverflow.SpriteOverflow
 import scalanes.mutable.SpritePriority.SpritePriority
-import scalanes.mutable.VerticalBlank.VerticalBlank
 
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -115,7 +113,7 @@ abstract class RegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends Enumerati
 
 abstract class BooleanRegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends RegFlag(mask, lens) {
   implicit def valueToBoolean(x: Value): Boolean = x == On
-  val On, Off                                    = Value
+  val Off, On                                    = Value
 }
 
 // PPUCTRL flags
@@ -240,7 +238,7 @@ object Loopy {
   def setNametableX(d: UInt1): UInt15 => UInt15 = setBits(d, 1, maskNametableX, posNametableX)
   def setNametableY(d: UInt1): UInt15 => UInt15 = setBits(d, 1, maskNametableY, posNametableY)
   def setNametables(d: UInt2): UInt15 => UInt15 = setBits(d, 2, maskNametableX | maskNametableY, posNametableX)
-  def setFineY(d: UInt3): UInt15 => UInt15      = setBits(d, 1, maskFineY, posFineY)
+  def setFineY(d: UInt3): UInt15 => UInt15      = setBits(d, 3, maskFineY, posFineY)
   val flipNametableX: UInt15 => UInt15          = loopy => loopy ^ (0x1 << posNametableX)
   val flipNametableY: UInt15 => UInt15          = loopy => loopy ^ (0x1 << posNametableY)
   val coarseX: UInt15 => UInt5                  = loopy => (loopy & maskCoarseX) >> posCoarseX
@@ -306,11 +304,14 @@ object Ppu {
   private def lift(f: PpuState => PpuState): NesState => NesState =
     NesState.ppuState.modify(f)
 
-  def liftS(f: PpuState => PpuState): State[NesState, Unit] =
+  private def liftS(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
 
-  def setVerticalBlank(d: VerticalBlank): PpuState => PpuState =
-    VerticalBlank.modify(d)
+  val setVerticalBlank: PpuState => PpuState =
+    VerticalBlank.modify(VerticalBlank.On)
+
+  val clearVerticalBlank: PpuState => PpuState =
+    VerticalBlank.modify(VerticalBlank.Off)
 
   val setSpriteZeroHit: PpuState => PpuState =
     SpriteZeroHit.modify(SpriteZeroHit.On)
@@ -318,8 +319,11 @@ object Ppu {
   val clearSpriteZeroHit: PpuState => PpuState =
     SpriteZeroHit.modify(SpriteZeroHit.Off)
 
-  def setSpriteOverflow(d: SpriteOverflow): PpuState => PpuState =
-    SpriteOverflow.modify(d)
+  val setSpriteOverflow: PpuState => PpuState =
+    SpriteOverflow.modify(SpriteOverflow.On)
+
+  val clearSpriteOverflow: PpuState => PpuState =
+    SpriteOverflow.modify(SpriteOverflow.Off)
 
   val clearLoopyW: PpuState => PpuState =
     PpuState.w.set(0x0)
@@ -561,7 +565,7 @@ object Ppu {
         lift(PpuState.t.set(t) andThen PpuState.v.set(t) andThen PpuState.w.set(0))(nes)
       } else {
         // Lower address byte
-        val t = (nes.ppuState.t & 0x80ff) | (d & 0x3f)
+        val t = (nes.ppuState.t & 0x80ff) | ((d & 0x3f) << 8)
         lift(PpuState.t.set(t) andThen PpuState.w.set(1))(nes)
       }
     }
@@ -569,6 +573,7 @@ object Ppu {
   def writeData(d: UInt8): NesState => NesState =
     nes => {
       val delta = AddressIncrementMode.get(nes.ppuState).delta
+      println(nes.ppuState.scanline, nes.ppuState.cycle, VerticalBlank.get(nes.ppuState))
       (ppuWrite(nes.ppuState.v, d) andThen lift(PpuState.v.modify(_ + delta)))(nes)
     }
 
@@ -587,7 +592,7 @@ object Ppu {
   val readStatus: State[NesState, UInt8] =
     nes => {
       val d    = (nes.ppuState.status & 0xe0) | (nes.ppuState.bufferedData & 0x1f)
-      val nes1 = lift(clearLoopyW andThen setVerticalBlank(VerticalBlank.Off))(nes)
+      val nes1 = lift(clearLoopyW andThen clearVerticalBlank)(nes)
       (nes1, d)
     }
 
@@ -632,8 +637,7 @@ object Ppu {
   }
 
   def ppuWrite(address: UInt16, d: UInt8): NesState => NesState = {
-    require((address & 0x3fff) == address)
-
+    require((address & 0x3fff) == address, s"address ${hex(address)}")
     if (address >= 0x0000 && address <= 0x1fff)
       Cartridge.ppuWrite(address, d).runS(_) // Patterns
     else if (address >= 0x2000 && address <= 0x3eff)
@@ -780,7 +784,7 @@ object Ppu {
         }
       if (spritesInfo.size > 8)
         lift(
-          SpriteOverflow.modify(SpriteOverflow.On) andThen PpuState.spritesInfo.set(spritesInfo.take(8))
+          setSpriteOverflow andThen PpuState.spritesInfo.set(spritesInfo.take(8))
         )(nes1)
       else
         lift(PpuState.spritesInfo.set(spritesInfo))(nes1)
@@ -822,7 +826,7 @@ object Ppu {
             case 3                 => lift(updateShifters) andThen fetchAttributeTableByte
             case 5                 => lift(updateShifters) andThen fetchLowTileByte
             case 7                 => lift(updateShifters) andThen fetchHighTileByte
-            case 0 if cycle == 256 => lift(updateShifters andThen loadShifters andThen incScrollY)
+            case 0 if cycle == 256 => lift(updateShifters andThen loadShifters andThen incScrollX andThen incScrollY)
             case 0                 => lift(updateShifters andThen loadShifters andThen incScrollX)
             case _                 => lift(updateShifters)
           }
@@ -837,7 +841,18 @@ object Ppu {
           else lift(PpuState.spritesInfo.set(Seq.empty))
         else noOp
 
-      (pixel andThen background andThen sprite)(nes)
+      // vblank logic
+      val vblank =
+        if (scanline == 241 && cycle == 1)
+          lift(setVerticalBlank)
+        else if (isPreRenderLine && cycle == 1)
+          lift(clearVerticalBlank andThen clearSpriteOverflow andThen clearSpriteZeroHit)
+        else
+          noOp
+
+      // TODO: NMI!!!
+
+      (lift(incCounters) andThen pixel andThen background andThen sprite andThen vblank)(nes)
     }
 
   def reset: NesState => NesState =

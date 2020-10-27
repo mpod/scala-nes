@@ -54,7 +54,7 @@ object NesState {
       val frame = nes.ppuState.frame
       var nes1  = nes
       while (nes1.ppuState.frame == frame)
-        nes1 = Ppu.clock(nes1)
+        nes1 = NesState.clock(nes1)
       nes1
     }
 
