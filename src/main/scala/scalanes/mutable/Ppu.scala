@@ -573,7 +573,6 @@ object Ppu {
   def writeData(d: UInt8): NesState => NesState =
     nes => {
       val delta = AddressIncrementMode.get(nes.ppuState).delta
-      println(nes.ppuState.scanline, nes.ppuState.cycle, VerticalBlank.get(nes.ppuState))
       (ppuWrite(nes.ppuState.v, d) andThen lift(PpuState.v.modify(_ + delta)))(nes)
     }
 
