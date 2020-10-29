@@ -1,4 +1,4 @@
-package scalanes
+package scalanes.immutable
 
 import cats.data.StateT
 import monocle.Lens
@@ -17,16 +17,16 @@ object ControllerState {
 object Controller {
 
   def serialReadController1: State[NesState, UInt8] = State { ns =>
-    val c = ns.controllerState
-    val bit = (c.controller1 & 0x80) >> 7
-    val update = (NesState.controllerState composeLens ControllerState.controller1).modify(a => (a << 1) & 0xFF)
+    val c      = ns.controllerState
+    val bit    = (c.controller1 & 0x80) >> 7
+    val update = (NesState.controllerState composeLens ControllerState.controller1).modify(a => (a << 1) & 0xff)
     (update(ns), bit)
   }
 
   def serialReadController2: State[NesState, UInt8] = State { ns =>
-    val c = ns.controllerState
-    val bit = (c.controller2 & 0x80) >> 7
-    val update = (NesState.controllerState composeLens ControllerState.controller2).modify(a => (a << 1) & 0xFF)
+    val c      = ns.controllerState
+    val bit    = (c.controller2 & 0x80) >> 7
+    val update = (NesState.controllerState composeLens ControllerState.controller2).modify(a => (a << 1) & 0xff)
     (update(ns), bit)
   }
 

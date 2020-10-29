@@ -1,13 +1,14 @@
-package scalanes.mappers
+package scalanes.immutable.mappers
 
-import scalanes._
+import scalanes.immutable._
+import scalanes.immutable.{BankMap, Mapper}
 
 case class Mapper000(prgRom: Vector[UInt8],
                      chrRom: Vector[UInt8],
                      prgRam: Vector[UInt8],
                      prgBankMaps: List[BankMap],
                      chrBankMaps: List[BankMap]
-                    ) extends Mapper {
+) extends Mapper {
 
   type SpecificMapper = Mapper000
 
@@ -23,10 +24,11 @@ case class Mapper000(prgRom: Vector[UInt8],
 object Mapper000 {
 
   def apply(prgRom: Vector[UInt8], chrRom: Vector[UInt8], prgRamSize: Int): Mapper000 = {
-    val prgRomBanks = if (prgRom.size > 16 * 1024)
-      List(BankMap(0, 16), BankMap(16 * 1024, 16))
-    else
-      List(BankMap(0, 16), BankMap(0, 16))
+    val prgRomBanks =
+      if (prgRom.size > 16 * 1024)
+        List(BankMap(0, 16), BankMap(16 * 1024, 16))
+      else
+        List(BankMap(0, 16), BankMap(0, 16))
     new Mapper000(prgRom, chrRom, Vector.fill(prgRamSize)(0x00), prgRomBanks, List(BankMap(0, 8)))
   }
 

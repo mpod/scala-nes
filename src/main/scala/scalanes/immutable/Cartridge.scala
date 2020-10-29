@@ -1,8 +1,6 @@
-package scalanes
+package scalanes.immutable
 
-import scalanes.mappers.Mapper000
-
-import scala.language.higherKinds
+import scalanes.immutable.mappers.Mapper000
 
 object Cartridge {
 
@@ -42,7 +40,7 @@ object Cartridge {
       .foldLeft(initial) { case (acc, (d, i)) =>
         acc.prgWrite(offset + i, d)
       }
-      .prgWrite(0xFFFC, offset & 0xFF)
-      .prgWrite(0xFFFD, (offset >> 8) & 0xFF)
+      .prgWrite(0xfffc, offset & 0xff)
+      .prgWrite(0xfffd, (offset >> 8) & 0xff)
 
 }

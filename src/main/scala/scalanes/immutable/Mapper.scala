@@ -1,4 +1,4 @@
-package scalanes
+package scalanes.immutable
 
 case class BankMap(offset: Int, sizeInKB: Int)
 
