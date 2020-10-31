@@ -41,22 +41,25 @@ object NesState {
 
   def reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
 
-  val clock: NesState => NesState =
-    nes => {
-      val cpuCycles = nes.cpuState.cycles
-      val nes1      = Cpu.clock(nes)
-      val ppuCycles = (nes1.cpuState.cycles - cpuCycles) * 3
-      (1L to ppuCycles).foldLeft(nes1) { case (nes, _) => Ppu.clock(nes) }
+  def clock(nes: NesState): NesState = {
+    val cpuCycles = nes.cpuState.cycles
+    val nes1      = Cpu.clock(nes)
+    var ppuCycles = (nes1.cpuState.cycles - cpuCycles) * 3
+    var nes2      = nes1
+    while (ppuCycles > 0) {
+      nes2 = Ppu.clock(nes2)
+      ppuCycles -= 1
     }
+    nes2
+  }
 
-  val executeFrame: NesState => NesState =
-    nes => {
-      val frame = nes.ppuState.frame
-      var nes1  = nes
-      while (nes1.ppuState.frame == frame)
-        nes1 = NesState.clock(nes1)
-      nes1
-    }
+  def executeFrame(nes: NesState): NesState = {
+    val frame = nes.ppuState.frame
+    var nes1  = nes
+    while (nes1.ppuState.frame == frame)
+      nes1 = NesState.clock(nes1)
+    nes1
+  }
 
   private def iNesDecoder(controllerRef: ControllerRef): Decoder[NesState] =
     for {

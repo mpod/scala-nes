@@ -36,6 +36,25 @@ object Console extends JFXApp {
   hSpacer.setPrefWidth(16)
   vSpacer.setPrefHeight(16)
 
+  def runNesImage2(file: Path): Unit = {
+    var frameStart = System.currentTimeMillis()
+    var nes = NesState
+      .fromFile[IO](file, controller)
+      .head
+      .map(NesState.reset)
+      .compile
+      .toList
+      .unsafeRunSync()
+      .head
+
+    while (true) {
+      nes = NesState.executeFrame(nes)
+      val diff = System.currentTimeMillis() - frameStart
+      println(s"Frame generated in $diff ms")
+      frameStart = System.currentTimeMillis()
+    }
+  }
+
   def runNesImage(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
     NesState
@@ -116,7 +135,7 @@ object Console extends JFXApp {
 
   val file: File = fileChooser.showOpenDialog(stage)
   if (file != null)
-    runNesImage(file.toPath)
+    runNesImage2(file.toPath)
   else
     System.exit(0)
 }

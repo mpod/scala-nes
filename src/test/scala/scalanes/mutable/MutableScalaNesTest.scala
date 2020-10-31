@@ -38,8 +38,11 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
       } yield loaded
     ).unsafeRunSync()
     decodedNesRom should have size 1
-    val initialNesState =
-      (NesState.reset andThen Cpu.setPc(0xc000))(decodedNesRom.head)
+    val initialNesState = {
+      val nes1 = decodedNesRom.head
+      val nes2 = NesState.reset(nes1)
+      Cpu.setPc(0xc000, nes2)
+    }
 
     var nesTestLog: List[String] = Stream
       .resource(Blocker[IO])
@@ -59,13 +62,14 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
       nesTestLog = nesTestLog.tail
     }
     if (nesTestLog.nonEmpty) {
-      val pc = hex(next.cpuState.pc, 4)
-      val op = Cpu.cpuRead(next.cpuState.pc).runA(next)
-      val a  = hex(next.cpuState.a, 2)
-      val x  = hex(next.cpuState.x, 2)
-      val y  = hex(next.cpuState.y, 2)
-      val p  = hex(next.cpuState.status, 2)
-      println(s"$pc  $op A:$a X:$x Y:$y P:$p   <-->   ${nesTestLog.head}")
+      val pc   = hex(next.cpuState.pc, 4)
+      val op   = hex(Cpu.cpuRead(next.cpuState.pc).runA(next), 2)
+      val a    = hex(next.cpuState.a, 2)
+      val x    = hex(next.cpuState.x, 2)
+      val y    = hex(next.cpuState.y, 2)
+      val p    = hex(next.cpuState.status, 2)
+      val stkp = hex(next.cpuState.stkp, 2)
+      println(s"$pc $op A:$a X:$x Y:$y P:$p SP: $stkp   <-->   ${nesTestLog.head}")
     }
     nesTestLog shouldBe empty
   }
