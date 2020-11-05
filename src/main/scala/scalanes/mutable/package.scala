@@ -100,6 +100,14 @@ package object mutable {
       s
     }
 
+  case class MLens[S, A](getter: S => A, setter: (S, A) => Unit) {
+    def get(s: S): A = getter(s)
+    def set(a: A, s: S): S = {
+      setter(s, a)
+      s
+    }
+  }
+
   def hex(n: Int, d: Int = 4): String =
     (d - 1 to 0 by -1).map(i => "0123456789ABCDEF" ((n >> (i * 4)) & 0xf)).mkString("")
 }

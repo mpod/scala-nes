@@ -41,7 +41,7 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
     val initialNesState = {
       val nes1 = decodedNesRom.head
       val nes2 = NesState.reset(nes1)
-      Cpu.setPc(0xc000, nes2)
+      Cpu.setPc(0xc000)(nes2)
     }
 
     var nesTestLog: List[String] = Stream

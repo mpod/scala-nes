@@ -44,9 +44,6 @@ class PpuState(
 )
 
 object PpuState {
-  val cycle: Lens[PpuState, Int]                   = lens(_.cycle, _.cycle_=)
-  val scanline: Lens[PpuState, Int]                = lens(_.scanline, _.scanline_=)
-  val frame: Lens[PpuState, Long]                  = lens(_.frame, _.frame_=)
   val nametables: Lens[PpuState, Vector[UInt8]]    = lens(_.nametables, _.nametables_=)
   val palettes: Lens[PpuState, Vector[UInt8]]      = lens(_.palettes, _.palettes_=)
   val ctrl: Lens[PpuState, UInt8]                  = lens(_.ctrl, _.ctrl_=)
@@ -306,6 +303,21 @@ object Ppu {
 
   private def liftS(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(NesState.ppuState.modify(f))
+
+  def setCycle(d: Int, nes: NesState): NesState = {
+    nes.ppuState.cycle = d
+    nes
+  }
+
+  def setScanline(d: Int, nes: NesState): NesState = {
+    nes.ppuState.scanline = d
+    nes
+  }
+
+  def setFrame(d: Long, nes: NesState): NesState = {
+    nes.ppuState.frame = d
+    nes
+  }
 
   val setVerticalBlank: NesState => NesState =
     lift(VerticalBlank.modify(VerticalBlank.On))
@@ -798,10 +810,9 @@ object Ppu {
       if (n >= 341 * 262) (0, 0, ppu.frame + 1)
       else if (n % 341 == 0) (0, ppu.scanline + 1, ppu.frame)
       else (ppu.cycle + 1, ppu.scanline, ppu.frame)
-    val ppu1 = PpuState.cycle.set(cycle)(ppu)
-    val ppu2 = PpuState.scanline.set(scanline)(ppu1)
-    val ppu3 = PpuState.frame.set(frame)(ppu2)
-    NesState.ppuState.set(ppu3)(nes)
+    val nes1 = setCycle(cycle, nes)
+    val nes2 = setScanline(scanline, nes1)
+    setFrame(frame, nes2)
   }
 
   def clock(nes: NesState): NesState = {
@@ -811,7 +822,7 @@ object Ppu {
     val isVisibleLine   = scanline < 240
     val isPreRenderLine = scanline == 261
     val isRenderLine    = isVisibleLine || isPreRenderLine
-    val isRendering     = true //RenderBackground.get(ppu) || RenderSprites.get(ppu)
+    val isRendering     = RenderBackground.get(ppu) || RenderSprites.get(ppu)
     val isPreFetchCycle = cycle >= 321 && cycle <= 336
     val isVisibleCycle  = cycle >= 1 && cycle <= 256
     val isFetchCycle    = isPreFetchCycle || isVisibleCycle
