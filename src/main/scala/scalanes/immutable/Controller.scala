@@ -7,7 +7,6 @@ import monocle.macros.GenLens
 case class ControllerState(ref: ControllerRef, controller1: UInt8, controller2: UInt8)
 
 object ControllerState {
-  val ref: Lens[ControllerState, ControllerRef] = GenLens[ControllerState](_.ref)
   val controller1: Lens[ControllerState, UInt8] = GenLens[ControllerState](_.controller1)
   val controller2: Lens[ControllerState, UInt8] = GenLens[ControllerState](_.controller2)
 

@@ -6,7 +6,6 @@ class ControllerState(var ref: ControllerRef) {
 }
 
 object ControllerState {
-  val ref: Setter[ControllerState, ControllerRef] = (a, s) => s.ref = a
   val controller1: Setter[ControllerState, UInt8] = (a, s) => s.controller1 = a
   val controller2: Setter[ControllerState, UInt8] = (a, s) => s.controller2 = a
 }

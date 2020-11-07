@@ -176,23 +176,25 @@ object Cpu extends LazyLogging {
   }
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
-    if (address >= 0x0000 && address <= 0x1fff) //RAM
+    if (address >= 0x0000 && address < 0x2000) //RAM
       NesState.ram.set(address, d)
-    else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
+    else if (address >= 0x2000 && address < 0x4000) // PPU registers
       Ppu.cpuWrite(0x2000 + (address & 0x7), d)
+    else if (address >= 0x4000 && address < 0x4014) // TODO: APU
+      identity[NesState]
     else if (address == 0x4014) // OAM DMA
       (nes: NesState) => {
         val delta = if ((nes.cpuState.cycles + 513) % 2 == 1) 513 + 1 else 513
         val nes1  = incCycles(delta, nes)
         Ppu.cpuWrite(address, d)(nes1)
       }
-    else if (address == 0x4015)
-      identity[NesState]                      // TODO: APU
+    else if (address == 0x4015) // TODO: APU
+      identity[NesState]
     else if (address == 0x4016 && (d & 0x01)) // Controller 1
       Controller.writeController1.runS
     else if (address == 0x4017 && (d & 0x01)) // Controller 2
       Controller.writeController2.runS
-    else if (address > 0x4000 && address <= 0x5fff)
+    else if (address < 0x6000)
       identity[NesState]
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
       Cartridge.cpuWrite(address, d).runS
