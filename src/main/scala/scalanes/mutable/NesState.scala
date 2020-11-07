@@ -47,6 +47,11 @@ object NesState {
     var nes2      = nes1
     while (ppuCycles > 0) {
       nes2 = Ppu.clock(nes2)
+      nes2 = if (nes2.ppuState.nmi) {
+        val ppu = Ppu.clearNmi(nes2.ppuState)
+        nes2 = NesState.ppuState.set(ppu)(nes2)
+        Cpu.nmi.runS(nes2)
+      } else nes2
       ppuCycles -= 1
     }
     nes2

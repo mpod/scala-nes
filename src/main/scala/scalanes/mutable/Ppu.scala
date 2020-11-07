@@ -38,6 +38,7 @@ class PpuState(
   var spritesInfo: Seq[SpriteInfo],
   // Other
   val canvas: Array[Int],
+  var nmi: Boolean,
   val mirroring: Mirroring
 )
 
@@ -66,28 +67,29 @@ object PpuState {
   val cycle: Setter[PpuState, Int]                   = (a, s) => s.cycle = a
   val scanline: Setter[PpuState, Int]                = (a, s) => s.scanline = a
   val frame: Setter[PpuState, Long]                  = (a, s) => s.frame = a
+  val nmi: Setter[PpuState, Boolean]                 = (a, s) => s.nmi = a
 
-  def flagNametable(ppu: PpuState): UInt3        = ppu.ctrl & (0x3 << 0)
-  def flagIncrement(ppu: PpuState): UInt1        = ppu.ctrl & (0x1 << 2)
-  def flagSpriteTable(ppu: PpuState): UInt1      = ppu.ctrl & (0x1 << 3)
-  def flagBackgroundTable(ppu: PpuState): UInt16 = ppu.ctrl & (0x1 << 4)
-  def flagSpriteSize(ppu: PpuState): UInt1       = ppu.ctrl & (0x1 << 5)
-  def flagMasterSlave(ppu: PpuState): UInt1      = ppu.ctrl & (0x1 << 6)
-  def flagNmi(ppu: PpuState): UInt1              = ppu.ctrl & (0x1 << 7)
+  def flagNametable(ppu: PpuState): UInt3        = (ppu.ctrl & (0x3 << 0)) >> 0
+  def flagIncrement(ppu: PpuState): UInt1        = (ppu.ctrl & (0x1 << 2)) >> 2
+  def flagSpriteTable(ppu: PpuState): UInt1      = (ppu.ctrl & (0x1 << 3)) >> 3
+  def flagBackgroundTable(ppu: PpuState): UInt16 = (ppu.ctrl & (0x1 << 4)) >> 4
+  def flagSpriteSize(ppu: PpuState): UInt1       = (ppu.ctrl & (0x1 << 5)) >> 5
+  def flagMasterSlave(ppu: PpuState): UInt1      = (ppu.ctrl & (0x1 << 6)) >> 6
+  def flagNmi(ppu: PpuState): UInt1              = (ppu.ctrl & (0x1 << 7)) >> 7
 
   val backgroundTables: Map[UInt1, UInt16] = Map(0 -> 0x0000, 1 -> 0x1000)
   val increments: Map[UInt1, Int]          = Map(0 -> 1, 1 -> 32)
   val spriteTables: Map[UInt1, UInt16]     = Map(0 -> 0x0000, 1 -> 0x1000)
   val spriteSizes: Map[UInt1, Int]         = Map(0 -> 8, 1 -> 16)
 
-  def flagGreyscale(ppu: PpuState): UInt1            = ppu.mask & (0x1 << 0)
-  def flagRenderBackgroundLeft(ppu: PpuState): UInt1 = ppu.mask & (0x1 << 1)
-  def flagRenderSpritesLeft(ppu: PpuState): UInt1    = ppu.mask & (0x1 << 2)
-  def flagRenderBackground(ppu: PpuState): UInt1     = ppu.mask & (0x1 << 3)
-  def flagRenderSprites(ppu: PpuState): UInt1        = ppu.mask & (0x1 << 4)
-  def flagEnhanceRed(ppu: PpuState): UInt1           = ppu.mask & (0x1 << 5)
-  def flagEnhanceGreen(ppu: PpuState): UInt1         = ppu.mask & (0x1 << 6)
-  def flagEnhanceBlue(ppu: PpuState): UInt1          = ppu.mask & (0x1 << 7)
+  def flagGreyscale(ppu: PpuState): UInt1            = (ppu.mask & (0x1 << 0)) >> 0
+  def flagRenderBackgroundLeft(ppu: PpuState): UInt1 = (ppu.mask & (0x1 << 1)) >> 1
+  def flagRenderSpritesLeft(ppu: PpuState): UInt1    = (ppu.mask & (0x1 << 2)) >> 2
+  def flagRenderBackground(ppu: PpuState): UInt1     = (ppu.mask & (0x1 << 3)) >> 3
+  def flagRenderSprites(ppu: PpuState): UInt1        = (ppu.mask & (0x1 << 4)) >> 4
+  def flagEnhanceRed(ppu: PpuState): UInt1           = (ppu.mask & (0x1 << 5)) >> 5
+  def flagEnhanceGreen(ppu: PpuState): UInt1         = (ppu.mask & (0x1 << 6)) >> 6
+  def flagEnhanceBlue(ppu: PpuState): UInt1          = (ppu.mask & (0x1 << 7)) >> 7
 
   def apply(mirroring: Mirroring): PpuState = new PpuState(
     cycle = 0,
@@ -115,6 +117,7 @@ object PpuState {
     oamAddress = 0x0000,
     spritesInfo = List.empty,
     canvas = Array.fill(2 * 256 * 2 * 240)(0),
+    nmi = false,
     mirroring = mirroring
   )
 }
@@ -215,23 +218,8 @@ object Ppu {
   private def liftS(f: PpuState => PpuState): State[NesState, Unit] =
     State.modify(lift(f))
 
-  def setCycle(d: Int, nes: NesState): NesState = {
-    nes.ppuState.cycle = d
-    nes
-  }
-
-  def setScanline(d: Int, nes: NesState): NesState = {
-    nes.ppuState.scanline = d
-    nes
-  }
-
-  def setFrame(d: Long, nes: NesState): NesState = {
-    nes.ppuState.frame = d
-    nes
-  }
-
   val setVerticalBlank: PpuState => PpuState =
-    ppu => PpuState.status.set(ppu.status | (0x1 << 6))(ppu)
+    ppu => PpuState.status.set(ppu.status | (0x1 << 7))(ppu)
 
   val clearVerticalBlank: PpuState => PpuState =
     ppu => PpuState.status.set(ppu.status & ~(0x1 << 7))(ppu)
@@ -250,6 +238,12 @@ object Ppu {
 
   val clearLoopyW: PpuState => PpuState =
     PpuState.w.set(0x0)
+
+  val setNmi: PpuState => PpuState =
+    ppu => PpuState.nmi.set(true)(ppu)
+
+  val clearNmi: PpuState => PpuState =
+    ppu => PpuState.nmi.set(false)(ppu)
 
   val incScrollX: NesState => NesState =
     lift { ppu =>
@@ -538,7 +532,7 @@ object Ppu {
   val readStatus: State[NesState, UInt8] =
     nes => {
       val d    = (nes.ppuState.status & 0xe0) | (nes.ppuState.bufferedData & 0x1f)
-      val nes1 = lift(clearLoopyW andThen clearVerticalBlank)(nes)
+      val nes1 = lift(clearLoopyW andThen clearVerticalBlank andThen clearNmi)(nes)
       (nes1, d)
     }
 
@@ -644,10 +638,10 @@ object Ppu {
         }
 
       val color = getColor(pixel, palette)(ppu)
-      ppu.canvas.update(y * 2 * 256 + x, color)
-      ppu.canvas.update(y * 2 * 256 + x + 1, color)
-      ppu.canvas.update((y + 1) * 2 * 256 + x, color)
-      ppu.canvas.update((y + 1) * 2 * 256 + x + 1, color)
+      ppu.canvas.update(2 * y * 2 * 256 + 2 * x, color)
+      ppu.canvas.update(2 * y * 2 * 256 + 2 * x + 1, color)
+      ppu.canvas.update((2 * y + 1) * 2 * 256 + 2 * x, color)
+      ppu.canvas.update((2 * y + 1) * 2 * 256 + 2 * x + 1, color)
 
       if (spriteZero)
         lift(setSpriteZeroHit)(nes)
@@ -761,6 +755,7 @@ object Ppu {
     val isPreFetchCycle = cycle >= 321 && cycle <= 336
     val isVisibleCycle  = cycle >= 1 && cycle <= 256
     val isFetchCycle    = isPreFetchCycle || isVisibleCycle
+    val nmiEnabled      = PpuState.flagNmi(ppu)
 
     // Render a pixel
     val pixel =
@@ -792,16 +787,16 @@ object Ppu {
 
     // vblank logic
     val vblank =
-      if (scanline == 241 && cycle == 1)
+      if (scanline == 241 && cycle == 1 && nmiEnabled)
+        lift(setVerticalBlank andThen setNmi)
+      else if (scanline == 241 && cycle == 1)
         lift(setVerticalBlank)
       else if (isPreRenderLine && cycle == 1)
-        lift(clearVerticalBlank andThen clearSpriteOverflow andThen clearSpriteZeroHit)
+        lift(clearVerticalBlank andThen clearSpriteOverflow andThen clearSpriteZeroHit andThen clearNmi)
       else
         noOp
 
-    // TODO: NMI!!!
-
-    (incCounters _ andThen pixel andThen background andThen sprite andThen vblank)(nes)
+    (pixel andThen background andThen sprite andThen vblank andThen incCounters)(nes)
   }
 
   def reset(nes: NesState): NesState = {

@@ -135,7 +135,7 @@ object Console extends JFXApp {
 
   val file: File = fileChooser.showOpenDialog(stage)
   if (file != null)
-    runNesImage2(file.toPath)
+    runNesImage(file.toPath)
   else
     System.exit(0)
 }
