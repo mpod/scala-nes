@@ -100,10 +100,10 @@ package object mutable {
       s
     }
 
-  case class MLens[S, A](getter: S => A, setter: (S, A) => Unit) {
-    def get(s: S): A = getter(s)
-    def set(a: A, s: S): S = {
-      setter(s, a)
+  abstract class Setter[S, A] {
+    protected def _set(a: A, s: S): Unit
+    def set(a: A)(s: S): S = {
+      _set(a, s)
       s
     }
   }
