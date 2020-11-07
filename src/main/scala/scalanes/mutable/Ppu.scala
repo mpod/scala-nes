@@ -1,11 +1,9 @@
 package scalanes.mutable
 
 import monocle.Lens
-import scalanes.mutable
 import scalanes.mutable.Mirroring.Mirroring
 import scalanes.mutable.SpritePriority.SpritePriority
 
-import scala.annotation.tailrec
 import scala.language.implicitConversions
 
 class PpuState(
@@ -47,9 +45,9 @@ class PpuState(
 object PpuState {
   val nametables: Lens[PpuState, Vector[UInt8]]      = lens(_.nametables, _.nametables_=)
   val palettes: Lens[PpuState, Vector[UInt8]]        = lens(_.palettes, _.palettes_=)
-  val ctrl: Lens[PpuState, UInt8]                    = lens(_.ctrl, _.ctrl_=)
-  val mask: Lens[PpuState, UInt8]                    = lens(_.mask, _.mask_=)
-  val status: Lens[PpuState, UInt8]                  = lens(_.status, _.status_=)
+  val ctrl: Setter[PpuState, UInt8]                  = (a: UInt8, s: PpuState) => s.ctrl = a
+  val mask: Setter[PpuState, UInt8]                  = (a: UInt8, s: PpuState) => s.mask = a
+  val status: Setter[PpuState, UInt8]                = (a: UInt8, s: PpuState) => s.status = a
   val bufferedData: Setter[PpuState, UInt8]          = (a: UInt8, s: PpuState) => s.bufferedData = a
   val v: Setter[PpuState, UInt15]                    = (a: UInt15, s: PpuState) => s.v = a
   val t: Setter[PpuState, UInt15]                    = (a: UInt15, s: PpuState) => s.t = a
@@ -69,6 +67,28 @@ object PpuState {
   val cycle: Setter[PpuState, Int]                   = (a: Int, s: PpuState) => s.cycle = a
   val scanline: Setter[PpuState, Int]                = (a: Int, s: PpuState) => s.scanline = a
   val frame: Setter[PpuState, Long]                  = (a: Long, s: PpuState) => s.frame = a
+
+  def flagNametable(ppu: PpuState): UInt3        = ppu.ctrl & (0x3 << 0)
+  def flagIncrement(ppu: PpuState): UInt1        = ppu.ctrl & (0x1 << 2)
+  def flagSpriteTable(ppu: PpuState): UInt1      = ppu.ctrl & (0x1 << 3)
+  def flagBackgroundTable(ppu: PpuState): UInt16 = ppu.ctrl & (0x1 << 4)
+  def flagSpriteSize(ppu: PpuState): UInt1       = ppu.ctrl & (0x1 << 5)
+  def flagMasterSlave(ppu: PpuState): UInt1      = ppu.ctrl & (0x1 << 6)
+  def flagNmi(ppu: PpuState): UInt1              = ppu.ctrl & (0x1 << 7)
+
+  val backgroundTables: Map[UInt1, UInt16] = Map(0 -> 0x0000, 1 -> 0x1000)
+  val increments: Map[UInt1, Int]          = Map(0 -> 1, 1 -> 32)
+  val spriteTables: Map[UInt1, UInt16]     = Map(0 -> 0x0000, 1 -> 0x1000)
+  val spriteSizes: Map[UInt1, Int]         = Map(0 -> 8, 1 -> 16)
+
+  def flagGreyscale(ppu: PpuState): UInt1            = ppu.mask & (0x1 << 0)
+  def flagRenderBackgroundLeft(ppu: PpuState): UInt1 = ppu.mask & (0x1 << 1)
+  def flagRenderSpritesLeft(ppu: PpuState): UInt1    = ppu.mask & (0x1 << 2)
+  def flagRenderBackground(ppu: PpuState): UInt1     = ppu.mask & (0x1 << 3)
+  def flagRenderSprites(ppu: PpuState): UInt1        = ppu.mask & (0x1 << 4)
+  def flagEnhanceRed(ppu: PpuState): UInt1           = ppu.mask & (0x1 << 5)
+  def flagEnhanceGreen(ppu: PpuState): UInt1         = ppu.mask & (0x1 << 6)
+  def flagEnhanceBlue(ppu: PpuState): UInt1          = ppu.mask & (0x1 << 7)
 
   def apply(mirroring: Mirroring): PpuState = new PpuState(
     cycle = 0,
@@ -98,121 +118,6 @@ object PpuState {
     canvas = Array.fill(2 * 256 * 2 * 240)(0),
     mirroring = mirroring
   )
-}
-
-abstract class RegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends Enumeration {
-  @tailrec
-  private def findPos(m: Int, p: Int): Int =
-    if ((m & 0x1) == 1) p
-    else if (m == 0) p
-    else findPos(m >> 1, p + 1)
-  val pos: Int                               = findPos(mask, 0)
-  def get(v: UInt8): Value                   = super.apply((v & mask) >> pos)
-  def get: PpuState => Value                 = ppu => get(lens.get(ppu))
-  def modify(v: Value): PpuState => PpuState = lens.modify(reg => (reg & ~mask) | ((v.id << pos) & mask))
-}
-
-abstract class BooleanRegFlag(mask: Int, lens: Lens[PpuState, UInt8]) extends RegFlag(mask, lens) {
-  implicit def valueToBoolean(x: Value): Boolean = x == On
-  val Off, On                                    = Value
-}
-
-// PPUCTRL flags
-object NametableAddress extends RegFlag(0x03, PpuState.ctrl) {
-  type NametableAddress = Val
-  protected case class Val(address: UInt16) extends super.Val
-  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val First: NametableAddress            = Val(0x2000)
-  val Second: NametableAddress           = Val(0x2400)
-  val Third: NametableAddress            = Val(0x2800)
-  val Fourth: NametableAddress           = Val(0x2c00)
-}
-
-object AddressIncrementMode extends RegFlag(0x1 << 2, PpuState.ctrl) {
-  type AddressIncrementMode = Val
-  protected case class Val(delta: Int) extends super.Val
-  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val Add1: AddressIncrementMode         = Val(1)
-  val Add32: AddressIncrementMode        = Val(32)
-}
-
-object SpriteTableAddress extends RegFlag(0x1 << 3, PpuState.ctrl) {
-  type SpriteTableAddress = Val
-  protected case class Val(address: UInt16) extends super.Val
-  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val First: SpriteTableAddress          = Val(0x0000)
-  val Second: SpriteTableAddress         = Val(0x1000)
-}
-
-object BackgroundTableAddress extends RegFlag(0x1 << 4, PpuState.ctrl) {
-  type BackgroundTableAddress = Val
-  protected case class Val(address: UInt16) extends super.Val
-  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val First: BackgroundTableAddress      = Val(0x0000)
-  val Second: BackgroundTableAddress     = Val(0x1000)
-}
-
-object SpriteSize extends RegFlag(0x1 << 5, PpuState.ctrl) {
-  type SpriteSize = Val
-  protected case class Val(height: Int) extends super.Val
-  implicit def valueToVal(x: Value): Val = x.asInstanceOf[Val]
-  val Small: SpriteSize                  = Val(8)
-  val Large: SpriteSize                  = Val(16)
-}
-
-object MasterSlaveMode extends RegFlag(0x1 << 6, PpuState.ctrl) {
-  type MasterSlaveMode = Value
-  val ReadBackdropFromExtPins, OutputColorOnExtPins = Value
-}
-
-object NmiMode extends BooleanRegFlag(0x1 << 7, PpuState.ctrl) {
-  type NmiMode = Value
-}
-
-// PPUMASK flags
-object Greyscale extends BooleanRegFlag(0x1, PpuState.mask) {
-  type Greyscale = Value
-}
-
-object RenderBackgroundLeft extends BooleanRegFlag(0x1 << 1, PpuState.mask) {
-  type RenderBackgroundLeft = Value
-}
-
-object RenderSpritesLeft extends BooleanRegFlag(0x1 << 2, PpuState.mask) {
-  type RenderSpritesLeft = Value
-}
-
-object RenderBackground extends BooleanRegFlag(0x1 << 3, PpuState.mask) {
-  type RenderBackground = Value
-}
-
-object RenderSprites extends BooleanRegFlag(0x1 << 4, PpuState.mask) {
-  type RenderSprites = Value
-}
-
-object EnhanceRed extends BooleanRegFlag(0x1 << 5, PpuState.mask) {
-  type EnhanceRed = Value
-}
-
-object EnhanceGreen extends BooleanRegFlag(0x1 << 6, PpuState.mask) {
-  type EnhanceGreen = Value
-}
-
-object EnhanceBlue extends BooleanRegFlag(0x1 << 7, PpuState.mask) {
-  type EnhanceBlue = Value
-}
-
-// PPUSTATUS flags
-object SpriteOverflow extends BooleanRegFlag(0x1 << 5, PpuState.status) {
-  type SpriteOverflow = Value
-}
-
-object SpriteZeroHit extends BooleanRegFlag(0x1 << 6, PpuState.status) {
-  type SpriteZeroHit = Value
-}
-
-object VerticalBlank extends BooleanRegFlag(0x1 << 7, PpuState.status) {
-  type VerticalBlank = Value
 }
 
 object Loopy {
@@ -323,23 +228,23 @@ object Ppu {
     nes
   }
 
-  val setVerticalBlank: NesState => NesState =
-    lift(VerticalBlank.modify(VerticalBlank.On))
+  val setVerticalBlank: PpuState => PpuState =
+    ppu => PpuState.status.set(ppu.status | (0x1 << 6))(ppu)
 
   val clearVerticalBlank: PpuState => PpuState =
-    VerticalBlank.modify(VerticalBlank.Off)
+    ppu => PpuState.status.set(ppu.status & ~(0x1 << 7))(ppu)
 
   val setSpriteZeroHit: PpuState => PpuState =
-    SpriteZeroHit.modify(SpriteZeroHit.On)
+    ppu => PpuState.status.set(ppu.status | (0x1 << 6))(ppu)
 
   val clearSpriteZeroHit: PpuState => PpuState =
-    SpriteZeroHit.modify(SpriteZeroHit.Off)
+    ppu => PpuState.status.set(ppu.status & ~(0x1 << 6))(ppu)
 
   val setSpriteOverflow: PpuState => PpuState =
-    SpriteOverflow.modify(SpriteOverflow.On)
+    ppu => PpuState.status.set(ppu.status | (0x1 << 5))(ppu)
 
   val clearSpriteOverflow: PpuState => PpuState =
-    SpriteOverflow.modify(SpriteOverflow.Off)
+    ppu => PpuState.status.set(ppu.status & ~(0x1 << 5))(ppu)
 
   val clearLoopyW: PpuState => PpuState =
     PpuState.w.set(0x0)
@@ -440,7 +345,7 @@ object Ppu {
   val fetchLowTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = BackgroundTableAddress.get(ppu).address
+      val backgroundTableAddress = PpuState.backgroundTables(PpuState.flagBackgroundTable(ppu))
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v)
       val (nes1, d)              = ppuRead(address).run(nes)
       lift(PpuState.nextTileLo.set(d))(nes1)
@@ -450,7 +355,7 @@ object Ppu {
   val fetchHighTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = BackgroundTableAddress.get(ppu).address
+      val backgroundTableAddress = PpuState.backgroundTables(PpuState.flagBackgroundTable(ppu))
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v) + 8
       val (nes1, d)              = ppuRead(address).run(nes)
       lift(PpuState.nextTileHi.set(d))(nes1)
@@ -493,7 +398,7 @@ object Ppu {
     require(pixel >= 0 && pixel < 4)
 
     val colorAddress =
-      if (RenderBackground.get(ppu))
+      if (PpuState.flagRenderBackground(ppu))
         0x3f00 + (palette << 2) + pixel
       else
         0x0000
@@ -507,7 +412,7 @@ object Ppu {
 
     val addr  = mapToPalettesIndex(address)
     val color = ppu.palettes(addr)
-    if (Greyscale.get(ppu)) color & 0x30
+    if (PpuState.flagGreyscale(ppu)) color & 0x30
     else color
   }
 
@@ -554,9 +459,11 @@ object Ppu {
   def writeCtrl(d: UInt8): NesState => NesState =
     nes => {
       // Set nametables select
-      val nametables = NametableAddress.get(d).id
-      val t          = (nes.ppuState.t & 0xf3ff) | (nametables << 10)
-      lift(PpuState.ctrl.set(d) andThen PpuState.t.set(t))(nes)
+      val ppu        = PpuState.ctrl.set(d)(nes.ppuState)
+      val nametables = PpuState.flagNametable(ppu)
+      val t          = (ppu.t & 0xf3ff) | (nametables << 10)
+      val ppu1       = PpuState.t.set(t)(ppu)
+      NesState.ppuState.set(ppu1)(nes)
     }
 
   def writeMask(d: UInt8): NesState => NesState =
@@ -611,7 +518,7 @@ object Ppu {
   def writeData(d: UInt8): NesState => NesState =
     nes => {
       val ppu   = nes.ppuState
-      val delta = AddressIncrementMode.get(ppu).delta
+      val delta = PpuState.increments(PpuState.flagIncrement(ppu))
       val nes1  = ppuWrite(ppu.v, d)(nes)
       val ppu1  = PpuState.v.set(ppu.v + delta)(ppu)
       NesState.ppuState.set(ppu1)(nes1)
@@ -657,7 +564,7 @@ object Ppu {
         result <- fetch
         (buffer, d) = result
         nes <- liftS(PpuState.bufferedData.set(buffer)).flatMap(_ => State.get)
-        delta = AddressIncrementMode.get(nes.ppuState).delta
+        delta = PpuState.increments(PpuState.flagIncrement(nes.ppuState))
         v     = nes.ppuState.v
         _ <- liftS(PpuState.v.set(v + delta))
       } yield d
@@ -702,7 +609,7 @@ object Ppu {
     ppu.spritesInfo
       .filter { s =>
         val offset = (ppu.cycle - 1) - s.x
-        RenderSprites.get(ppu) && offset >= 0 && offset < 8
+        PpuState.flagRenderSprites(ppu) && offset >= 0 && offset < 8
       }
       .map { s =>
         val bitMux  = 0x8000 >> ((ppu.cycle - 1) - s.x)
@@ -764,15 +671,15 @@ object Ppu {
     val flipHor    = attr & 0x40
     val flipVert   = attr & 0x80
     val priority   = SpritePriority((attr >> 5) & 0x1)
-    val spriteSize = SpriteSize.get(nes.ppuState.ctrl)
+    val spriteSize = PpuState.flagSpriteSize(nes.ppuState)
     val table =
-      if (spriteSize == SpriteSize.Small)
-        SpriteTableAddress.get(nes.ppuState).address
+      if (spriteSize == 0)
+        PpuState.spriteTables(PpuState.flagSpriteTable(nes.ppuState))
       else
         0x1000 * (tile & 0x1)
 
     val address =
-      if (spriteSize == SpriteSize.Small) {
+      if (spriteSize == 0) {
         // 8x8 mode
         table + tile * 16 + (if (flipVert) row else 7 - row)
       } else if (!flipVert & row < 8) {
@@ -807,7 +714,7 @@ object Ppu {
 
   val evaluateSprites: NesState => NesState =
     nes => {
-      val h        = SpriteSize.get(nes.ppuState).height
+      val h        = PpuState.spriteSizes(PpuState.flagSpriteSize(nes.ppuState))
       val scanline = nes.ppuState.scanline
       val oamData  = nes.ppuState.oamData
       val (nes1, spritesInfo) = (0 until 64)
@@ -848,7 +755,7 @@ object Ppu {
     val isVisibleLine   = scanline < 240
     val isPreRenderLine = scanline == 261
     val isRenderLine    = isVisibleLine || isPreRenderLine
-    val isRendering     = RenderBackground.get(ppu) || RenderSprites.get(ppu)
+    val isRendering     = PpuState.flagRenderBackground(ppu) || PpuState.flagRenderSprites(ppu)
     val isPreFetchCycle = cycle >= 321 && cycle <= 336
     val isVisibleCycle  = cycle >= 1 && cycle <= 256
     val isFetchCycle    = isPreFetchCycle || isVisibleCycle
@@ -884,7 +791,7 @@ object Ppu {
     // vblank logic
     val vblank =
       if (scanline == 241 && cycle == 1)
-        setVerticalBlank
+        lift(setVerticalBlank)
       else if (isPreRenderLine && cycle == 1)
         lift(clearVerticalBlank andThen clearSpriteOverflow andThen clearSpriteZeroHit)
       else
