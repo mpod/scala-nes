@@ -12,7 +12,7 @@ object Cartridge {
 
   implicit class CartridgeOps[A](val a: State[Cartridge, A]) extends AnyVal {
     def toNesState: State[NesState, A] = a.transformS(
-      NesState.cartridge.get,
+      nes => nes.cartridge,
       (nesState, cartridge) => NesState.cartridge.set(cartridge)(nesState)
     )
   }

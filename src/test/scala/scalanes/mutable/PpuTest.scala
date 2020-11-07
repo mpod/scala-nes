@@ -44,10 +44,4 @@ class PpuTest extends AnyFlatSpec with Matchers {
     (Loopy.setFineY(0x7) andThen Loopy.fineY)(0xabcd) shouldBe 0x7
   }
 
-  "Status register" should "extract vertical blank" in {
-    val ppu  = PpuState(Mirroring.Horizontal)
-    val ppu1 = PpuState.status.set(0xff)(ppu)
-    VerticalBlank.get(ppu1) shouldBe VerticalBlank.On
-    VerticalBlank.get(VerticalBlank.modify(VerticalBlank.Off)(ppu1)) shouldBe VerticalBlank.Off
-  }
 }

@@ -4,7 +4,6 @@ import java.nio.file.Path
 
 import cats.effect.{Blocker, ContextShift, Sync}
 import fs2.{io, Stream}
-import monocle.Lens
 import scalanes.mutable.Mirroring.Mirroring
 import scalanes.mutable.mappers.{Mapper000, Mapper001}
 import scodec.codecs.{conditional, fixedSizeBytes, ignore, uint8, vector}
@@ -22,11 +21,11 @@ class NesState(
 )
 
 object NesState {
-  val ram: Lens[NesState, Vector[UInt8]]               = lens(_.ram, _.ram_=)
-  val cpuState: Lens[NesState, CpuState]               = lens(_.cpuState, _.cpuState_=)
-  val ppuState: Lens[NesState, PpuState]               = lens(_.ppuState, _.ppuState_=)
-  val cartridge: Lens[NesState, Cartridge]             = lens(_.cartridge, _.cartridge_=)
-  val controllerState: Lens[NesState, ControllerState] = lens(_.controllerState, _.controllerState_=)
+  val ram: IndexSetter[NesState, UInt8]                  = (i, a, s) => s.ram = s.ram.updated(i, a)
+  val cpuState: Setter[NesState, CpuState]               = (a, s) => s.cpuState = a
+  val ppuState: Setter[NesState, PpuState]               = (a, s) => s.ppuState = a
+  val cartridge: Setter[NesState, Cartridge]             = (a, s) => s.cartridge = a
+  val controllerState: Setter[NesState, ControllerState] = (a, s) => s.controllerState = a
 
   def apply(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
     new NesState(

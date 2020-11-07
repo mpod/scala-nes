@@ -3,7 +3,6 @@ package scalanes
 import cats.Monad
 import cats.effect.IO
 import cats.effect.concurrent.Ref
-import monocle.Lens
 
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -94,16 +93,18 @@ package object mutable {
     }
   }
 
-  def lens[S, A](getter: S => A, setter: S => A => Unit): Lens[S, A] =
-    Lens.apply(getter) { a: A => s: S =>
-      setter(s)(a)
-      s
-    }
-
   abstract class Setter[S, A] {
     protected def _set(a: A, s: S): Unit
     def set(a: A)(s: S): S = {
       _set(a, s)
+      s
+    }
+  }
+
+  abstract class IndexSetter[S, A] {
+    protected def _set(i: Int, a: A, s: S): Unit
+    def set(i: Int, a: A)(s: S): S = {
+      _set(i, a, s)
       s
     }
   }

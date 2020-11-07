@@ -1,50 +1,54 @@
 package scalanes.mutable
 
-import monocle.Lens
-
 class ControllerState(var ref: ControllerRef) {
   var controller1: UInt8 = 0x00
   var controller2: UInt8 = 0x00
 }
 
 object ControllerState {
-  val ref: Lens[ControllerState, ControllerRef] = lens[ControllerState, ControllerRef](_.ref, _.ref_=)
-  val controller1: Lens[ControllerState, UInt8] = lens[ControllerState, UInt8](_.controller1, _.controller1_=)
-  val controller2: Lens[ControllerState, UInt8] = lens[ControllerState, UInt8](_.controller2, _.controller2_=)
+  val ref: Setter[ControllerState, ControllerRef] = (a, s) => s.ref = a
+  val controller1: Setter[ControllerState, UInt8] = (a, s) => s.controller1 = a
+  val controller2: Setter[ControllerState, UInt8] = (a, s) => s.controller2 = a
 }
 
 object Controller {
 
-  def serialReadController1: State[NesState, UInt8] = State { ns =>
-    val c      = ns.controllerState
-    val bit    = (c.controller1 & 0x80) >> 7
-    val update = (NesState.controllerState composeLens ControllerState.controller1).modify(a => (a << 1) & 0xff)
-    (update(ns), bit)
+  def serialReadController1: State[NesState, UInt8] = State { nes =>
+    val c    = nes.controllerState
+    val bit  = (c.controller1 & 0x80) >> 7
+    val c1   = ControllerState.controller1.set((nes.controllerState.controller1 << 1) & 0xff)(c)
+    val nes1 = NesState.controllerState.set(c1)(nes)
+    (nes1, bit)
   }
 
-  def serialReadController2: State[NesState, UInt8] = State { ns =>
-    val c      = ns.controllerState
-    val bit    = (c.controller2 & 0x80) >> 7
-    val update = (NesState.controllerState composeLens ControllerState.controller2).modify(a => (a << 1) & 0xff)
-    (update(ns), bit)
+  def serialReadController2: State[NesState, UInt8] = State { nes =>
+    val c    = nes.controllerState
+    val bit  = (c.controller2 & 0x80) >> 7
+    val c1   = ControllerState.controller2.set((nes.controllerState.controller2 << 1) & 0xff)(c)
+    val nes1 = NesState.controllerState.set(c1)(nes)
+    (nes1, bit)
   }
 
-  def writeController1: State[NesState, Unit] = State { ns =>
-    ns.controllerState.ref
+  def writeController1: State[NesState, Unit] = State { nes =>
+    nes.controllerState.ref
       .getAndSet(0x00)
       .map { a =>
-        val update = (NesState.controllerState composeLens ControllerState.controller1).set(a)
-        (update(ns), ())
+        val c    = nes.controllerState
+        val c1   = ControllerState.controller1.set(a)(c)
+        val nes1 = NesState.controllerState.set(c1)(nes)
+        (nes1, ())
       }
       .unsafeRunSync()
   }
 
-  def writeController2: State[NesState, Unit] = State { ns =>
-    ns.controllerState.ref
+  def writeController2: State[NesState, Unit] = State { nes =>
+    nes.controllerState.ref
       .getAndSet(0x00)
       .map { a =>
-        val update = (NesState.controllerState composeLens ControllerState.controller2).set(a)
-        (update(ns), ())
+        val c    = nes.controllerState
+        val c1   = ControllerState.controller2.set(a)(c)
+        val nes1 = NesState.controllerState.set(c1)(nes)
+        (nes1, ())
       }
       .unsafeRunSync()
   }
