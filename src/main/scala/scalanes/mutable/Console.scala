@@ -2,6 +2,7 @@ package scalanes.mutable
 
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 
 import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, IO, Timer}
@@ -25,8 +26,8 @@ object Console extends JFXApp {
   implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
   implicit val timer: Timer[IO]               = IO.timer(ExecutionContext.global)
 
-  val controller: Ref[IO, UInt8] = Ref.of[IO, UInt8](0x00).unsafeRunSync()
-  val screenCanvas: Canvas       = new Canvas(256 * 2, 240 * 2)
+  val controllerRef: ControllerRef = new AtomicInteger(0)
+  val screenCanvas: Canvas         = new Canvas(256 * 2, 240 * 2)
   val fileChooser: FileChooser = new FileChooser {
     title = "Select NES image"
   }
@@ -39,7 +40,7 @@ object Console extends JFXApp {
   def runNesImage2(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
     var nes = NesState
-      .fromFile[IO](file, controller)
+      .fromFile[IO](file, controllerRef)
       .head
       .map(NesState.reset)
       .compile
@@ -58,7 +59,7 @@ object Console extends JFXApp {
   def runNesImage(file: Path): Unit = {
     var frameStart = System.currentTimeMillis()
     NesState
-      .fromFile[IO](file, controller)
+      .fromFile[IO](file, controllerRef)
       .head
       .map(NesState.reset)
       .flatMap { initial =>
@@ -96,21 +97,21 @@ object Console extends JFXApp {
       onKeyPressed = { event =>
         event.getCode match {
           case KeyCode.X =>
-            controller.modify(x => (x | 0x80, x)).unsafeRunSync() // A
+            controllerRef.getAndUpdate(_ | 0x80) // A
           case KeyCode.Z =>
-            controller.modify(x => (x | 0x40, x)).unsafeRunSync() // B
+            controllerRef.getAndUpdate(_ | 0x40) // B
           case KeyCode.A =>
-            controller.modify(x => (x | 0x20, x)).unsafeRunSync() // Select
+            controllerRef.getAndUpdate(_ | 0x20) // Select
           case KeyCode.S =>
-            controller.modify(x => (x | 0x10, x)).unsafeRunSync() // Start
+            controllerRef.getAndUpdate(_ | 0x10) // Start
           case KeyCode.UP =>
-            controller.modify(x => (x | 0x08, x)).unsafeRunSync() // Up
+            controllerRef.getAndUpdate(_ | 0x08) // Up
           case KeyCode.DOWN =>
-            controller.modify(x => (x | 0x04, x)).unsafeRunSync() // Down
+            controllerRef.getAndUpdate(_ | 0x04) // Down
           case KeyCode.LEFT =>
-            controller.modify(x => (x | 0x02, x)).unsafeRunSync() // Left
+            controllerRef.getAndUpdate(_ | 0x02) // Left
           case KeyCode.RIGHT =>
-            controller.modify(x => (x | 0x01, x)).unsafeRunSync() // Right
+            controllerRef.getAndUpdate(_ | 0x01) // Right
           case _ =>
         }
       }

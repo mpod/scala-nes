@@ -1,6 +1,6 @@
 package scalanes.mutable
 
-class ControllerState(var ref: ControllerRef) {
+class ControllerState(val ref: ControllerRef) {
   var controller1: UInt8 = 0x00
   var controller2: UInt8 = 0x00
 }
@@ -12,44 +12,38 @@ object ControllerState {
 
 object Controller {
 
-  def serialReadController1: State[NesState, UInt8] = State { nes =>
-    val c    = nes.controllerState
-    val bit  = (c.controller1 & 0x80) >> 7
-    val c1   = ControllerState.controller1.set((nes.controllerState.controller1 << 1) & 0xff)(c)
-    val nes1 = NesState.controllerState.set(c1)(nes)
-    (nes1, bit)
-  }
+  val serialReadController1: State[NesState, UInt8] =
+    nes => {
+      val c    = nes.controllerState
+      val bit  = (c.controller1 & 0x80) >> 7
+      val ctrl = ControllerState.controller1.set((c.controller1 << 1) & 0xff)(c)
+      val nes1 = NesState.controllerState.set(ctrl)(nes)
+      (nes1, bit)
+    }
 
-  def serialReadController2: State[NesState, UInt8] = State { nes =>
-    val c    = nes.controllerState
-    val bit  = (c.controller2 & 0x80) >> 7
-    val c1   = ControllerState.controller2.set((nes.controllerState.controller2 << 1) & 0xff)(c)
-    val nes1 = NesState.controllerState.set(c1)(nes)
-    (nes1, bit)
-  }
+  val serialReadController2: State[NesState, UInt8] =
+    nes => {
+      val c    = nes.controllerState
+      val bit  = (c.controller2 & 0x80) >> 7
+      val ctrl = ControllerState.controller2.set((c.controller2 << 1) & 0xff)(c)
+      val nes1 = NesState.controllerState.set(ctrl)(nes)
+      (nes1, bit)
+    }
 
-  def writeController1: State[NesState, Unit] = State { nes =>
-    nes.controllerState.ref
-      .getAndSet(0x00)
-      .map { a =>
-        val c    = nes.controllerState
-        val c1   = ControllerState.controller1.set(a)(c)
-        val nes1 = NesState.controllerState.set(c1)(nes)
-        (nes1, ())
-      }
-      .unsafeRunSync()
-  }
+  val writeController1: State[NesState, Unit] =
+    nes => {
+      val buttonStates = nes.controllerState.ref.getAndSet(0x00)
+      val ctrl         = ControllerState.controller1.set(buttonStates)(nes.controllerState)
+      val nes1         = NesState.controllerState.set(ctrl)(nes)
+      (nes1, ())
+    }
 
-  def writeController2: State[NesState, Unit] = State { nes =>
-    nes.controllerState.ref
-      .getAndSet(0x00)
-      .map { a =>
-        val c    = nes.controllerState
-        val c1   = ControllerState.controller2.set(a)(c)
-        val nes1 = NesState.controllerState.set(c1)(nes)
-        (nes1, ())
-      }
-      .unsafeRunSync()
-  }
+  val writeController2: State[NesState, Unit] =
+    nes => {
+      val buttonStates = nes.controllerState.ref.getAndSet(0x00)
+      val ctrl         = ControllerState.controller2.set(buttonStates)(nes.controllerState)
+      val nes1         = NesState.controllerState.set(ctrl)(nes)
+      (nes1, ())
+    }
 
 }

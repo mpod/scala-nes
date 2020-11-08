@@ -1,6 +1,7 @@
 package scalanes.mutable
 
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicInteger
 
 import cats.effect.concurrent.Ref
 import cats.effect.{Blocker, ContextShift, IO}
@@ -31,12 +32,8 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
     val nestestRom = Paths.get(getClass.getResource("/nestest.nes").toURI)
     val nestestLog = Paths.get(getClass.getResource("/nestest.log").toURI)
 
-    val decodedNesRom = (
-      for {
-        controller <- Ref.of[IO, UInt8](0x00)
-        loaded     <- NesState.fromFile[IO](nestestRom, controller).compile.toList
-      } yield loaded
-    ).unsafeRunSync()
+    val controllerRef = new AtomicInteger(0x00)
+    val decodedNesRom = NesState.fromFile[IO](nestestRom, controllerRef).compile.toList.unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState = {
       val nes1 = decodedNesRom.head
