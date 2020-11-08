@@ -77,10 +77,8 @@ object PpuState {
   def flagMasterSlave(ppu: PpuState): UInt1      = (ppu.ctrl & (0x1 << 6)) >> 6
   def flagNmi(ppu: PpuState): UInt1              = (ppu.ctrl & (0x1 << 7)) >> 7
 
-  val backgroundTables: Map[UInt1, UInt16] = Map(0 -> 0x0000, 1 -> 0x1000)
-  val increments: Map[UInt1, Int]          = Map(0 -> 1, 1 -> 32)
-  val spriteTables: Map[UInt1, UInt16]     = Map(0 -> 0x0000, 1 -> 0x1000)
-  val spriteSizes: Map[UInt1, Int]         = Map(0 -> 8, 1 -> 16)
+  val increments: Map[UInt1, Int]  = Map(0 -> 1, 1 -> 32)
+  val spriteSizes: Map[UInt1, Int] = Map(0 -> 8, 1 -> 16)
 
   def flagGreyscale(ppu: PpuState): UInt1            = (ppu.mask & (0x1 << 0)) >> 0
   def flagRenderBackgroundLeft(ppu: PpuState): UInt1 = (ppu.mask & (0x1 << 1)) >> 1
@@ -298,24 +296,26 @@ object Ppu {
     lift { ppu =>
       val shifterPatternLo = (ppu.shifterPatternLo & 0xff00) | ppu.nextTileLo
       val shifterPatternHi = (ppu.shifterPatternHi & 0xff00) | ppu.nextTileHi
-      val shifterAttrLo    = (ppu.shifterPatternLo & 0xff00) | (if (ppu.nextTileAttr & 0x01) 0xff else 0x00)
-      val shifterAttrHi    = (ppu.shifterPatternHi & 0xff00) | (if (ppu.nextTileAttr & 0x02) 0xff else 0x00)
+      val shifterAttrLo    = (ppu.shifterAttrLo & 0xff00) | (if (ppu.nextTileAttr & 0x01) 0xff else 0x00)
+      val shifterAttrHi    = (ppu.shifterAttrHi & 0xff00) | (if (ppu.nextTileAttr & 0x02) 0xff else 0x00)
       val ppu1             = PpuState.shifterPatternLo.set(shifterPatternLo)(ppu)
       val ppu2             = PpuState.shifterPatternHi.set(shifterPatternHi)(ppu1)
       val ppu3             = PpuState.shifterAttrLo.set(shifterAttrLo)(ppu2)
-      PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
+      val ppu4             = PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
+      ppu4
     }
 
   val updateShifters: NesState => NesState =
     lift { ppu =>
       val shifterPatternLo = ppu.shifterPatternLo << 1
       val shifterPatternHi = ppu.shifterPatternHi << 1
-      val shifterAttrLo    = ppu.shifterPatternLo << 1
-      val shifterAttrHi    = ppu.shifterPatternHi << 1
+      val shifterAttrLo    = ppu.shifterAttrLo << 1
+      val shifterAttrHi    = ppu.shifterAttrHi << 1
       val ppu1             = PpuState.shifterPatternLo.set(shifterPatternLo)(ppu)
       val ppu2             = PpuState.shifterPatternHi.set(shifterPatternHi)(ppu1)
       val ppu3             = PpuState.shifterAttrLo.set(shifterAttrLo)(ppu2)
-      PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
+      val ppu4             = PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
+      ppu4
     }
 
   // TODO: docs
@@ -341,7 +341,7 @@ object Ppu {
   val fetchLowTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = PpuState.backgroundTables(PpuState.flagBackgroundTable(ppu))
+      val backgroundTableAddress = PpuState.flagBackgroundTable(ppu)
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v)
       val (nes1, d)              = ppuRead(address).run(nes)
       lift(PpuState.nextTileLo.set(d))(nes1)
@@ -351,7 +351,7 @@ object Ppu {
   val fetchHighTileByte: NesState => NesState =
     nes => {
       val ppu                    = nes.ppuState
-      val backgroundTableAddress = PpuState.backgroundTables(PpuState.flagBackgroundTable(ppu))
+      val backgroundTableAddress = PpuState.flagBackgroundTable(ppu)
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v) + 8
       val (nes1, d)              = ppuRead(address).run(nes)
       lift(PpuState.nextTileHi.set(d))(nes1)
@@ -437,7 +437,7 @@ object Ppu {
   }
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState = {
-    require(address >= 0x2000 && address <= 0x3fff)
+    require((address >= 0x2000 && address <= 0x3fff) || address == 0x4014, f"Invalid address $address%#04x")
     require((d & 0xff) == d)
     address match {
       case 0x2000 => writeCtrl(d)
@@ -567,7 +567,7 @@ object Ppu {
     }
 
   def ppuRead(address: UInt16): State[NesState, UInt8] = {
-    require((address & 0x3fff) == address)
+    require((address & 0x3fff) == address, f"Invalid address $address%#04x")
 
     if (address >= 0x0000 && address <= 0x1fff)
       Cartridge.ppuRead(address) // Patterns
@@ -593,7 +593,7 @@ object Ppu {
     val pixel1    = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
     val bgPixel   = (pixel1 << 1) | pixel0
     val palette0  = if (ppu.shifterAttrLo & bitMux) 0x1 else 0x0
-    val palette1  = if (ppu.shifterPatternHi & bitMux) 0x1 else 0x0
+    val palette1  = if (ppu.shifterAttrHi & bitMux) 0x1 else 0x0
     val bgPalette = (palette1 << 1) | palette0
     if (bgPixel != 0)
       Option((bgPixel, bgPalette))
@@ -608,7 +608,8 @@ object Ppu {
         PpuState.flagRenderSprites(ppu) && offset >= 0 && offset < 8
       }
       .map { s =>
-        val bitMux  = 0x8000 >> ((ppu.cycle - 1) - s.x)
+        val offset  = (ppu.cycle - 1) - s.x
+        val bitMux  = 0x80 >> offset
         val pixel0  = if (s.spriteLo & bitMux) 0x1 else 0x0
         val pixel1  = if (s.spriteHi & bitMux) 0x1 else 0x0
         val fgPixel = (pixel1 << 1) | pixel0
@@ -663,21 +664,24 @@ object Ppu {
     val attr       = oamData(i * 4 + 2)
     val x          = oamData(i * 4 + 3)
     val row        = nes.ppuState.scanline - y
-    val palette    = attr & 0x03 + 0x04 // Sprite palettes are the later 4 in the palette memory
+    val palette    = (attr & 0x03) + 0x04 // Sprite palettes are the later 4 in the palette memory
     val flipHor    = attr & 0x40
     val flipVert   = attr & 0x80
     val priority   = SpritePriority((attr >> 5) & 0x1)
     val spriteSize = PpuState.flagSpriteSize(nes.ppuState)
     val table =
       if (spriteSize == 0)
-        PpuState.spriteTables(PpuState.flagSpriteTable(nes.ppuState))
+        PpuState.flagSpriteTable(nes.ppuState) << 12
       else
         0x1000 * (tile & 0x1)
 
     val address =
-      if (spriteSize == 0) {
-        // 8x8 mode
-        table + tile * 16 + (if (flipVert) row else 7 - row)
+      if (spriteSize == 0 && !flipVert) {
+        // 8x8 mode, no vertical flip
+        table + tile * 16 + row
+      } else if (spriteSize == 0) {
+        // 8x8 mode, vertical flip
+        table + tile * 16 + (7 - row)
       } else if (!flipVert & row < 8) {
         // 8x16 mode, no vertical flip, top half tile
         table + tile * 16 + row
