@@ -1,142 +1,99 @@
 package scalanes.mutable
-
-import java.io.File
+import java.awt._
+import java.awt.event.{KeyEvent, KeyListener, WindowAdapter, WindowEvent}
+import java.awt.image.BufferedImage
 import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicInteger
 
-import cats.effect.concurrent.Ref
-import cats.effect.{ContextShift, IO, Timer}
+import cats.effect.{Effect, ExitCode, IO, IOApp}
 import fs2.Stream
-import javafx.scene.input.KeyCode
-import scalafx.application.JFXApp
-import scalafx.application.JFXApp.PrimaryStage
-import scalafx.geometry.Pos
-import scalafx.scene.Scene
-import scalafx.scene.canvas.Canvas
-import scalafx.scene.image.PixelFormat
-import scalafx.scene.layout.{Region, VBox}
-import scalafx.scene.text.Text
-import scalafx.stage.FileChooser
+import fs2.concurrent.SignallingRef
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.DurationInt
 import scala.language.higherKinds
 
-object Console extends JFXApp {
-
-  implicit val contextShift: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-  implicit val timer: Timer[IO]               = IO.timer(ExecutionContext.global)
-
-  val controllerRef: ControllerRef = new AtomicInteger(0)
-  val screenCanvas: Canvas         = new Canvas(256 * 2, 240 * 2)
-  val fileChooser: FileChooser = new FileChooser {
-    title = "Select NES image"
-  }
-  val hSpacer = new Region
-  val vSpacer = new Region
-
-  hSpacer.setPrefWidth(16)
-  vSpacer.setPrefHeight(16)
-
-  def runNesImage2(file: Path): Unit = {
-    var frameStart = System.currentTimeMillis()
-    var nes = NesState
-      .fromFile[IO](file, controllerRef)
-      .head
-      .map(NesState.reset)
-      .compile
-      .toList
-      .unsafeRunSync()
-      .head
-
-    while (true) {
-      nes = NesState.executeFrame(nes)
-      val diff = System.currentTimeMillis() - frameStart
-      println(s"Frame generated in $diff ms")
-      frameStart = System.currentTimeMillis()
-    }
-  }
-
-  def runNesImage(file: Path): Unit = {
-    var frameStart = System.currentTimeMillis()
-    NesState
-      .fromFile[IO](file, controllerRef)
-      .head
-      .map(NesState.reset)
-      .flatMap { initial =>
-        Stream.unfoldEval(initial) { s =>
-          val next = NesState.executeFrame(s)
-          IO(Option(next, next))
-        }
+class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boolean])(implicit F: Effect[F]) {
+  def start: Stream[F, Array[Int] => Unit] =
+    Stream.eval(F.delay {
+      val width  = 2 * 256
+      val height = 2 * 240
+      val frame  = new Frame("ScalNES Console")
+      frame.setSize(width, height)
+      frame.setLayout(new BorderLayout())
+      var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+      val canvas: Canvas = new Canvas {
+        setSize(width, height)
+        setBackground(Color.WHITE)
+        override def paint(g: Graphics): Unit  = render(g)
+        override def update(g: Graphics): Unit = render(g)
+        private def render(g: Graphics): Unit  = g.asInstanceOf[Graphics2D].drawImage(bufferedImage, 0, 0, null)
       }
-      .parEvalMap(1) { next =>
-        IO {
-          drawScreen(next, screenCanvas)
-          val diff = System.currentTimeMillis() - frameStart
-          println(s"Frame generated in $diff ms")
-          frameStart = System.currentTimeMillis()
-          next
+      frame.add(canvas)
+      frame.addWindowListener(new WindowAdapter() {
+        override def windowClosing(we: WindowEvent): Unit = {
+          F.runAsync(interrupter.set(true))(_ => IO.unit).unsafeRunSync()
+          frame.dispose()
         }
+      })
+      frame.addKeyListener(new KeyListener {
+        override def keyTyped(keyEvent: KeyEvent): Unit = ()
+        override def keyPressed(keyEvent: KeyEvent): Unit =
+          F.runAsync {
+            keyEvent.getKeyCode match {
+              case KeyEvent.VK_X =>
+                buttons.modify(x => (x | 0x80, x)) // A
+              case KeyEvent.VK_Z =>
+                buttons.modify(x => (x | 0x40, x)) // B
+              case KeyEvent.VK_A =>
+                buttons.modify(x => (x | 0x20, x)) // Select
+              case KeyEvent.VK_S =>
+                buttons.modify(x => (x | 0x10, x)) // Start
+              case KeyEvent.VK_UP =>
+                buttons.modify(x => (x | 0x08, x)) // Up
+              case KeyEvent.VK_DOWN =>
+                buttons.modify(x => (x | 0x04, x)) // Down
+              case KeyEvent.VK_LEFT =>
+                buttons.modify(x => (x | 0x02, x)) // Left
+              case KeyEvent.VK_RIGHT =>
+                buttons.modify(x => (x | 0x01, x)) // Right
+              case _ =>
+                F.pure(0)
+            }
+          }(_ => IO.unit)
+            .unsafeRunSync()
+        override def keyReleased(keyEvent: KeyEvent): Unit = ()
+      })
+      frame.setVisible(true)
+      (rgbs: Array[Int]) => {
+        val newBufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        newBufferedImage.setRGB(0, 0, width, height, rgbs, 0, 0)
+        bufferedImage = newBufferedImage
+        canvas.repaint()
       }
-      .drain
-      .compile
-      .toVector
-      .unsafeRunAsyncAndForget()
-  }
+    })
+}
 
-  def drawScreen(nesState: NesState, canvas: Canvas): Unit = {
-    val gc          = canvas.graphicsContext2D
-    val pw          = gc.pixelWriter
-    val pixelFormat = PixelFormat.getIntArgbInstance
-    val pixelArray  = nesState.ppuState.canvas
-    pw.setPixels(0, 0, 256 * 2, 240 * 2, pixelFormat, pixelArray, 0, 256 * 2)
-  }
-
-  stage = new PrimaryStage {
-    title = "ScalaNES console"
-    scene = new Scene(256 * 2, 240 * 2 + 4 * 12) {
-      onKeyPressed = { event =>
-        event.getCode match {
-          case KeyCode.X =>
-            controllerRef.getAndUpdate(_ | 0x80) // A
-          case KeyCode.Z =>
-            controllerRef.getAndUpdate(_ | 0x40) // B
-          case KeyCode.A =>
-            controllerRef.getAndUpdate(_ | 0x20) // Select
-          case KeyCode.S =>
-            controllerRef.getAndUpdate(_ | 0x10) // Start
-          case KeyCode.UP =>
-            controllerRef.getAndUpdate(_ | 0x08) // Up
-          case KeyCode.DOWN =>
-            controllerRef.getAndUpdate(_ | 0x04) // Down
-          case KeyCode.LEFT =>
-            controllerRef.getAndUpdate(_ | 0x02) // Left
-          case KeyCode.RIGHT =>
-            controllerRef.getAndUpdate(_ | 0x01) // Right
-          case _ =>
-        }
-      }
-      root = new VBox {
-        alignment = Pos.Center
-        style = """-fx-font-size: 12px;
-                  |-fx-font-family: monospace;
-                  |""".stripMargin
-        children = Seq(
-          screenCanvas,
-          new Text {
-            text = """X - A                       Up
-                     |Z - B                Left        Right
-                     |A - Select                 Down
-                     |S - Start
-                     |""".stripMargin
+object Console extends IOApp {
+  override def run(args: scala.List[String]): IO[ExitCode] = {
+    val stream: Stream[IO, Unit] = for {
+      buttons     <- Stream.eval(SignallingRef[IO, Int](0))
+      interrupter <- Stream.eval(SignallingRef[IO, Boolean](false))
+      imagePath = args.head
+      ui        = new UI[IO](buttons, interrupter)
+      updateRgbs <- ui.start
+      _ <- NesState
+        .fromFile[IO](Path.of(imagePath))
+        .head
+        .map(NesState.reset)
+        .flatMap { initial =>
+          Stream.unfoldEval(initial) { nes =>
+            buttons.get.map(b => NesState.setButtons(b)(nes)).map(NesState.executeFrame).map(nes => Option(nes, nes))
           }
-        )
-      }
-    }
+        }
+        .evalMap(nes => IO.delay(updateRgbs(nes.ppuState.canvas)))
+        .evalMap(_ => buttons.get.flatMap(b => IO(if (b != 0) println(b))).flatMap(_ => buttons.set(0)))
+        .metered(16.milliseconds)
+        .interruptWhen(interrupter)
+    } yield ()
+    stream.compile.drain.as(ExitCode.Success)
   }
-
-  val file: File = fileChooser.showOpenDialog(stage)
-  if (file != null)
-    runNesImage(file.toPath)
-  else
-    System.exit(0)
 }
