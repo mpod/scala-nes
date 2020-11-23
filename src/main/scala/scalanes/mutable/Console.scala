@@ -83,7 +83,7 @@ object Console extends IOApp {
       interrupter <- Stream.eval(SignallingRef[IO, Boolean](false))
       imagePath = args.head
       ui        = new UI[IO](buttons, interrupter)
-      updateRgbs <- ui.start
+      updateCanvas <- ui.start
       _ <- NesState
         .fromFile[IO](Path.of(imagePath))
         .head
@@ -93,7 +93,7 @@ object Console extends IOApp {
             buttons.get
               .map(b => NesState.setButtons(b)(nes))
               .map { nes =>
-                updateRgbs(nes.ppuState.canvas)
+                updateCanvas(nes.ppuState.canvas)
                 val next = NesState.executeFrame(nes)
                 Option(next, next)
               }
