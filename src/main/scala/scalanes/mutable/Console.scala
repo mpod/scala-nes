@@ -63,11 +63,15 @@ class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boo
         override def keyReleased(keyEvent: KeyEvent): Unit = ()
       })
       frame.setVisible(true)
+      var frameStart = System.currentTimeMillis()
       (rgbs: Array[Int]) => {
         val newBufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-        newBufferedImage.setRGB(0, 0, width, height, rgbs, 0, 0)
+        newBufferedImage.setRGB(0, 0, width, height, rgbs, 0, width)
         bufferedImage = newBufferedImage
         canvas.repaint()
+        val diff = System.currentTimeMillis() - frameStart
+        println(s"Frame generated in $diff ms")
+        frameStart = System.currentTimeMillis()
       }
     })
 }
@@ -86,11 +90,15 @@ object Console extends IOApp {
         .map(NesState.reset)
         .flatMap { initial =>
           Stream.unfoldEval(initial) { nes =>
-            buttons.get.map(b => NesState.setButtons(b)(nes)).map(NesState.executeFrame).map(nes => Option(nes, nes))
+            buttons.get
+              .map(b => NesState.setButtons(b)(nes))
+              .map { nes =>
+                updateRgbs(nes.ppuState.canvas)
+                val next = NesState.executeFrame(nes)
+                Option(next, next)
+              }
           }
         }
-        .evalMap(nes => IO.delay(updateRgbs(nes.ppuState.canvas)))
-        .evalMap(_ => buttons.get.flatMap(b => IO(if (b != 0) println(b))).flatMap(_ => buttons.set(0)))
         .metered(16.milliseconds)
         .interruptWhen(interrupter)
     } yield ()

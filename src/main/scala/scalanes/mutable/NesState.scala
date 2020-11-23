@@ -43,7 +43,7 @@ object NesState {
 
   def dummy: State[NesState, NesState] = State.get
 
-  def reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
+  val reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
 
   def clock(nes: NesState): NesState = {
     val cpuCycles = nes.cpuState.cycles
