@@ -27,18 +27,23 @@ object NesState {
   val cartridge: Setter[NesState, Cartridge]             = (a, s) => s.cartridge = a
   val controllerState: Setter[NesState, ControllerState] = (a, s) => s.controllerState = a
 
-  def apply(mirroring: Mirroring, cartridge: Cartridge, ref: ControllerRef): NesState =
+  def apply(mirroring: Mirroring, cartridge: Cartridge): NesState =
     new NesState(
       ram = Vector.fill(0x800)(0x00),
       cpuState = CpuState(),
       ppuState = PpuState(mirroring),
       cartridge = cartridge,
-      controllerState = new ControllerState(ref)
+      controllerState = ControllerState()
     )
+
+  def setButtons(buttons: UInt8)(nes: NesState): NesState = {
+    val ctrl = ControllerState.buttons.set(buttons)(nes.controllerState)
+    NesState.controllerState.set(ctrl)(nes)
+  }
 
   def dummy: State[NesState, NesState] = State.get
 
-  def reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
+  val reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
 
   def clock(nes: NesState): NesState = {
     val cpuCycles = nes.cpuState.cycles
@@ -65,7 +70,7 @@ object NesState {
     nes1
   }
 
-  private def iNesDecoder(controllerRef: ControllerRef): Decoder[NesState] =
+  private def iNesDecoder: Decoder[NesState] =
     for {
       _           <- ignore(4 * 8)
       prgRomBanks <- uint8
@@ -91,15 +96,15 @@ object NesState {
           Decoder.point[Cartridge](new Mapper001(prgRom, chrMem, prgRamSize))
         else
           Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
-    } yield NesState(mirroring, cartridge, controllerRef)
+    } yield NesState(mirroring, cartridge)
 
-  def fromFile[F[_]: Sync: ContextShift](file: Path, controllerState: ControllerRef): Stream[F, NesState] =
+  def fromFile[F[_]: Sync: ContextShift](file: Path): Stream[F, NesState] =
     Stream
       .resource(Blocker[F])
       .flatMap { blocker =>
         io.file
           .readAll[F](file, blocker, 4096)
-          .through(StreamDecoder.once(iNesDecoder(controllerState)).toPipeByte)
+          .through(StreamDecoder.once(iNesDecoder).toPipeByte)
       }
 
 }

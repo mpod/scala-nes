@@ -3,6 +3,8 @@ package scalanes
 import java.util.concurrent.atomic.AtomicInteger
 
 import cats.Monad
+import cats.effect.IO
+import fs2.concurrent.SignallingRef
 
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -17,7 +19,7 @@ package object mutable {
   type UInt15 = Int
   type UInt16 = Int
 
-  type ControllerRef = AtomicInteger
+  type ControllerRef = SignallingRef[IO, Int]
 
   def isValidUInt1(v: UInt1): Boolean   = (v & 0x01) == v
   def isValidUInt2(v: UInt2): Boolean   = (v & 0x03) == v

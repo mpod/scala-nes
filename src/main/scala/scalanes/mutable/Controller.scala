@@ -1,13 +1,18 @@
 package scalanes.mutable
 
-class ControllerState(val ref: ControllerRef) {
-  var controller1: UInt8 = 0x00
-  var controller2: UInt8 = 0x00
-}
+class ControllerState(
+  var buttons: UInt8,
+  var controller1: UInt8,
+  var controller2: UInt8
+)
 
 object ControllerState {
+  val buttons: Setter[ControllerState, UInt8]     = (a, s) => s.buttons = a
   val controller1: Setter[ControllerState, UInt8] = (a, s) => s.controller1 = a
   val controller2: Setter[ControllerState, UInt8] = (a, s) => s.controller2 = a
+
+  def apply(): ControllerState =
+    new ControllerState(0x00, 0x00, 0x00)
 }
 
 object Controller {
@@ -32,17 +37,19 @@ object Controller {
 
   val writeController1: State[NesState, Unit] =
     nes => {
-      val buttonStates = nes.controllerState.ref.getAndSet(0x00)
-      val ctrl         = ControllerState.controller1.set(buttonStates)(nes.controllerState)
-      val nes1         = NesState.controllerState.set(ctrl)(nes)
+      val ctrl  = nes.controllerState
+      val ctrl1 = ControllerState.controller1.set(ctrl.buttons)(ctrl)
+      val ctrl2 = ControllerState.buttons.set(0)(ctrl1)
+      val nes1  = NesState.controllerState.set(ctrl2)(nes)
       (nes1, ())
     }
 
   val writeController2: State[NesState, Unit] =
     nes => {
-      val buttonStates = nes.controllerState.ref.getAndSet(0x00)
-      val ctrl         = ControllerState.controller2.set(buttonStates)(nes.controllerState)
-      val nes1         = NesState.controllerState.set(ctrl)(nes)
+      val ctrl  = nes.controllerState
+      val ctrl1 = ControllerState.controller2.set(ctrl.buttons)(ctrl)
+      val ctrl2 = ControllerState.buttons.set(0)(ctrl1)
+      val nes1  = NesState.controllerState.set(ctrl2)(nes)
       (nes1, ())
     }
 

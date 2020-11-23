@@ -32,8 +32,7 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
     val nestestRom = Paths.get(getClass.getResource("/nestest.nes").toURI)
     val nestestLog = Paths.get(getClass.getResource("/nestest.log").toURI)
 
-    val controllerRef = new AtomicInteger(0x00)
-    val decodedNesRom = NesState.fromFile[IO](nestestRom, controllerRef).compile.toList.unsafeRunSync()
+    val decodedNesRom = NesState.fromFile[IO](nestestRom).compile.toList.unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState = {
       val nes1 = decodedNesRom.head
