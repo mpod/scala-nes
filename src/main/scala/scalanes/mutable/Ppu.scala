@@ -135,9 +135,6 @@ object Loopy {
   private val posFineY       = 12
   private val maskFineY      = 0x7 << posFineY
 
-  private def setBits(d: Int, mask: Int, pos: Int): Int => Int =
-    reg => (reg & ~mask) | (d << pos)
-
   def setCoarseX(d: UInt5)(loopy: UInt15): UInt15    = (loopy & ~maskCoarseX) | (d << posCoarseX)
   def setCoarseY(d: UInt5)(loopy: UInt15): UInt15    = (loopy & ~maskCoarseY) | (d << posCoarseY)
   def setNametableX(d: UInt1)(loopy: UInt15): UInt15 = (loopy & ~maskNametableX) | (d << posNametableX)
@@ -757,16 +754,22 @@ object Ppu {
     }
 
   def incCounters(nes: NesState): NesState = {
+    def setCounters(cycle: Int, scanline: Int, frame: Long)(ppu: PpuState): PpuState = {
+      val ppu1 = PpuState.cycle.set(cycle)(ppu)
+      val ppu2 = PpuState.scanline.set(scanline)(ppu1)
+      val ppu3 = PpuState.frame.set(frame)(ppu2)
+      ppu3
+    }
     val ppu = nes.ppuState
     val n   = ppu.scanline * 341 + ppu.cycle + 1
-    val (cycle, scanline, frame) =
-      if (n >= 341 * 262) (0, 0, ppu.frame + 1)
-      else if (n % 341 == 0) (0, ppu.scanline + 1, ppu.frame)
-      else (ppu.cycle + 1, ppu.scanline, ppu.frame)
-    val ppu1 = PpuState.cycle.set(cycle)(ppu)
-    val ppu2 = PpuState.scanline.set(scanline)(ppu1)
-    val ppu3 = PpuState.frame.set(frame)(ppu2)
-    NesState.ppuState.set(ppu3)(nes)
+    val ppu1 =
+      if (n >= 341 * 262)
+        setCounters(0, 0, ppu.frame + 1)(ppu)
+      else if (n % 341 == 0)
+        setCounters(0, ppu.scanline + 1, ppu.frame)(ppu)
+      else
+        setCounters(ppu.cycle + 1, ppu.scanline, ppu.frame)(ppu)
+    NesState.ppuState.set(ppu1)(nes)
   }
 
   def clock(nes: NesState): NesState = {
