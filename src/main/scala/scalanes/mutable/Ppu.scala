@@ -130,25 +130,27 @@ object Loopy {
   private val maskNametableX = 0x1 << posNametableX
   private val posNametableY  = 11
   private val maskNametableY = 0x1 << posNametableY
+  private val posNametables  = 0x10
+  private val maskNametables = 0x3 << posNametables
   private val posFineY       = 12
   private val maskFineY      = 0x7 << posFineY
 
-  private def setBits(d: Int, n: Int, mask: Int, pos: Int): Int => Int =
+  private def setBits(d: Int, mask: Int, pos: Int): Int => Int =
     reg => (reg & ~mask) | (d << pos)
 
-  def setCoarseX(d: UInt5): UInt15 => UInt15    = setBits(d, 5, maskCoarseX, posCoarseX)
-  def setCoarseY(d: UInt5): UInt15 => UInt15    = setBits(d, 5, maskCoarseY, posCoarseY)
-  def setNametableX(d: UInt1): UInt15 => UInt15 = setBits(d, 1, maskNametableX, posNametableX)
-  def setNametableY(d: UInt1): UInt15 => UInt15 = setBits(d, 1, maskNametableY, posNametableY)
-  def setNametables(d: UInt2): UInt15 => UInt15 = setBits(d, 2, maskNametableX | maskNametableY, posNametableX)
-  def setFineY(d: UInt3): UInt15 => UInt15      = setBits(d, 3, maskFineY, posFineY)
-  val flipNametableX: UInt15 => UInt15          = loopy => loopy ^ (0x1 << posNametableX)
-  val flipNametableY: UInt15 => UInt15          = loopy => loopy ^ (0x1 << posNametableY)
-  val coarseX: UInt15 => UInt5                  = loopy => (loopy & maskCoarseX) >> posCoarseX
-  val coarseY: UInt15 => UInt5                  = loopy => (loopy & maskCoarseY) >> posCoarseY
-  val nametableX: UInt15 => UInt1               = loopy => (loopy & maskNametableX) >> posNametableX
-  val nametableY: UInt15 => UInt1               = loopy => (loopy & maskNametableY) >> posNametableY
-  val fineY: UInt15 => UInt3                    = loopy => (loopy & maskFineY) >> posFineY
+  def setCoarseX(d: UInt5)(loopy: UInt15): UInt15    = (loopy & ~maskCoarseX) | (d << posCoarseX)
+  def setCoarseY(d: UInt5)(loopy: UInt15): UInt15    = (loopy & ~maskCoarseY) | (d << posCoarseY)
+  def setNametableX(d: UInt1)(loopy: UInt15): UInt15 = (loopy & ~maskNametableX) | (d << posNametableX)
+  def setNametableY(d: UInt1)(loopy: UInt15): UInt15 = (loopy & ~maskNametableY) | (d << posNametableY)
+  def setNametables(d: UInt2)(loopy: UInt15): UInt15 = (loopy & ~maskNametables) | (d << posNametables)
+  def setFineY(d: UInt3)(loopy: UInt15): UInt15      = (loopy & ~maskFineY) | (d << posFineY)
+  val flipNametableX: UInt15 => UInt15               = loopy => loopy ^ (0x1 << posNametableX)
+  val flipNametableY: UInt15 => UInt15               = loopy => loopy ^ (0x1 << posNametableY)
+  val coarseX: UInt15 => UInt5                       = loopy => (loopy & maskCoarseX) >> posCoarseX
+  val coarseY: UInt15 => UInt5                       = loopy => (loopy & maskCoarseY) >> posCoarseY
+  val nametableX: UInt15 => UInt1                    = loopy => (loopy & maskNametableX) >> posNametableX
+  val nametableY: UInt15 => UInt1                    = loopy => (loopy & maskNametableY) >> posNametableY
+  val fineY: UInt15 => UInt3                         = loopy => (loopy & maskFineY) >> posFineY
 }
 
 object Mirroring extends Enumeration {
@@ -243,40 +245,43 @@ object Ppu {
   val incScrollX: NesState => NesState =
     lift { ppu =>
       val coarseX = Loopy.coarseX(ppu.v)
-      val modifyV =
-        if (coarseX == 31)
-          Loopy.setCoarseX(0) andThen Loopy.flipNametableX
-        else
-          Loopy.setCoarseX(coarseX + 1)
-      val v = modifyV(ppu.v)
-      PpuState.v.set(v)(ppu)
+      val v1 =
+        if (coarseX == 31) {
+          val v1 = Loopy.setCoarseX(0)(ppu.v)
+          Loopy.flipNametableX(v1)
+        } else
+          Loopy.setCoarseX(coarseX + 1)(ppu.v)
+      PpuState.v.set(v1)(ppu)
     }
 
   val incScrollY: NesState => NesState =
     lift { ppu =>
       val coarseY = Loopy.coarseY(ppu.v)
       val fineY   = Loopy.fineY(ppu.v)
-      val modifyV =
+      val v1 =
         if (fineY < 7)
-          Loopy.setFineY(fineY + 1)
-        else if (coarseY == 29)
-          Loopy.setFineY(0) andThen Loopy.setCoarseY(0) andThen Loopy.flipNametableY
-        else if (coarseY == 31)
-          Loopy.setFineY(0) andThen Loopy.setCoarseY(0)
-        else {
-          Loopy.setFineY(0) andThen Loopy.setCoarseY(coarseY + 1)
+          Loopy.setFineY(fineY + 1)(ppu.v)
+        else if (coarseY == 29) {
+          val v1 = Loopy.setFineY(0)(ppu.v)
+          val v2 = Loopy.setCoarseY(0)(v1)
+          Loopy.flipNametableY(v2)
+        } else if (coarseY == 31) {
+          val v1 = Loopy.setFineY(0)(ppu.v)
+          Loopy.setCoarseY(0)(v1)
+        } else {
+          val v1 = Loopy.setFineY(0)(ppu.v)
+          Loopy.setCoarseY(coarseY + 1)(v1)
         }
-      val v = modifyV(ppu.v)
-      PpuState.v.set(v)(ppu)
+      PpuState.v.set(v1)(ppu)
     }
 
   val transferAddressX: NesState => NesState =
     lift { ppu =>
       val tCoarseX    = Loopy.coarseX(ppu.t)
       val tNametableX = Loopy.nametableX(ppu.t)
-      val modifyV     = Loopy.setCoarseX(tCoarseX) andThen Loopy.setNametableX(tNametableX)
-      val v           = modifyV(ppu.v)
-      PpuState.v.set(v)(ppu)
+      val v1          = Loopy.setCoarseX(tCoarseX)(ppu.v)
+      val v2          = Loopy.setNametableX(tNametableX)(v1)
+      PpuState.v.set(v2)(ppu)
     }
 
   val transferAddressY: NesState => NesState =
@@ -284,9 +289,10 @@ object Ppu {
       val tFineY      = Loopy.fineY(ppu.t)
       val tNametableY = Loopy.nametableY(ppu.t)
       val tCoarseY    = Loopy.coarseY(ppu.t)
-      val modifyV     = Loopy.setFineY(tFineY) andThen Loopy.setNametableY(tNametableY) andThen Loopy.setCoarseY(tCoarseY)
-      val v           = modifyV(ppu.v)
-      PpuState.v.set(v)(ppu)
+      val v1          = Loopy.setFineY(tFineY)(ppu.v)
+      val v2          = Loopy.setNametableY(tNametableY)(v1)
+      val v3          = Loopy.setCoarseY(tCoarseY)(v2)
+      PpuState.v.set(v3)(ppu)
     }
 
   val loadShifters: NesState => NesState =
@@ -468,7 +474,9 @@ object Ppu {
   def writeOamData(d: UInt8): NesState => NesState =
     nes => {
       val oamAddress = nes.ppuState.oamAddress
-      lift(PpuState.oamData.set(oamAddress, d) _ andThen PpuState.oamAddress.set(oamAddress + 1))(nes)
+      val ppu1       = PpuState.oamData.set(oamAddress, d)(nes.ppuState)
+      val ppu2       = PpuState.oamAddress.set(oamAddress + 1)(ppu1)
+      NesState.ppuState.set(ppu2)(nes)
     }
 
   def writeScroll(d: UInt8): NesState => NesState =
@@ -529,7 +537,10 @@ object Ppu {
   val readStatus: State[NesState, UInt8] =
     nes => {
       val d    = (nes.ppuState.status & 0xe0) | (nes.ppuState.bufferedData & 0x1f)
-      val nes1 = lift(clearLoopyW andThen clearVerticalBlank andThen clearNmi)(nes)
+      val ppu1 = clearLoopyW(nes.ppuState)
+      val ppu2 = clearVerticalBlank(ppu1)
+      val ppu3 = clearNmi(ppu2)
+      val nes1 = NesState.ppuState.set(ppu3)(nes)
       (nes1, d)
     }
 
@@ -735,12 +746,14 @@ object Ppu {
           val (nes1, spriteInfo) = fetchSpriteInfo(i, nes)
           (nes1, spriteInfo :: spritesInfo)
         }
-      if (spritesInfo.size > 8)
-        lift(
-          setSpriteOverflow andThen PpuState.spritesInfo.set(spritesInfo.take(8))
-        )(nes1)
-      else
-        lift(PpuState.spritesInfo.set(spritesInfo))(nes1)
+      if (spritesInfo.size > 8) {
+        val ppu1 = PpuState.spritesInfo.set(spritesInfo.take(8))(nes1.ppuState)
+        val ppu2 = setSpriteOverflow(ppu1)
+        NesState.ppuState.set(ppu2)(nes1)
+      } else {
+        val ppu1 = PpuState.spritesInfo.set(spritesInfo)(nes1.ppuState)
+        NesState.ppuState.set(ppu1)(nes1)
+      }
     }
 
   def incCounters(nes: NesState): NesState = {

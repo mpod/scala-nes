@@ -25,23 +25,23 @@ class PpuTest extends AnyFlatSpec with Matchers {
   }
 
   it should "set coarse x" in {
-    (Loopy.setCoarseX(0x17) andThen Loopy.coarseX)(0xe5) shouldBe 0x17
+    (Loopy.setCoarseX(0x17) _ andThen Loopy.coarseX)(0xe5) shouldBe 0x17
   }
 
   it should "set coarse y" in {
-    (Loopy.setCoarseY(0x17) andThen Loopy.coarseY)(0xaf) shouldBe 0x17
+    (Loopy.setCoarseY(0x17) _ andThen Loopy.coarseY)(0xaf) shouldBe 0x17
   }
 
   it should "set nametable x" in {
-    (Loopy.setNametableX(0x1) andThen Loopy.nametableX)(0x3c) shouldBe 0x1
+    (Loopy.setNametableX(0x1) _ andThen Loopy.nametableX)(0x3c) shouldBe 0x1
   }
 
   it should "set nametable y" in {
-    (Loopy.setNametableY(0x1) andThen Loopy.nametableY)(0xffff) shouldBe 0x1
+    (Loopy.setNametableY(0x1) _ andThen Loopy.nametableY)(0xffff) shouldBe 0x1
   }
 
   it should "set fine y" in {
-    (Loopy.setFineY(0x7) andThen Loopy.fineY)(0xabcd) shouldBe 0x7
+    (Loopy.setFineY(0x7) _ andThen Loopy.fineY)(0xabcd) shouldBe 0x7
   }
 
 }
