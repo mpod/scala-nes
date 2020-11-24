@@ -134,11 +134,7 @@ object Loopy {
   private val maskFineY      = 0x7 << posFineY
 
   private def setBits(d: Int, n: Int, mask: Int, pos: Int): Int => Int =
-    reg => {
-      val typeMask = (0 until n).map(1 << _).reduce(_ | _)
-      require((d & typeMask) == d)
-      (reg & ~mask) | (d << pos)
-    }
+    reg => (reg & ~mask) | (d << pos)
 
   def setCoarseX(d: UInt5): UInt15 => UInt15    = setBits(d, 5, maskCoarseX, posCoarseX)
   def setCoarseY(d: UInt5): UInt15 => UInt15    = setBits(d, 5, maskCoarseY, posCoarseY)
@@ -774,45 +770,46 @@ object Ppu {
     val nmiEnabled      = PpuState.flagNmi(ppu)
 
     // Render a pixel
-    val pixel =
-      if (isVisibleLine && isVisibleCycle) renderPixel
-      else noOp
+    val nes1 =
+      if (isVisibleLine && isVisibleCycle) renderPixel(nes)
+      else nes
 
     // Background logic
-    val background =
+    val nes2 =
       if (isRendering && isRenderLine & isFetchCycle)
         cycle % 8 match {
-          case 1                 => updateShifters andThen fetchNametableByte
-          case 3                 => updateShifters andThen fetchAttributeTableByte
-          case 5                 => updateShifters andThen fetchLowTileByte
-          case 7                 => updateShifters andThen fetchHighTileByte
-          case 0 if cycle == 256 => updateShifters andThen loadShifters andThen incScrollX andThen incScrollY
-          case 0                 => updateShifters andThen loadShifters andThen incScrollX
-          case _                 => updateShifters
+          case 1                 => fetchNametableByte(updateShifters(nes1))
+          case 3                 => fetchAttributeTableByte(updateShifters(nes1))
+          case 5                 => fetchLowTileByte(updateShifters(nes1))
+          case 7                 => fetchHighTileByte(updateShifters(nes1))
+          case 0 if cycle == 256 => incScrollX(incScrollY(loadShifters(updateShifters(nes1))))
+          case 0                 => incScrollX(loadShifters(updateShifters(nes1)))
+          case _                 => updateShifters(nes1)
         }
-      else if (isRendering && isPreRenderLine && cycle >= 280 && cycle <= 304) transferAddressY
-      else if (isRendering && isRenderLine && cycle == 257) transferAddressX
-      else noOp
+      else if (isRendering && isPreRenderLine && cycle >= 280 && cycle <= 304) transferAddressY(nes1)
+      else if (isRendering && isRenderLine && cycle == 257) transferAddressX(nes1)
+      else nes1
 
     // Sprite logic
-    val sprite =
+    val nes3 =
       if (isRendering && cycle == 257)
-        if (isVisibleLine) evaluateSprites
-        else lift(PpuState.spritesInfo.set(List.empty))
-      else noOp
+        if (isVisibleLine) evaluateSprites(nes2)
+        else lift(PpuState.spritesInfo.set(List.empty))(nes2)
+      else nes2
 
     // vblank logic
-    val vblank =
+    val ppu1 =
       if (scanline == 241 && cycle == 1 && nmiEnabled)
-        lift(setVerticalBlank andThen setNmi)
+        setVerticalBlank(setNmi(ppu))
       else if (scanline == 241 && cycle == 1)
-        lift(setVerticalBlank)
+        setVerticalBlank(ppu)
       else if (isPreRenderLine && cycle == 1)
-        lift(clearVerticalBlank andThen clearSpriteOverflow andThen clearSpriteZeroHit andThen clearNmi)
+        clearVerticalBlank(clearSpriteOverflow(clearSpriteZeroHit(clearNmi(ppu))))
       else
-        noOp
+        ppu
+    val nes4 = NesState.ppuState.set(ppu1)(nes3)
 
-    (pixel andThen background andThen sprite andThen vblank andThen incCounters)(nes)
+    incCounters(nes4)
   }
 
   def reset(nes: NesState): NesState = {
