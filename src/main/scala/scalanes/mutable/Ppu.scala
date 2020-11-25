@@ -240,7 +240,8 @@ object Ppu {
     ppu => PpuState.nmi.set(false)(ppu)
 
   val incScrollX: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu     = nes.ppuState
       val coarseX = Loopy.coarseX(ppu.v)
       val v1 =
         if (coarseX == 31) {
@@ -248,11 +249,13 @@ object Ppu {
           Loopy.flipNametableX(v1)
         } else
           Loopy.setCoarseX(coarseX + 1)(ppu.v)
-      PpuState.v.set(v1)(ppu)
+      val ppu1 = PpuState.v.set(v1)(ppu)
+      NesState.ppuState.set(ppu1)(nes)
     }
 
   val incScrollY: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu     = nes.ppuState
       val coarseY = Loopy.coarseY(ppu.v)
       val fineY   = Loopy.fineY(ppu.v)
       val v1 =
@@ -269,31 +272,37 @@ object Ppu {
           val v1 = Loopy.setFineY(0)(ppu.v)
           Loopy.setCoarseY(coarseY + 1)(v1)
         }
-      PpuState.v.set(v1)(ppu)
+      val ppu1 = PpuState.v.set(v1)(ppu)
+      NesState.ppuState.set(ppu1)(nes)
     }
 
   val transferAddressX: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu         = nes.ppuState
       val tCoarseX    = Loopy.coarseX(ppu.t)
       val tNametableX = Loopy.nametableX(ppu.t)
       val v1          = Loopy.setCoarseX(tCoarseX)(ppu.v)
       val v2          = Loopy.setNametableX(tNametableX)(v1)
-      PpuState.v.set(v2)(ppu)
+      val ppu1        = PpuState.v.set(v2)(ppu)
+      NesState.ppuState.set(ppu1)(nes)
     }
 
   val transferAddressY: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu         = nes.ppuState
       val tFineY      = Loopy.fineY(ppu.t)
       val tNametableY = Loopy.nametableY(ppu.t)
       val tCoarseY    = Loopy.coarseY(ppu.t)
       val v1          = Loopy.setFineY(tFineY)(ppu.v)
       val v2          = Loopy.setNametableY(tNametableY)(v1)
       val v3          = Loopy.setCoarseY(tCoarseY)(v2)
-      PpuState.v.set(v3)(ppu)
+      val ppu1        = PpuState.v.set(v3)(ppu)
+      NesState.ppuState.set(ppu1)(nes)
     }
 
   val loadShifters: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu              = nes.ppuState
       val shifterPatternLo = (ppu.shifterPatternLo & 0xff00) | ppu.nextTileLo
       val shifterPatternHi = (ppu.shifterPatternHi & 0xff00) | ppu.nextTileHi
       val shifterAttrLo    = (ppu.shifterAttrLo & 0xff00) | (if (ppu.nextTileAttr & 0x01) 0xff else 0x00)
@@ -302,11 +311,12 @@ object Ppu {
       val ppu2             = PpuState.shifterPatternHi.set(shifterPatternHi)(ppu1)
       val ppu3             = PpuState.shifterAttrLo.set(shifterAttrLo)(ppu2)
       val ppu4             = PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
-      ppu4
+      NesState.ppuState.set(ppu4)(nes)
     }
 
   val updateShifters: NesState => NesState =
-    lift { ppu =>
+    nes => {
+      val ppu              = nes.ppuState
       val shifterPatternLo = ppu.shifterPatternLo << 1
       val shifterPatternHi = ppu.shifterPatternHi << 1
       val shifterAttrLo    = ppu.shifterAttrLo << 1
@@ -315,7 +325,7 @@ object Ppu {
       val ppu2             = PpuState.shifterPatternHi.set(shifterPatternHi)(ppu1)
       val ppu3             = PpuState.shifterAttrLo.set(shifterAttrLo)(ppu2)
       val ppu4             = PpuState.shifterAttrHi.set(shifterAttrHi)(ppu3)
-      ppu4
+      NesState.ppuState.set(ppu4)(nes)
     }
 
   // TODO: docs
