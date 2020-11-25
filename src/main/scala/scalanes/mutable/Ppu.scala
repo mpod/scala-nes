@@ -323,7 +323,8 @@ object Ppu {
     nes => {
       val address   = 0x2000 | (nes.ppuState.v & 0x0fff)
       val (nes1, d) = ppuRead(address)(nes)
-      lift(PpuState.nextTileId.set(d))(nes1)
+      val ppu1      = PpuState.nextTileId.set(d)(nes1.ppuState)
+      NesState.ppuState.set(ppu1)(nes1)
     }
 
   // TODO: docs
@@ -334,7 +335,8 @@ object Ppu {
       val shift     = ((v >> 4) & 4) | (v & 2)
       val (nes1, d) = ppuRead(address)(nes)
       val attr      = (d >> shift) & 0x3
-      lift(PpuState.nextTileAttr.set(attr))(nes1)
+      val ppu1      = PpuState.nextTileAttr.set(attr)(nes1.ppuState)
+      NesState.ppuState.set(ppu1)(nes1)
     }
 
   // TODO: docs
@@ -344,7 +346,8 @@ object Ppu {
       val backgroundTableAddress = PpuState.flagBackgroundTable(ppu)
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v)
       val (nes1, d)              = ppuRead(address).run(nes)
-      lift(PpuState.nextTileLo.set(d))(nes1)
+      val ppu1                   = PpuState.nextTileLo.set(d)(nes1.ppuState)
+      NesState.ppuState.set(ppu1)(nes1)
     }
 
   // TODO: docs
@@ -354,7 +357,8 @@ object Ppu {
       val backgroundTableAddress = PpuState.flagBackgroundTable(ppu)
       val address                = (backgroundTableAddress << 12) + (ppu.nextTileId << 4) + Loopy.fineY(ppu.v) + 8
       val (nes1, d)              = ppuRead(address).run(nes)
-      lift(PpuState.nextTileHi.set(d))(nes1)
+      val ppu1                   = PpuState.nextTileHi.set(d)(nes1.ppuState)
+      NesState.ppuState.set(ppu1)(nes1)
     }
 
   // TODO: documentation
