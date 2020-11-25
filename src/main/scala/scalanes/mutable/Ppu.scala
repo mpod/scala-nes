@@ -830,13 +830,13 @@ object Ppu {
     // vblank logic
     val ppu1 =
       if (scanline == 241 && cycle == 1 && nmiEnabled)
-        setVerticalBlank(setNmi(ppu))
+        setVerticalBlank(setNmi(nes3.ppuState))
       else if (scanline == 241 && cycle == 1)
-        setVerticalBlank(ppu)
+        setVerticalBlank(nes3.ppuState)
       else if (isPreRenderLine && cycle == 1)
-        clearVerticalBlank(clearSpriteOverflow(clearSpriteZeroHit(clearNmi(ppu))))
+        clearVerticalBlank(clearSpriteOverflow(clearSpriteZeroHit(clearNmi(nes3.ppuState))))
       else
-        ppu
+        nes3.ppuState
     val nes4 = NesState.ppuState.set(ppu1)(nes3)
 
     incCounters(nes4)
