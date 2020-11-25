@@ -197,7 +197,7 @@ object Cpu extends LazyLogging {
     else if (address < 0x6000)
       identity[NesState]
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
-      Cartridge.cpuWrite(address, d).runS
+      Cartridge.cpuWrite(address, d)
     else
       throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
 

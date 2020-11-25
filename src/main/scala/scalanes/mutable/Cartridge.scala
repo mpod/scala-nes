@@ -20,19 +20,15 @@ object Cartridge {
   def cpuRead(address: UInt16): State[NesState, UInt8] =
     State.inspect(_.cartridge.prgRead(address))
 
-  def fastCpuRead(address: UInt16)(nes: NesState): UInt8 =
-    nes.cartridge.prgRead(address)
-
-  def cpuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
-    State.modify[Cartridge](_.prgWrite(address, d)).toNesState
+  def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
+    State.modify[Cartridge](_.prgWrite(address, d)).toNesState.runS
 
   def ppuRead(address: UInt16): State[NesState, UInt8] =
     State.inspect(_.cartridge.chrRead(address))
 
-  def ppuWrite(address: UInt16, d: UInt8): State[NesState, Unit] =
-    State.modify[Cartridge](_.chrWrite(address, d)).toNesState
+  def ppuWrite(address: UInt16, d: UInt8): NesState => NesState =
+    State.modify[Cartridge](_.chrWrite(address, d)).toNesState.runS
 
-  // TODO: Simplify
   def reset: NesState => NesState =
     State.modify[Cartridge](_.reset).toNesState.runS
 

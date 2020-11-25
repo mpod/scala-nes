@@ -589,7 +589,7 @@ object Ppu {
   def ppuWrite(address: UInt16, d: UInt8): NesState => NesState = {
     require((address & 0x3fff) == address, s"address ${hex(address)}")
     if (address >= 0x0000 && address <= 0x1fff)
-      Cartridge.ppuWrite(address, d).runS(_) // Patterns
+      Cartridge.ppuWrite(address, d) // Patterns
     else if (address >= 0x2000 && address <= 0x3eff)
       lift(writeNametables(address, d))
     else

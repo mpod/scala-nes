@@ -1,8 +1,10 @@
 package scalanes.mutable
 
+import scala.annotation.tailrec
+
 case class BankMap(offset: Int, sizeInKB: Int) {
   def nextBankMapOffset: Int = offset + sizeInKB * 1024
-  def sizeInB: Int = sizeInKB * 1024
+  def sizeInB: Int           = sizeInKB * 1024
 }
 
 object BankMap {
@@ -29,17 +31,16 @@ trait Mapper extends Cartridge {
   def chrBankMaps: List[BankMap]
 
   protected def mapAddress(address: UInt16, bankMaps: List[BankMap]): UInt16 = {
-    val (_, result) =
-      bankMaps.foldLeft((address, Option.empty[UInt8])) {
-        case ((addr, None), bankMap) if addr >= bankMap.nextBankMapOffset =>
-          (addr - bankMap.sizeInB, None)
-        case ((addr, None), bankMap) =>
-          (addr, Option(bankMap.offset + addr))
-        case (acc, _) =>
-          acc
-      }
-    require(result.nonEmpty, s"$address")
-    result.get
+    @tailrec
+    def helper(addr: UInt16, bankMaps: List[BankMap]): UInt16 = bankMaps match {
+      case bankMap :: tail if addr >= bankMap.nextBankMapOffset =>
+        helper(addr - bankMap.sizeInB, tail)
+      case bankMap :: _ =>
+        bankMap.offset + addr
+      case Nil =>
+        throw new RuntimeException(f"Invalid cartridge address $address%#04x")
+    }
+    helper(address, bankMaps)
   }
 
   override def prgRead(address: UInt16): UInt8 =
