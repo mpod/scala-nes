@@ -14,19 +14,20 @@ import scala.language.higherKinds
 class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boolean])(implicit F: Effect[F]) {
   def start: Stream[F, Array[Int] => Unit] =
     Stream.eval(F.delay {
-      val width  = 2 * 256
-      val height = 2 * 240
-      val frame  = new Frame("ScalNES Console")
-      frame.setSize(width, height)
-      frame.setLayout(new BorderLayout())
-      var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+      val width          = 2 * 256
+      val height         = 2 * 240
+      var bufferedImageA = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+      var bufferedImageB = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
       val canvas: Canvas = new Canvas {
         setSize(width, height)
         setBackground(Color.WHITE)
         override def paint(g: Graphics): Unit  = render(g)
         override def update(g: Graphics): Unit = render(g)
-        private def render(g: Graphics): Unit  = g.asInstanceOf[Graphics2D].drawImage(bufferedImage, 0, 0, null)
+        private def render(g: Graphics): Unit  = g.asInstanceOf[Graphics2D].drawImage(bufferedImageA, 0, 0, null)
       }
+      val frame = new Frame("ScalNES Console")
+      frame.setSize(width, height)
+      frame.setLayout(new BorderLayout())
       frame.add(canvas)
       frame.addWindowListener(new WindowAdapter() {
         override def windowClosing(we: WindowEvent): Unit = {
@@ -64,10 +65,12 @@ class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boo
       })
       frame.setVisible(true)
       var frameStart = System.currentTimeMillis()
+
       (rgbs: Array[Int]) => {
-        val newBufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-        newBufferedImage.setRGB(0, 0, width, height, rgbs, 0, width)
-        bufferedImage = newBufferedImage
+        bufferedImageB.setRGB(0, 0, width, height, rgbs, 0, width)
+        val bufferedImageC = bufferedImageA
+        bufferedImageA = bufferedImageB
+        bufferedImageB = bufferedImageC
         canvas.repaint()
         val diff = System.currentTimeMillis() - frameStart
         println(s"Frame generated in $diff ms")
