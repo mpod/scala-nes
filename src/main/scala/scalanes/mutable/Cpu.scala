@@ -139,49 +139,46 @@ object Cpu extends LazyLogging {
       NesState.cpuState.set(cpu)(nes)
     }
 
-  private val statusFlagSetters: Map[String, NesState => NesState] =
-    Map(
-      "C-true"  -> statusFlagSetter(0, 1),
-      "C-false" -> statusFlagSetter(0, 0),
-      "Z-true"  -> statusFlagSetter(1, 1),
-      "Z-false" -> statusFlagSetter(1, 0),
-      "I-true"  -> statusFlagSetter(2, 1),
-      "I-false" -> statusFlagSetter(2, 0),
-      "D-true"  -> statusFlagSetter(3, 1),
-      "D-false" -> statusFlagSetter(3, 0),
-      "B-true"  -> statusFlagSetter(4, 1),
-      "B-false" -> statusFlagSetter(4, 0),
-      "U-true"  -> statusFlagSetter(5, 1),
-      "U-false" -> statusFlagSetter(5, 0),
-      "V-true"  -> statusFlagSetter(6, 1),
-      "V-false" -> statusFlagSetter(6, 0),
-      "N-true"  -> statusFlagSetter(7, 1),
-      "N-false" -> statusFlagSetter(7, 0)
-    )
+  private val setFlagC: NesState => NesState   = statusFlagSetter(0, 1)
+  private val clearFlagC: NesState => NesState = statusFlagSetter(0, 0)
+  private val setFlagZ: NesState => NesState   = statusFlagSetter(1, 1)
+  private val clearFlagZ: NesState => NesState = statusFlagSetter(1, 0)
+  private val setFlagI: NesState => NesState   = statusFlagSetter(2, 1)
+  private val clearFlagI: NesState => NesState = statusFlagSetter(2, 0)
+  private val setFlagD: NesState => NesState   = statusFlagSetter(3, 1)
+  private val clearFlagD: NesState => NesState = statusFlagSetter(3, 0)
+  private val setFlagB: NesState => NesState   = statusFlagSetter(4, 1)
+  private val clearFlagB: NesState => NesState = statusFlagSetter(4, 0)
+  private val setFlagU: NesState => NesState   = statusFlagSetter(5, 1)
+  private val clearFlagU: NesState => NesState = statusFlagSetter(5, 0)
+  private val setFlagV: NesState => NesState   = statusFlagSetter(6, 1)
+  private val clearFlagV: NesState => NesState = statusFlagSetter(6, 0)
+  private val setFlagN: NesState => NesState   = statusFlagSetter(7, 1)
+  private val clearFlagN: NesState => NesState = statusFlagSetter(7, 0)
 
   def setFlagC(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "C-true" else "C-false")
+    if (f) setFlagC else clearFlagC
 
   def setFlagZ(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "Z-true" else "Z-false")
+    if (f) setFlagZ else clearFlagZ
 
   def setFlagI(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "I-true" else "I-false")
+    if (f) setFlagI else clearFlagI
 
   def setFlagD(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "D-true" else "D-false")
+    if (f) setFlagD else clearFlagD
 
   def setFlagB(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "B-true" else "B-false")
+    if (f) setFlagB else clearFlagB
 
   def setFlagU(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "U-true" else "U-false")
+    if (f) setFlagU else clearFlagU
 
   def setFlagV(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "V-true" else "V-false")
+    if (f) setFlagV else clearFlagV
 
   def setFlagN(f: Boolean): NesState => NesState =
-    statusFlagSetters(if (f) "N-true" else "N-false")
+    if (f) setFlagN else clearFlagN
 
   @tailrec
   def chain(setters: List[NesState => NesState])(nes: NesState): NesState =
