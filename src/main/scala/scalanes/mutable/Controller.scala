@@ -39,8 +39,7 @@ object Controller {
     nes => {
       val ctrl  = nes.controllerState
       val ctrl1 = ControllerState.controller1.set(ctrl.buttons)(ctrl)
-      val ctrl2 = ControllerState.buttons.set(0)(ctrl1)
-      val nes1  = NesState.controllerState.set(ctrl2)(nes)
+      val nes1  = NesState.controllerState.set(ctrl1)(nes)
       (nes1, ())
     }
 
@@ -48,8 +47,7 @@ object Controller {
     nes => {
       val ctrl  = nes.controllerState
       val ctrl1 = ControllerState.controller2.set(ctrl.buttons)(ctrl)
-      val ctrl2 = ControllerState.buttons.set(0)(ctrl1)
-      val nes1  = NesState.controllerState.set(ctrl2)(nes)
+      val nes1  = NesState.controllerState.set(ctrl1)(nes)
       (nes1, ())
     }
 
