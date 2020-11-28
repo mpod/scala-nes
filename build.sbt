@@ -44,4 +44,12 @@ libraryDependencies ++= javaFXModules.map(m => "org.openjfx" % s"javafx-$m" % "1
 
 mainClass in (Compile, run) := Some("scalanes.mutable.Console")
 
-javaOptions in run += "-Xss100m"
+mainClass in assembly := Some("scalanes.mutable.Console")
+assemblyJarName in assembly := "scalanes.jar"
+
+assemblyMergeStrategy in assembly := {
+  case "module-info.class" => MergeStrategy.first
+  case x =>
+    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    oldStrategy(x)
+}
