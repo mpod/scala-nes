@@ -24,6 +24,7 @@ libraryDependencies ++= Seq(
   "org.scodec"                 %% "scodec-stream"   % "2.0.0",
   "co.fs2"                     %% "fs2-core"        % "2.4.0",
   "co.fs2"                     %% "fs2-io"          % "2.4.0",
+  "com.github.scopt"           %% "scopt"           % "4.0.0-RC2",
   "org.scalatest"              %% "scalatest"       % "3.0.8" % "test"
 )
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-Xcheckinit", "-encoding", "utf8", "-feature")
@@ -41,6 +42,6 @@ lazy val osName = System.getProperty("os.name") match {
 lazy val javaFXModules = Seq("base", "controls", "fxml", "graphics", "media", "swing", "web")
 libraryDependencies ++= javaFXModules.map(m => "org.openjfx" % s"javafx-$m" % "12.0.2" classifier osName)
 
-mainClass in (Compile, run) := Some("scalanes.immutable.Console")
+mainClass in (Compile, run) := Some("scalanes.mutable.Console")
 
 javaOptions in run += "-Xss100m"
