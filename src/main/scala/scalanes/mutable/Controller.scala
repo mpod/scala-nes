@@ -35,20 +35,18 @@ object Controller {
       (nes1, bit)
     }
 
-  val writeController1: State[NesState, Unit] =
+  val writeController1: NesState => NesState =
     nes => {
       val ctrl  = nes.controllerState
       val ctrl1 = ControllerState.controller1.set(ctrl.buttons)(ctrl)
-      val nes1  = NesState.controllerState.set(ctrl1)(nes)
-      (nes1, ())
+      NesState.controllerState.set(ctrl1)(nes)
     }
 
-  val writeController2: State[NesState, Unit] =
+  val writeController2: NesState => NesState =
     nes => {
       val ctrl  = nes.controllerState
       val ctrl1 = ControllerState.controller2.set(ctrl.buttons)(ctrl)
-      val nes1  = NesState.controllerState.set(ctrl1)(nes)
-      (nes1, ())
+      NesState.controllerState.set(ctrl1)(nes)
     }
 
 }

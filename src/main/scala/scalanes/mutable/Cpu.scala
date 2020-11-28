@@ -241,9 +241,9 @@ object Cpu extends LazyLogging {
     else if (address == 0x4015) // TODO: APU
       identity[NesState]
     else if (address == 0x4016 && (d & 0x01)) // Controller 1
-      Controller.writeController1.runS
+      Controller.writeController1
     else if (address == 0x4017 && (d & 0x01)) // Controller 2
-      Controller.writeController2.runS
+      Controller.writeController2
     else if (address < 0x6000)
       identity[NesState]
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
