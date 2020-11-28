@@ -1,7 +1,5 @@
 # scala-nes
-NES emulator written in Scala using functional programming practices. This means use of immutable data structures and 
-libraries like Cats, Cats Effect, FS2, and Monocle. Purpose of the project is to explore how Scala and functional 
-programming can be used in implementation of low-level applications.
+NES emulator written in Scala.
 
 ## Screenshots
 
@@ -14,13 +12,25 @@ programming can be used in implementation of low-level applications.
 ## Running
 Make sure to have Java and SBT in your PATH environment variable.
 
-    $ sbt run
+    $ sbt assembly
+    $ java -jar target/scala-2.12/scala-nes.jar src/test/resources/nestest.nes
     
-Repository contains a test image file at location `src/test/resources/nestest.nes`.
+## Controls
+
+Keyboard controls are:
+
+| Nintendo              | Emulator    |
+| --------------------- | ----------- |
+| Up, Down, Left, Right | Arrow Keys  |
+| Start                 | S           |
+| Select                | A           |
+| A                     | Z           |
+| B                     | X           |
     
 ## References
 * [OneLoneCoder's "NES Emulator From Scratch" YouTube Tutorial](https://www.youtube.com/channel/UC-yuWVUplUJZvieEligKBkA): 
 the main source of motivation for starting this project
 * [OneLoneCoder/olcNES emulator](https://github.com/OneLoneCoder/olcNES): video tutorial code
 * [NesDev](http://nesdev.com/): various NES resources
+* [nestest](http://nickmass.com/images/nestest.nes): famous test ROM 
 

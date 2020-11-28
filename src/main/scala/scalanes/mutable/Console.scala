@@ -52,9 +52,9 @@ class UI[F[_]](
         override def keyPressed(keyEvent: KeyEvent): Unit =
           F.runAsync {
             keyEvent.getKeyCode match {
-              case KeyEvent.VK_X =>
-                buttons.modify(x => (x | 0x80, x)) // A
               case KeyEvent.VK_Z =>
+                buttons.modify(x => (x | 0x80, x)) // A
+              case KeyEvent.VK_X =>
                 buttons.modify(x => (x | 0x40, x)) // B
               case KeyEvent.VK_A =>
                 buttons.modify(x => (x | 0x20, x)) // Select
@@ -77,9 +77,9 @@ class UI[F[_]](
         override def keyReleased(keyEvent: KeyEvent): Unit =
           F.runAsync {
             keyEvent.getKeyCode match {
-              case KeyEvent.VK_X =>
-                buttons.modify(x => (x & ~0x80, x)) // A
               case KeyEvent.VK_Z =>
+                buttons.modify(x => (x & ~0x80, x)) // A
+              case KeyEvent.VK_X =>
                 buttons.modify(x => (x & ~0x40, x)) // B
               case KeyEvent.VK_A =>
                 buttons.modify(x => (x & ~0x20, x)) // Select
