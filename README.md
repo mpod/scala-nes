@@ -6,9 +6,9 @@ programming can be used in implementation of low-level applications.
 ## Screenshots
 
 <p float="left">
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="276"/></kbd>
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="276"/></kbd>
-<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="276"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/nestest.png" width="256"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/donkey_kong.png" width="256"/></kbd>
+<kbd><img src="https://raw.github.com/mpod/scala-nes/master/docs/smb.png" width="256"/></kbd>
 </p>
 
 ## Running
@@ -18,11 +18,6 @@ Make sure to have Java and SBT in your PATH environment variable.
     
 Repository contains a test image file at location `src/test/resources/nestest.nes`.
     
-## Project status
-Project is actually a failure. It looks like functional programming is not efficient enough for implementing projects 
-like this. Creation of many objects makes JVM garbage collector quite busy which slows down the emulator. I'm still 
-experimenting with different techniques and tricks.
-
 ## References
 * [OneLoneCoder's "NES Emulator From Scratch" YouTube Tutorial](https://www.youtube.com/channel/UC-yuWVUplUJZvieEligKBkA): 
 the main source of motivation for starting this project
