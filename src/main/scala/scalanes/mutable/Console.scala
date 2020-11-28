@@ -37,6 +37,7 @@ class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boo
       })
       frame.addKeyListener(new KeyListener {
         override def keyTyped(keyEvent: KeyEvent): Unit = ()
+
         override def keyPressed(keyEvent: KeyEvent): Unit =
           F.runAsync {
             keyEvent.getKeyCode match {
@@ -61,7 +62,31 @@ class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boo
             }
           }(_ => IO.unit)
             .unsafeRunSync()
-        override def keyReleased(keyEvent: KeyEvent): Unit = ()
+
+        override def keyReleased(keyEvent: KeyEvent): Unit =
+          F.runAsync {
+            keyEvent.getKeyCode match {
+              case KeyEvent.VK_X =>
+                buttons.modify(x => (x & ~0x80, x)) // A
+              case KeyEvent.VK_Z =>
+                buttons.modify(x => (x & ~0x40, x)) // B
+              case KeyEvent.VK_A =>
+                buttons.modify(x => (x & ~0x20, x)) // Select
+              case KeyEvent.VK_S =>
+                buttons.modify(x => (x & ~0x10, x)) // Start
+              case KeyEvent.VK_UP =>
+                buttons.modify(x => (x & ~0x08, x)) // Up
+              case KeyEvent.VK_DOWN =>
+                buttons.modify(x => (x & ~0x04, x)) // Down
+              case KeyEvent.VK_LEFT =>
+                buttons.modify(x => (x & ~0x02, x)) // Left
+              case KeyEvent.VK_RIGHT =>
+                buttons.modify(x => (x & ~0x01, x)) // Right
+              case _ =>
+                F.pure(0)
+            }
+          }(_ => IO.unit)
+            .unsafeRunSync()
       })
       frame.setVisible(true)
       var frameStart = System.currentTimeMillis()
