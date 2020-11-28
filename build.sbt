@@ -11,45 +11,19 @@ scalacOptions += "-Ypartial-unification"
 addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
 
 libraryDependencies ++= Seq(
-  "org.typelevel"              %% "cats-core"       % "2.0.0",
   "org.typelevel"              %% "cats-effect"     % "2.0.0",
-  "eu.timepit"                 %% "refined"         % "0.9.10",
   "ch.qos.logback"              % "logback-classic" % "1.2.3",
   "com.typesafe.scala-logging" %% "scala-logging"   % "3.9.2",
-  "com.github.julien-truffaut" %% "monocle-core"    % "2.0.0",
-  "com.github.julien-truffaut" %% "monocle-macro"   % "2.0.0",
-  "com.github.julien-truffaut" %% "monocle-law"     % "2.0.0" % "test",
-  "org.scalafx"                %% "scalafx"         % "12.0.2-R18",
   "org.scodec"                 %% "scodec-core"     % "1.11.7",
   "org.scodec"                 %% "scodec-stream"   % "2.0.0",
   "co.fs2"                     %% "fs2-core"        % "2.4.0",
   "co.fs2"                     %% "fs2-io"          % "2.4.0",
   "com.github.scopt"           %% "scopt"           % "4.0.0-RC2",
-  "org.scalatest"              %% "scalatest"       % "3.0.8" % "test"
+  "org.scalatest"              %% "scalatest"       % "3.2.2" % "test"
 )
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-Xcheckinit", "-encoding", "utf8", "-feature")
 
-// Fork a new JVM for 'run' and 'test:run', to avoid JavaFX double initialization problems
-fork := true
+mainClass in (Compile, run) := Some("scalanes.Console")
 
-lazy val osName = System.getProperty("os.name") match {
-  case n if n.startsWith("Linux")   => "linux"
-  case n if n.startsWith("Mac")     => "mac"
-  case n if n.startsWith("Windows") => "win"
-  case _                            => throw new Exception("Unknown platform!")
-}
-
-lazy val javaFXModules = Seq("base", "controls", "fxml", "graphics", "media", "swing", "web")
-libraryDependencies ++= javaFXModules.map(m => "org.openjfx" % s"javafx-$m" % "12.0.2" classifier osName)
-
-mainClass in (Compile, run) := Some("scalanes.mutable.Console")
-
-mainClass in assembly := Some("scalanes.mutable.Console")
+mainClass in assembly := Some("scalanes.Console")
 assemblyJarName in assembly := "scala-nes.jar"
-
-assemblyMergeStrategy in assembly := {
-  case "module-info.class" => MergeStrategy.first
-  case x =>
-    val oldStrategy = (assemblyMergeStrategy in assembly).value
-    oldStrategy(x)
-}

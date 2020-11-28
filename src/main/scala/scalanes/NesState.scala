@@ -1,11 +1,11 @@
-package scalanes.mutable
+package scalanes
 
 import java.nio.file.Path
 
 import cats.effect.{Blocker, ContextShift, Sync}
 import fs2.{io, Stream}
-import scalanes.mutable.Mirroring.Mirroring
-import scalanes.mutable.mappers.{Mapper000, Mapper001}
+import Mirroring.Mirroring
+import scalanes.mappers.{Mapper000, Mapper001}
 import scodec.codecs.{conditional, fixedSizeBytes, ignore, uint8, vector}
 import scodec.stream.StreamDecoder
 import scodec.{Attempt, Decoder, Err}
@@ -31,7 +31,7 @@ object NesState {
     new NesState(
       ram = Vector.fill(0x800)(0x00),
       cpuState = CpuState(),
-      ppuState = PpuState(mirroring),
+      ppuState = scalanes.PpuState(mirroring),
       cartridge = cartridge,
       controllerState = ControllerState()
     )

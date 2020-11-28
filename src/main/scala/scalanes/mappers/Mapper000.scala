@@ -1,6 +1,6 @@
-package scalanes.mutable.mappers
+package scalanes.mappers
 
-import scalanes.mutable.{BankMap, Mapper, UInt16, UInt8}
+import scalanes.{BankMap, Mapper, UInt16, UInt8}
 
 class Mapper000(
   override val prgRom: Vector[UInt8],
@@ -30,5 +30,4 @@ class Mapper000(
   override def reset: Self = this
 }
 
-object Mapper000 {
-}
+object Mapper000 {}

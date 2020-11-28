@@ -1,4 +1,4 @@
-package scalanes.mutable
+package scalanes
 
 trait Cartridge {
   def prgRead(address: UInt16): UInt8

@@ -1,4 +1,5 @@
-package scalanes.mutable
+package scalanes
+
 import java.awt.{BorderLayout, Canvas, Color, Frame, Graphics, Graphics2D}
 import java.awt.event.{KeyEvent, KeyListener, WindowAdapter, WindowEvent}
 import java.awt.image.BufferedImage

@@ -1,7 +1,7 @@
-package scalanes.mutable
+package scalanes
 
-import org.scalatest.Matchers
 import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 
 class PpuTest extends AnyFlatSpec with Matchers {
   "Loopy" should "extract coarse x" in {

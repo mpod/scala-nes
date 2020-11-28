@@ -1,13 +1,11 @@
-package scalanes.mutable
+package scalanes
 
 import java.nio.file.Paths
-import java.util.concurrent.atomic.AtomicInteger
 
-import cats.effect.concurrent.Ref
 import cats.effect.{Blocker, ContextShift, IO}
 import fs2.{io, text, Stream}
-import org.scalatest.Matchers
 import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 
 import scala.concurrent.ExecutionContext
 

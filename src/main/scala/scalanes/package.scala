@@ -1,7 +1,3 @@
-package scalanes
-
-import java.util.concurrent.atomic.AtomicInteger
-
 import cats.Monad
 import cats.effect.IO
 import fs2.concurrent.SignallingRef
@@ -9,7 +5,7 @@ import fs2.concurrent.SignallingRef
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
-package object mutable {
+package object scalanes {
 
   type UInt1  = Int
   type UInt2  = Int

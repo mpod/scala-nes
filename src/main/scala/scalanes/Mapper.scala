@@ -1,4 +1,4 @@
-package scalanes.mutable
+package scalanes
 
 import scala.annotation.tailrec
 

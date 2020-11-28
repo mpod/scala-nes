@@ -1,7 +1,7 @@
-package scalanes.mutable
+package scalanes
 
-import scalanes.mutable.Mirroring.Mirroring
-import scalanes.mutable.SpritePriority.SpritePriority
+import Mirroring.Mirroring
+import SpritePriority.SpritePriority
 
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -737,7 +737,7 @@ object Ppu {
           (lo, hi)
     )(nes)
 
-    val spriteInfo = SpriteInfo(x, palette, priority, spriteLo, spriteHi, i)
+    val spriteInfo = scalanes.SpriteInfo(x, palette, priority, spriteLo, spriteHi, i)
 
     (nes1, spriteInfo)
   }

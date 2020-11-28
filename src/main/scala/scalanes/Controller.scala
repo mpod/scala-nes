@@ -1,4 +1,4 @@
-package scalanes.mutable
+package scalanes
 
 class ControllerState(
   var buttons: UInt8,
