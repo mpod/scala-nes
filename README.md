@@ -29,7 +29,7 @@ Keyboard controls are:
     
 ## References
 * [OneLoneCoder's "NES Emulator From Scratch" YouTube Tutorial](https://www.youtube.com/channel/UC-yuWVUplUJZvieEligKBkA): 
-the main source of motivation for starting this project
+the main source of motivation
 * [OneLoneCoder/olcNES emulator](https://github.com/OneLoneCoder/olcNES): video tutorial code
 * [NesDev](http://nesdev.com/): various NES resources
 * [nestest](http://nickmass.com/images/nestest.nes): famous test ROM 
