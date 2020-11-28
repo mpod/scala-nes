@@ -25,7 +25,7 @@ class UI[F[_]](buttons: SignallingRef[F, Int], interrupter: SignallingRef[F, Boo
         override def update(g: Graphics): Unit = render(g)
         private def render(g: Graphics): Unit  = g.asInstanceOf[Graphics2D].drawImage(bufferedImageA, 0, 0, null)
       }
-      val frame = new Frame("ScalNES Console")
+      val frame = new Frame("ScalaNES Console")
       frame.setSize(width, height)
       frame.setLayout(new BorderLayout())
       frame.add(canvas)
