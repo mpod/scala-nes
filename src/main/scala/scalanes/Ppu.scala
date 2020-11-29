@@ -564,9 +564,8 @@ object Ppu {
   val readData: State[NesState, UInt8] =
     State.get[NesState].flatMap { nes =>
       val fetch =
-        // Address is below palettes
         if ((nes.ppuState.v & 0x3fff) < 0x3f00) {
-          // Take data from the buffer
+          // Address is below palettes, so take data from the buffer
           ppuRead(nes.ppuState.v).map(buffer => (buffer, nes.ppuState.bufferedData))
         } else {
           // Take data from VRAM
@@ -597,7 +596,7 @@ object Ppu {
   }
 
   def ppuWrite(address: UInt16, d: UInt8): NesState => NesState = {
-    require((address & 0x3fff) == address, s"address ${hex(address)}")
+    require((address & 0x3fff) == address, s"Invalid address ${hex(address)}")
     if (address >= 0x0000 && address <= 0x1fff)
       Cartridge.ppuWrite(address, d) // Patterns
     else if (address >= 0x2000 && address <= 0x3eff)

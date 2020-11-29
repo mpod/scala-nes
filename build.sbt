@@ -6,10 +6,6 @@ scalaVersion := "2.12.8"
 
 resolvers += Resolver.sonatypeRepo("releases")
 
-scalacOptions += "-Ypartial-unification"
-
-addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
-
 libraryDependencies ++= Seq(
   "org.typelevel"              %% "cats-effect"     % "2.0.0",
   "ch.qos.logback"              % "logback-classic" % "1.2.3",

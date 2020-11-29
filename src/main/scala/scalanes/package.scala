@@ -1,8 +1,3 @@
-import cats.Monad
-import cats.effect.IO
-import fs2.concurrent.SignallingRef
-
-import scala.annotation.tailrec
 import scala.language.implicitConversions
 
 package object scalanes {
@@ -14,16 +9,6 @@ package object scalanes {
   type UInt8  = Int
   type UInt15 = Int
   type UInt16 = Int
-
-  type ControllerRef = SignallingRef[IO, Int]
-
-  def isValidUInt1(v: UInt1): Boolean   = (v & 0x01) == v
-  def isValidUInt2(v: UInt2): Boolean   = (v & 0x03) == v
-  def isValidUInt3(v: UInt3): Boolean   = (v & 0x07) == v
-  def isValidUInt5(v: UInt5): Boolean   = (v & 0x1f) == v
-  def isValidUInt8(v: UInt8): Boolean   = (v & 0xff) == v
-  def isValidUInt15(v: UInt15): Boolean = (v & 0x7fff) == v
-  def isValidUInt16(v: UInt16): Boolean = (v & 0xffff) == v
 
   implicit def intToBoolean(v: Int): Boolean = v != 0
 
@@ -69,26 +54,6 @@ package object scalanes {
     def inspect[S, T](f: S => T): State[S, T]     = s => (s, f(s))
     def get[S]: State[S, S]                       = s => (s, s)
     def set[S](s: S): State[S, Unit]              = _ => (s, ())
-
-    implicit val stateMonad: Monad[State[NesState, *]] = new Monad[State[NesState, *]] {
-      def flatMap[A, B](fa: State[NesState, A])(f: A => State[NesState, B]): State[NesState, B] =
-        s => {
-          val (nextS, a) = fa(s)
-          f(a)(nextS)
-        }
-
-      def pure[A](a: A): State[NesState, A] = State.pure(a)
-
-      def tailRecM[A, B](a: A)(f: A => State[NesState, Either[A, B]]): State[NesState, B] =
-        (s: NesState) => {
-          @tailrec
-          def step(thisA: A): (NesState, B) = f(thisA)(s) match {
-            case (nextS, Right(b)) => (nextS, b)
-            case (_, Left(nextA))  => step(nextA)
-          }
-          step(a)
-        }
-    }
   }
 
   abstract class Setter[S, A] {

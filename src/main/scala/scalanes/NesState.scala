@@ -41,8 +41,6 @@ object NesState {
     NesState.controllerState.set(ctrl)(nes)
   }
 
-  def dummy: State[NesState, NesState] = State.get
-
   val reset: NesState => NesState = Cpu.reset andThen Ppu.reset andThen Cartridge.reset
 
   def clock(nes: NesState): NesState = {
