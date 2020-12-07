@@ -17,7 +17,8 @@ class NesState(
   var cpuState: CpuState,
   var ppuState: PpuState,
   var cartridge: Cartridge,
-  var controllerState: ControllerState
+  var controllerState: ControllerState,
+  var apuState: ApuState
 )
 
 object NesState {
@@ -26,14 +27,16 @@ object NesState {
   val ppuState: Setter[NesState, PpuState]               = (a, s) => s.ppuState = a
   val cartridge: Setter[NesState, Cartridge]             = (a, s) => s.cartridge = a
   val controllerState: Setter[NesState, ControllerState] = (a, s) => s.controllerState = a
+  val apuState: Setter[NesState, ApuState]               = (a, s) => s.apuState = a
 
   def apply(mirroring: Mirroring, cartridge: Cartridge): NesState =
     new NesState(
       ram = Vector.fill(0x800)(0x00),
       cpuState = CpuState(),
-      ppuState = scalanes.PpuState(mirroring),
+      ppuState = PpuState(mirroring),
       cartridge = cartridge,
-      controllerState = ControllerState()
+      controllerState = ControllerState(),
+      apuState = ApuState()
     )
 
   def setButtons(buttons: UInt8)(nes: NesState): NesState = {

@@ -5,8 +5,11 @@ package object scalanes {
   type UInt1  = Int
   type UInt2  = Int
   type UInt3  = Int
+  type UInt4  = Int
   type UInt5  = Int
+  type UInt7  = Int
   type UInt8  = Int
+  type UInt11 = Int
   type UInt15 = Int
   type UInt16 = Int
 
@@ -58,7 +61,7 @@ package object scalanes {
 
   abstract class Setter[S, A] {
     protected def _set(a: A, s: S): Unit
-    def set(a: A)(s: S): S = {
+    def set[T <: S](a: A)(s: T): T = {
       _set(a, s)
       s
     }
