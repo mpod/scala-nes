@@ -350,6 +350,8 @@ object Apu {
             val nes2 = clockLengthCounter(nes1)
             val nes3 = clockSweep(nes2)
             triggerIrq(nes3)
+          case _ =>
+            nes
         }
       else
         nes.cpuState.cycles % 37282 match {
@@ -359,6 +361,8 @@ object Apu {
             val nes1 = clockEnvelope(nes)
             val nes2 = clockLengthCounter(nes1)
             clockSweep(nes2)
+          case _ =>
+            nes
         }
     clockTimer(nes1)
   }

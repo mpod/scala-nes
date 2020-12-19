@@ -230,16 +230,16 @@ object Cpu extends LazyLogging {
       NesState.ram.set(address, d)
     else if (address >= 0x2000 && address < 0x4000) // PPU registers
       Ppu.cpuWrite(0x2000 + (address & 0x7), d)
-    else if (address >= 0x4000 && address < 0x4014) // TODO: APU
-      identity[NesState]
+    else if (address >= 0x4000 && address < 0x4014) // APU registers
+      Apu.cpuWrite(address, d)
     else if (address == 0x4014) // OAM DMA
       (nes: NesState) => {
         val delta = if ((nes.cpuState.cycles + 513) % 2 == 1) 513 + 1 else 513
         val nes1  = incCycles(delta, nes)
         Ppu.cpuWrite(address, d)(nes1)
       }
-    else if (address == 0x4015) // TODO: APU
-      identity[NesState]
+    else if (address == 0x4015) // APU registers
+      Apu.cpuWrite(address, d)
     else if (address == 0x4016 && (d & 0x01)) // Controller 1
       Controller.writeController1
     else if (address == 0x4017 && (d & 0x01)) // Controller 2

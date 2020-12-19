@@ -50,6 +50,7 @@ object NesState {
     val cpuCycles = nes.cpuState.cycles
     val nes1      = Cpu.clock(nes)
     var ppuCycles = (nes1.cpuState.cycles - cpuCycles) * 3
+    var apuCycles = nes1.cpuState.cycles - cpuCycles
     var nes2      = nes1
     while (ppuCycles > 0) {
       nes2 = Ppu.clock(nes2)
@@ -59,6 +60,10 @@ object NesState {
         Cpu.nmi.runS(nes2)
       } else nes2
       ppuCycles -= 1
+    }
+    while (apuCycles > 0) {
+      nes2 = Apu.clock(nes2)
+      apuCycles -= 1
     }
     nes2
   }
