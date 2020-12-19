@@ -5,8 +5,12 @@ class ApuState(
   var pulse2: PulseState.PulseChannel2,
   var triangle: TriangleState,
   var noise: NoiseState,
-  var dmc: DmcState
-)
+  var dmc: DmcState,
+  var frameCounterReg: UInt8
+) {
+  def frameCounterMode: Int         = (frameCounterReg >> 7) & 0x1
+  def interruptInhibitFlag: Boolean = (frameCounterReg >> 6) & 0x1
+}
 
 object ApuState {
   val pulse1: Setter[ApuState, PulseState.PulseChannel1] = (a, s) => s.pulse1 = a
@@ -14,6 +18,7 @@ object ApuState {
   val triangle: Setter[ApuState, TriangleState]          = (a, s) => s.triangle = a
   val noise: Setter[ApuState, NoiseState]                = (a, s) => s.noise = a
   val dmc: Setter[ApuState, DmcState]                    = (a, s) => s.dmc = a
+  val frameCounterReg: Setter[ApuState, UInt8]           = (a, s) => s.frameCounterReg = a
 
   def apply(): ApuState =
     new ApuState(
@@ -21,7 +26,8 @@ object ApuState {
       pulse2 = PulseState.channel2(),
       triangle = TriangleState(),
       noise = NoiseState(),
-      dmc = DmcState()
+      dmc = DmcState(),
+      frameCounterReg = 0x00
     )
 }
 
@@ -52,7 +58,6 @@ class PulseState(
   def sweepShift: UInt3              = reg1 & 0x07
   def lengthCounterHalt: Boolean     = (reg0 >> 5) & 0x01
   def lengthCounterLoad: UInt5       = (reg3 >> 3) & 0x1f
-//  def timerPeriod: UInt11            = ((reg3 & 0x07) << 8) | reg2
 }
 
 object PulseState {
@@ -115,15 +120,15 @@ object PulseState {
       sequenceCounterValue = 0
     ) with Channel2
 
-  def clockEnvelope(p: PulseChannel): PulseChannel =
+  def clockEnvelope[T <: PulseChannel](p: T): T =
     if (p.envelopeStart) {
       val p1 = envelopeStart.set(false)(p)
       val p2 = envelopeDecayLevelCounter.set(0xf)(p1)
       val p3 = envelopeDividerValue.set(p2.envelopeDividerPeriod)(p2)
       p3
-    } else if (p.envelopeDividerValue > 0)
+    } else if (p.envelopeDividerValue > 0) {
       envelopeDividerValue.set(p.envelopeDividerValue - 1)(p)
-    else {
+    } else {
       val p1 = envelopeDividerValue.set(p.envelopeDividerPeriod)(p)
       val p2 =
         if (p1.envelopeDecayLevelCounter > 0)
@@ -135,7 +140,7 @@ object PulseState {
       p2
     }
 
-  def clockSweep(p: PulseChannel): PulseChannel =
+  def clockSweep[T <: PulseChannel](p: T): T =
     if (p.sweepDividerValue == 0 || p.sweepReload) {
       val p1 = if (p.sweepDividerValue == 0 && p.sweepEnabled && p.timerValue > 8) {
         val changeAmount = p.timerPeriod >> p.sweepShift
@@ -152,13 +157,13 @@ object PulseState {
     } else
       sweepDividerValue.set(p.sweepDividerValue - 1)(p)
 
-  def clockLengthCounter(p: PulseChannel): PulseChannel =
+  def clockLengthCounter[T <: PulseChannel](p: T): T =
     if (p.lengthCounterValue > 0 && !p.lengthCounterHalt)
       lengthCounterValue.set(p.lengthCounterValue - 1)(p)
     else
       p
 
-  def clockTimer(p: PulseChannel): PulseChannel =
+  def clockTimer[T <: PulseChannel](p: T): T =
     if (p.timerValue == 0) {
       val p1 = timerValue.set(p.timerPeriod)(p)
       val p2 = sequenceCounterValue.set((p.sequenceCounterValue + 1) % 8)(p1)
@@ -257,6 +262,12 @@ object Apu {
     nes1
   }
 
+  def setFrameCounterReg(d: UInt8)(nes: NesState): NesState = {
+    val apu  = ApuState.frameCounterReg.set(d)(nes.apuState)
+    val nes1 = NesState.apuState.set(apu)(nes)
+    nes1
+  }
+
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
     nes => {
       require(address >= 0x4000 && address <= 0x4017 && address != 0x4014, f"Invalid address $address%#04x")
@@ -267,17 +278,29 @@ object Apu {
         case 0x4001 =>
           setPulse1(PulseState.reg1.set(d)(nes.apuState.pulse1))(nes)
         case 0x4002 =>
-          setPulse1(PulseState.reg2.set(d)(nes.apuState.pulse1))(nes)
+          val p  = nes.apuState.pulse1
+          val p1 = PulseState.reg2.set(d)(p)
+          val p2 = PulseState.timerPeriod.set(((p1.reg3 & 0x07) << 8) | d)(p1)
+          setPulse1(p2)(nes)
         case 0x4003 =>
-          setPulse1(PulseState.reg3.set(d)(nes.apuState.pulse1))(nes)
+          val p  = nes.apuState.pulse1
+          val p1 = PulseState.reg3.set(d)(p)
+          val p2 = PulseState.timerPeriod.set(((d & 0x07) << 8) | p1.reg2)(p1)
+          setPulse1(p2)(nes)
         case 0x4004 =>
           setPulse2(PulseState.reg0.set(d)(nes.apuState.pulse2))(nes)
         case 0x4005 =>
           setPulse2(PulseState.reg1.set(d)(nes.apuState.pulse2))(nes)
         case 0x4006 =>
-          setPulse2(PulseState.reg2.set(d)(nes.apuState.pulse2))(nes)
+          val p  = nes.apuState.pulse2
+          val p1 = PulseState.reg2.set(d)(p)
+          val p2 = PulseState.timerPeriod.set(((p1.reg3 & 0x07) << 8) | d)(p1)
+          setPulse2(p2)(nes)
         case 0x4007 =>
-          setPulse2(PulseState.reg3.set(d)(nes.apuState.pulse2))(nes)
+          val p  = nes.apuState.pulse2
+          val p1 = PulseState.reg3.set(d)(p)
+          val p2 = PulseState.timerPeriod.set(((d & 0x07) << 8) | p1.reg2)(p1)
+          setPulse2(p2)(nes)
         case 0x4008 =>
           setTriangle(TriangleState.reg0.set(d)(nes.apuState.triangle))(nes)
         case 0x4009 =>
@@ -303,10 +326,71 @@ object Apu {
         case 0x4013 =>
           setDmc(DmcState.reg3.set(d)(nes.apuState.dmc))(nes)
         case 0x4015 =>
-          nes
+          val nes1 = setPulse1(PulseState.lengthCounterEnabled.set(d & 0x01)(nes.apuState.pulse1))(nes)
+          val nes2 = setPulse2(PulseState.lengthCounterEnabled.set(d & 0x02)(nes.apuState.pulse2))(nes1)
+          nes2
         case 0x4017 =>
-          nes
+          setFrameCounterReg(d)(nes)
         case _ => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
       }
     }
+
+  def clock(nes: NesState): NesState = {
+    val nes1 =
+      if (nes.apuState.frameCounterMode == 0)
+        nes.cpuState.cycles % 29830 match {
+          case 7457 | 22371 =>
+            clockEnvelope(nes)
+          case 14913 =>
+            val nes1 = clockEnvelope(nes)
+            val nes2 = clockLengthCounter(nes1)
+            clockSweep(nes2)
+          case 29829 =>
+            val nes1 = clockEnvelope(nes)
+            val nes2 = clockLengthCounter(nes1)
+            val nes3 = clockSweep(nes2)
+            triggerIrq(nes3)
+        }
+      else
+        nes.cpuState.cycles % 37282 match {
+          case 7457 | 22371 =>
+            clockEnvelope(nes)
+          case 14913 | 37281 =>
+            val nes1 = clockEnvelope(nes)
+            val nes2 = clockLengthCounter(nes1)
+            clockSweep(nes2)
+        }
+    clockTimer(nes1)
+  }
+
+  def clockEnvelope(nes: NesState): NesState = {
+    val apu  = nes.apuState
+    val apu1 = ApuState.pulse1.set(PulseState.clockEnvelope(apu.pulse1))(apu)
+    val apu2 = ApuState.pulse2.set(PulseState.clockEnvelope(apu.pulse2))(apu1)
+    NesState.apuState.set(apu2)(nes)
+  }
+
+  def clockSweep(nes: NesState): NesState = {
+    val apu  = nes.apuState
+    val apu1 = ApuState.pulse1.set(PulseState.clockSweep(apu.pulse1))(apu)
+    val apu2 = ApuState.pulse2.set(PulseState.clockSweep(apu.pulse2))(apu1)
+    NesState.apuState.set(apu2)(nes)
+  }
+
+  def clockLengthCounter(nes: NesState): NesState = {
+    val apu  = nes.apuState
+    val apu1 = ApuState.pulse1.set(PulseState.clockLengthCounter(apu.pulse1))(apu)
+    val apu2 = ApuState.pulse2.set(PulseState.clockLengthCounter(apu.pulse2))(apu1)
+    NesState.apuState.set(apu2)(nes)
+  }
+
+  def clockTimer(nes: NesState): NesState =
+    if (nes.cpuState.cycles % 2 == 0) {
+      val apu  = nes.apuState
+      val apu1 = ApuState.pulse1.set(PulseState.clockTimer(apu.pulse1))(apu)
+      val apu2 = ApuState.pulse2.set(PulseState.clockTimer(apu.pulse2))(apu1)
+      NesState.apuState.set(apu2)(nes)
+    } else nes
+
+  def triggerIrq(nes: NesState): NesState = nes
 }
