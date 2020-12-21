@@ -1,15 +1,15 @@
 package scalanes
 
-import java.awt.{BorderLayout, Canvas, Color, Frame, Graphics, Graphics2D}
-import java.awt.event.{KeyEvent, KeyListener, WindowAdapter, WindowEvent}
-import java.awt.image.BufferedImage
-import java.nio.file.Path
-
-import cats.effect.{Effect, ExitCode, IO, IOApp}
+import cats.effect.{Concurrent, Effect, ExitCode, IO, IOApp}
 import fs2.Stream
-import fs2.concurrent.SignallingRef
+import fs2.concurrent.{Queue, SignallingRef}
 import scopt.{OParser, Read}
 
+import java.awt.event.{KeyEvent, KeyListener, WindowAdapter, WindowEvent}
+import java.awt.image.BufferedImage
+import java.awt.{Canvas, Frame, Graphics, Graphics2D}
+import java.nio.file.Path
+import javax.sound.sampled.{AudioFormat, AudioSystem, SourceDataLine}
 import scala.concurrent.duration.DurationInt
 import scala.language.higherKinds
 
@@ -24,7 +24,7 @@ class UI[F[_]](
   config: Config
 )(implicit F: Effect[F]) {
 
-  def start: Stream[F, Array[Int] => Unit] =
+  def start(): Stream[F, Array[Int] => Unit] =
     Stream.eval(F.delay {
       val width          = 2 * 256
       val height         = 2 * 240
@@ -32,14 +32,12 @@ class UI[F[_]](
       var bufferedImageB = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
       val canvas: Canvas = new Canvas {
         setSize(width, height)
-        setBackground(Color.WHITE)
         override def paint(g: Graphics): Unit  = render(g)
         override def update(g: Graphics): Unit = render(g)
         private def render(g: Graphics): Unit  = g.asInstanceOf[Graphics2D].drawImage(bufferedImageA, 0, 0, null)
       }
       val frame = new Frame("ScalaNES Console")
       frame.setSize(width, height)
-      frame.setLayout(new BorderLayout())
       frame.add(canvas)
       frame.addWindowListener(new WindowAdapter() {
         override def windowClosing(we: WindowEvent): Unit = {
@@ -124,6 +122,38 @@ class UI[F[_]](
     })
 }
 
+class Audio[F[_]](
+  interrupter: SignallingRef[F, Boolean],
+  queue: Queue[F, Byte]
+)(implicit F: Effect[F], c: Concurrent[F]) {
+  private def startLine(): Stream[F, SourceDataLine] =
+    Stream
+      .bracket(F.delay {
+        val frequency = 44100
+        val af        = new AudioFormat(frequency, 8, 2, true, false)
+        val sdl       = AudioSystem.getSourceDataLine(af)
+        sdl.open(af)
+        sdl.start()
+        sdl
+      })(sdl =>
+        F.delay {
+          sdl.drain()
+          sdl.stop()
+          sdl.close()
+        }
+      )
+      .interruptWhen(interrupter)
+
+  def start(): Stream[F, Unit] =
+    for {
+      line <- startLine()
+      d    <- queue.dequeue
+      _ <- Stream.eval(F.delay {
+        line.write(Array.apply(d), 0, 1)
+      })
+    } yield Unit
+}
+
 object Console extends IOApp {
 
   implicit val pathRead: Read[Path] = Read.reads(Path.of(_))
@@ -151,10 +181,12 @@ object Console extends IOApp {
     val stream: Stream[IO, Unit] = for {
       buttons     <- Stream.eval(SignallingRef[IO, Int](0))
       interrupter <- Stream.eval(SignallingRef[IO, Boolean](false))
+      queue       <- Stream.eval(Queue.circularBuffer[IO, Byte](8))
       config      <- Stream.eval(IO.pure(parseArgs(args))).collect { case Some(c) => c }
-      ui = new UI[IO](buttons, interrupter, config)
-      updateCanvas <- ui.start
-      _ <- NesState
+      ui    = new UI[IO](buttons, interrupter, config)
+      audio = new Audio[IO](interrupter, queue)
+      updateCanvas <- ui.start()
+      game = NesState
         .fromFile[IO](config.image)
         .head
         .map(NesState.reset)
@@ -171,6 +203,7 @@ object Console extends IOApp {
         }
         .metered(16.milliseconds)
         .interruptWhen(interrupter)
+      _ <- Stream(audio.start(), game).parJoin(2).drain
     } yield ()
     stream.compile.drain.as(ExitCode.Success)
   }

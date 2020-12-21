@@ -76,6 +76,14 @@ object PulseState {
   val timerValue: Setter[PulseState, UInt11]               = (a, s) => s.timerValue = a
   val sequenceCounterValue: Setter[PulseState, UInt4]      = (a, s) => s.sequenceCounterValue = a
 
+  val dutySequences: Vector[Vector[Int]] =
+    Vector(
+      Vector(0, 1, 0, 0, 0, 0, 0, 0),
+      Vector(0, 1, 1, 0, 0, 0, 0, 0),
+      Vector(0, 1, 1, 1, 1, 0, 0, 0),
+      Vector(1, 0, 0, 1, 1, 1, 1, 1)
+    )
+
   sealed trait Channel
   trait Channel1 extends Channel
   trait Channel2 extends Channel
@@ -119,6 +127,14 @@ object PulseState {
       timerValue = 0,
       sequenceCounterValue = 0
     ) with Channel2
+
+  def disableLengthCounter[T <: PulseChannel](p: T): T = {
+    val p1 = lengthCounterEnabled.set(false)(p)
+    lengthCounterValue.set(0)(p1)
+  }
+
+  def enableLengthCounter[T <: PulseChannel](p: T): T =
+    lengthCounterEnabled.set(true)(p)
 
   def clockEnvelope[T <: PulseChannel](p: T): T =
     if (p.envelopeStart) {
@@ -170,6 +186,14 @@ object PulseState {
       p2
     } else
       timerValue.set(p.timerValue - 1)(p)
+
+  def output[T <: PulseChannel](p: T): Int =
+    if (!p.lengthCounterEnabled) 0
+    else if (p.lengthCounterValue == 0) 0
+    else if (dutySequences(p.dutyMode)(p.sequenceCounterValue) == 0) 0
+    else if (p.timerPeriod < 8 || p.timerPeriod > 0x7ff) 0
+    else if (p.envelopeLoopEnabled) p.envelopeDividerValue
+    else p.constantVolume
 }
 
 class TriangleState(
@@ -190,6 +214,8 @@ object TriangleState {
   val reg3: Setter[TriangleState, UInt8] = (a, s) => s.reg3 = a
 
   def apply(): TriangleState = new TriangleState(0x00, 0x00, 0x00)
+
+  def output(t: TriangleState): Int = 0
 }
 
 class NoiseState(
@@ -213,6 +239,8 @@ object NoiseState {
   val reg3: Setter[NoiseState, UInt8] = (a, s) => s.reg3 = a
 
   def apply(): NoiseState = new NoiseState(0x00, 0x00, 0x00)
+
+  def output(n: NoiseState): Int = 0
 }
 
 class DmcState(
@@ -229,9 +257,14 @@ object DmcState {
   val reg3: Setter[DmcState, UInt8] = (a, s) => s.reg3 = a
 
   def apply(): DmcState = new DmcState(0x00, 0x00, 0x00, 0x00)
+
+  def output(d: DmcState): Int = 0
 }
 
 object Apu {
+  val pulseTable: Vector[Float] = (0 to 15).map(i => 95.52f / (8128.0f / i + 100)).toVector
+  val tndTable: Vector[Float]   = (0 to 202).map(i => 163.67f / (24329.0f / i + 100)).toVector
+
   def setPulse1(pulse: PulseState.PulseChannel1)(nes: NesState): NesState = {
     val apu  = ApuState.pulse1.set(pulse)(nes.apuState)
     val nes1 = NesState.apuState.set(apu)(nes)
@@ -326,9 +359,15 @@ object Apu {
         case 0x4013 =>
           setDmc(DmcState.reg3.set(d)(nes.apuState.dmc))(nes)
         case 0x4015 =>
-          val nes1 = setPulse1(PulseState.lengthCounterEnabled.set(d & 0x01)(nes.apuState.pulse1))(nes)
-          val nes2 = setPulse2(PulseState.lengthCounterEnabled.set(d & 0x02)(nes.apuState.pulse2))(nes1)
-          nes2
+          val apu = nes.apuState
+          val p1 =
+            if (d & 0x01) PulseState.enableLengthCounter(apu.pulse1)
+            else PulseState.disableLengthCounter(apu.pulse1)
+          val nes1 = setPulse1(p1)(nes)
+          val p2 =
+            if (d & 0x01) PulseState.enableLengthCounter(apu.pulse2)
+            else PulseState.disableLengthCounter(apu.pulse2)
+          setPulse2(p2)(nes1)
         case 0x4017 =>
           setFrameCounterReg(d)(nes)
         case _ => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
@@ -395,6 +434,16 @@ object Apu {
       val apu2 = ApuState.pulse2.set(PulseState.clockTimer(apu.pulse2))(apu1)
       NesState.apuState.set(apu2)(nes)
     } else nes
+
+  def mix(nes: NesState): Float = {
+    val apu = nes.apuState
+    val p1  = PulseState.output(apu.pulse1)
+    val p2  = PulseState.output(apu.pulse2)
+    val t   = TriangleState.output(apu.triangle)
+    val n   = NoiseState.output(apu.noise)
+    val d   = DmcState.output(apu.dmc)
+    pulseTable(p1 + p2) + tndTable(t + n + d)
+  }
 
   def triggerIrq(nes: NesState): NesState = nes
 }
