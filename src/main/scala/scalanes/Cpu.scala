@@ -203,6 +203,8 @@ object Cpu extends LazyLogging {
       State.inspect(_.ram(address % 0x800))
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
       Ppu.cpuRead(address)
+    else if (address == 0x4015) // APU register
+      Apu.cpuRead(0x4015)
     else if (address == 0x4016) // Controller 1
       Controller.serialReadController1
     else if (address == 0x4017) // Controller 2
@@ -241,9 +243,9 @@ object Cpu extends LazyLogging {
     else if (address == 0x4015) // APU registers
       Apu.cpuWrite(address, d)
     else if (address == 0x4016 && (d & 0x01)) // Controller 1
-      Controller.writeController1
-    else if (address == 0x4017 && (d & 0x01)) // Controller 2
-      Controller.writeController2
+      (nes: NesState) => Controller.writeController2(Controller.writeController1(nes))
+    else if (address == 0x4017 && (d & 0x01)) // APU registers
+      Apu.cpuWrite(address, d)
     else if (address < 0x6000)
       identity[NesState]
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge

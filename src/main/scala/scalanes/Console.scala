@@ -129,9 +129,9 @@ class Audio[F[_]](
   private def startLine(): Stream[F, SourceDataLine] =
     Stream
       .bracket(F.delay {
-        val frequency = 44100
-        val af        = new AudioFormat(frequency, 8, 2, true, false)
-        val sdl       = AudioSystem.getSourceDataLine(af)
+        val sampleRate = 44100
+        val af         = new AudioFormat(sampleRate, 8, 1, true, false)
+        val sdl        = AudioSystem.getSourceDataLine(af)
         sdl.open(af)
         sdl.start()
         sdl
@@ -151,7 +151,7 @@ class Audio[F[_]](
       _ <- Stream.eval(F.delay {
         line.write(Array.apply(d), 0, 1)
       })
-    } yield Unit
+    } yield ()
 }
 
 object Console extends IOApp {
@@ -187,7 +187,7 @@ object Console extends IOApp {
       audio = new Audio[IO](interrupter, queue)
       updateCanvas <- ui.start()
       game = NesState
-        .fromFile[IO](config.image)
+        .fromFile[IO](config.image, queue)
         .head
         .map(NesState.reset)
         .flatMap { initial =>

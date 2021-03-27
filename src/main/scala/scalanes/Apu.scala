@@ -1,12 +1,18 @@
 package scalanes
 
+import cats.effect.IO
+import fs2.concurrent.Queue
+
 class ApuState(
   var pulse1: PulseState.PulseChannel1,
   var pulse2: PulseState.PulseChannel2,
   var triangle: TriangleState,
   var noise: NoiseState,
   var dmc: DmcState,
-  var frameCounterReg: UInt8
+  var frameCounterReg: UInt8,
+  val filter: Filter,
+  var cycles: Long,
+  val queue: Queue[IO, Byte]
 ) {
   def frameCounterMode: Int         = (frameCounterReg >> 7) & 0x1
   def interruptInhibitFlag: Boolean = (frameCounterReg >> 6) & 0x1
@@ -19,15 +25,19 @@ object ApuState {
   val noise: Setter[ApuState, NoiseState]                = (a, s) => s.noise = a
   val dmc: Setter[ApuState, DmcState]                    = (a, s) => s.dmc = a
   val frameCounterReg: Setter[ApuState, UInt8]           = (a, s) => s.frameCounterReg = a
+  val cycles: Setter[ApuState, Long]                     = (a, s) => s.cycles = a
 
-  def apply(): ApuState =
+  def apply(queue: Queue[IO, Byte]): ApuState =
     new ApuState(
       pulse1 = PulseState.channel1(),
       pulse2 = PulseState.channel2(),
       triangle = TriangleState(),
       noise = NoiseState(),
       dmc = DmcState(),
-      frameCounterReg = 0x00
+      frameCounterReg = 0x00,
+      filter = FilterChain.default,
+      cycles = 0L,
+      queue = queue
     )
 }
 
@@ -261,9 +271,67 @@ object DmcState {
   def output(d: DmcState): Int = 0
 }
 
+trait Filter {
+  def step(x: Float): Float
+}
+
+class FirstOrderFilter(
+  var b0: Float,
+  var b1: Float,
+  var a1: Float,
+  var prevX: Float,
+  var prevY: Float
+) extends Filter {
+  override def step(x: Float): Float = {
+    val y = b0 * x + b1 * prevX - a1 * prevY
+    prevY = y
+    prevX = x
+    y
+  }
+}
+
+object FirstOrderFilter {
+  def lowPassFilter(sampleRate: Float, cutoffFreq: Float): FirstOrderFilter = {
+    val c  = sampleRate / math.Pi.toFloat / cutoffFreq
+    val a0 = 1 / (1 + c)
+    new FirstOrderFilter(b0 = a0, b1 = a0, a1 = (1 - c) * a0, 0, 0)
+  }
+
+  def highPassFilter(sampleRate: Float, cutoffFreq: Float): FirstOrderFilter = {
+    val c  = sampleRate / math.Pi.toFloat / cutoffFreq
+    val a0 = 1 / (1 + c)
+    new FirstOrderFilter(b0 = c * a0, b1 = -c * a0, a1 = (1 - c) * a0, 0, 0)
+  }
+}
+
+class FilterChain(filters: List[Filter]) extends Filter {
+  override def step(x: Float): Float =
+    filters.foldLeft(x)((x, filter) => filter.step(x))
+}
+
+object FilterChain {
+  def default: FilterChain = {
+    val sampleRate = 44100
+    new FilterChain(
+      List(
+        FirstOrderFilter.highPassFilter(sampleRate, 90),
+        FirstOrderFilter.highPassFilter(sampleRate, 440),
+        FirstOrderFilter.lowPassFilter(sampleRate, 1400)
+      )
+    )
+  }
+}
+
 object Apu {
-  val pulseTable: Vector[Float] = (0 to 15).map(i => 95.52f / (8128.0f / i + 100)).toVector
+  val pulseTable: Vector[Float] = (0 to 30).map(i => 95.52f / (8128.0f / i + 100)).toVector
   val tndTable: Vector[Float]   = (0 to 202).map(i => 163.67f / (24329.0f / i + 100)).toVector
+
+  val lengthCounterTable: Vector[UInt8] = Vector(
+    // format: off
+    10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
+    12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
+    // format: on
+  )
 
   def setPulse1(pulse: PulseState.PulseChannel1)(nes: NesState): NesState = {
     val apu  = ApuState.pulse1.set(pulse)(nes.apuState)
@@ -319,7 +387,8 @@ object Apu {
           val p  = nes.apuState.pulse1
           val p1 = PulseState.reg3.set(d)(p)
           val p2 = PulseState.timerPeriod.set(((d & 0x07) << 8) | p1.reg2)(p1)
-          setPulse1(p2)(nes)
+          val p3 = PulseState.lengthCounterValue.set(lengthCounterTable(d >> 3))(p2)
+          setPulse1(p3)(nes)
         case 0x4004 =>
           setPulse2(PulseState.reg0.set(d)(nes.apuState.pulse2))(nes)
         case 0x4005 =>
@@ -333,7 +402,8 @@ object Apu {
           val p  = nes.apuState.pulse2
           val p1 = PulseState.reg3.set(d)(p)
           val p2 = PulseState.timerPeriod.set(((d & 0x07) << 8) | p1.reg2)(p1)
-          setPulse2(p2)(nes)
+          val p3 = PulseState.lengthCounterValue.set(lengthCounterTable(d >> 3))(p2)
+          setPulse2(p3)(nes)
         case 0x4008 =>
           setTriangle(TriangleState.reg0.set(d)(nes.apuState.triangle))(nes)
         case 0x4009 =>
@@ -365,7 +435,7 @@ object Apu {
             else PulseState.disableLengthCounter(apu.pulse1)
           val nes1 = setPulse1(p1)(nes)
           val p2 =
-            if (d & 0x01) PulseState.enableLengthCounter(apu.pulse2)
+            if (d & 0x02) PulseState.enableLengthCounter(apu.pulse2)
             else PulseState.disableLengthCounter(apu.pulse2)
           setPulse2(p2)(nes1)
         case 0x4017 =>
@@ -374,10 +444,22 @@ object Apu {
       }
     }
 
+  def cpuRead(address: UInt16): State[NesState, UInt8] =
+    nes => {
+      require(address == 0x4015)
+      val apu            = nes.apuState
+      val pulse1Status   = if (apu.pulse1.lengthCounterValue > 0) 1 else 0
+      val pulse2Status   = if (apu.pulse2.lengthCounterValue > 0) 2 else 0
+      val triangleStatus = 0
+      val noiseStatus    = 0
+      val dmcStatus      = 0
+      (nes, dmcStatus | noiseStatus | triangleStatus | pulse2Status | pulse1Status)
+    }
+
   def clock(nes: NesState): NesState = {
     val nes1 =
       if (nes.apuState.frameCounterMode == 0)
-        nes.cpuState.cycles % 29830 match {
+        nes.apuState.cycles % 29830 match {
           case 7457 | 22371 =>
             clockEnvelope(nes)
           case 14913 =>
@@ -393,7 +475,7 @@ object Apu {
             nes
         }
       else
-        nes.cpuState.cycles % 37282 match {
+        nes.apuState.cycles % 37282 match {
           case 7457 | 22371 =>
             clockEnvelope(nes)
           case 14913 | 37281 =>
@@ -403,7 +485,12 @@ object Apu {
           case _ =>
             nes
         }
-    clockTimer(nes1)
+    val nes2 = clockTimer(nes1)
+    if (nes2.apuState.cycles % 40 == 0) {
+      val output = (255 * nes2.apuState.filter.step(mix(nes2))).toByte
+      nes2.apuState.queue.enqueue1(output).unsafeRunSync()
+    }
+    incCycles(nes2)
   }
 
   def clockEnvelope(nes: NesState): NesState = {
@@ -442,8 +529,14 @@ object Apu {
     val t   = TriangleState.output(apu.triangle)
     val n   = NoiseState.output(apu.noise)
     val d   = DmcState.output(apu.dmc)
-    pulseTable(p1 + p2) + tndTable(t + n + d)
+    pulseTable(p1 + p2) + tndTable(3 * t + 2 * n + d)
   }
 
   def triggerIrq(nes: NesState): NesState = nes
+
+  def incCycles(nes: NesState): NesState = {
+    val apu  = nes.apuState
+    val apu1 = ApuState.cycles.set(apu.cycles + 1)(apu)
+    NesState.apuState.set(apu1)(nes)
+  }
 }

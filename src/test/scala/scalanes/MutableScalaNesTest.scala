@@ -1,8 +1,8 @@
 package scalanes
 
 import java.nio.file.Paths
-
 import cats.effect.{Blocker, ContextShift, IO}
+import fs2.concurrent.Queue
 import fs2.{io, text, Stream}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -29,8 +29,9 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
   "Mutable ScalaNes" should "pass the nestest test" in {
     val nestestRom = Paths.get(getClass.getResource("/nestest.nes").toURI)
     val nestestLog = Paths.get(getClass.getResource("/nestest.log").toURI)
+    val queue      = Queue.circularBuffer[IO, Byte](1).unsafeRunSync()
 
-    val decodedNesRom = NesState.fromFile[IO](nestestRom).compile.toList.unsafeRunSync()
+    val decodedNesRom = NesState.fromFile[IO](nestestRom, queue).compile.toList.unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState = {
       val nes1 = decodedNesRom.head
