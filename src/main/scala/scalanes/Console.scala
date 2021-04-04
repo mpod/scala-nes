@@ -134,6 +134,15 @@ class Audio[F[_]](
         val sdl        = AudioSystem.getSourceDataLine(af)
         sdl.open(af)
         sdl.start()
+        /*
+        var i = 0
+        while (i < 100 * 44100.toFloat / 1000) {
+          val angle = i / (44100.toFloat / 440) * 2.0 * Math.PI
+          val buf   = (Math.sin(angle) * 100).toByte
+          sdl.write(Array.apply(buf), 0, 1)
+          i += 1
+        }
+         */
         sdl
       })(sdl =>
         F.delay {
@@ -147,7 +156,7 @@ class Audio[F[_]](
   def start(): Stream[F, Unit] =
     for {
       line <- startLine()
-      d    <- queue.dequeue
+      d    <- queue.dequeueChunk(1000)
       _ <- Stream.eval(F.delay {
         line.write(Array.apply(d), 0, 1)
       })
@@ -181,7 +190,7 @@ object Console extends IOApp {
     val stream: Stream[IO, Unit] = for {
       buttons     <- Stream.eval(SignallingRef[IO, Int](0))
       interrupter <- Stream.eval(SignallingRef[IO, Boolean](false))
-      queue       <- Stream.eval(Queue.circularBuffer[IO, Byte](8))
+      queue       <- Stream.eval(Queue.unbounded[IO, Byte])
       config      <- Stream.eval(IO.pure(parseArgs(args))).collect { case Some(c) => c }
       ui    = new UI[IO](buttons, interrupter, config)
       audio = new Audio[IO](interrupter, queue)

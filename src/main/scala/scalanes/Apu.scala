@@ -176,7 +176,7 @@ object PulseState {
     else if (p.lengthCounterValue == 0) 0
     else if (dutySequences(p.dutyMode)(p.sequenceCounterValue) == 0) 0
     else if (p.timerPeriod < 8 || p.timerPeriod > 0x7ff) 0
-    else if (p.envelopeLoopEnabled) p.envelopeDividerValue
+    else if (!p.constantVolumeEnabled) p.envelopeDecayLevelCounter
     else p.constantVolume
 }
 
@@ -341,6 +341,7 @@ object Apu {
   def setFrameCounterReg(d: UInt8)(nes: NesState): NesState =
     nes.apuState
       .pure[Id]
+      .map(apu => ApuState.cycles.set(0)(apu))
       .map(apu => ApuState.frameCounterReg.set(d)(apu))
       .map(apu => NesState.apuState.set(apu)(nes))
 
@@ -352,7 +353,10 @@ object Apu {
         case 0x4000 =>
           setPulse1(PulseState.reg0.set(d)(nes.apuState.pulse1))(nes)
         case 0x4001 =>
-          setPulse1(PulseState.reg1.set(d)(nes.apuState.pulse1))(nes)
+          nes.apuState.pulse1
+            .pure[Id]
+            .map(p => PulseState.sweepReload.set(true)(p))
+            .map(p => setPulse1(PulseState.reg1.set(d)(p))(nes))
         case 0x4002 =>
           setPulse1(PulseState.reg2.set(d)(nes.apuState.pulse1))(nes)
         case 0x4003 =>
@@ -366,7 +370,10 @@ object Apu {
         case 0x4004 =>
           setPulse2(PulseState.reg0.set(d)(nes.apuState.pulse2))(nes)
         case 0x4005 =>
-          setPulse2(PulseState.reg1.set(d)(nes.apuState.pulse2))(nes)
+          nes.apuState.pulse2
+            .pure[Id]
+            .map(p => PulseState.sweepReload.set(true)(p))
+            .map(p => setPulse1(PulseState.reg1.set(d)(p))(nes))
         case 0x4006 =>
           setPulse2(PulseState.reg2.set(d)(nes.apuState.pulse2))(nes)
         case 0x4007 =>
@@ -505,19 +512,17 @@ object Apu {
     if ((p1 + p2) > 0) {
       if (scycle == 0) {
         scycle = nes.apuState.cycles
-        val p = apu.pulse1
-        println(p.lengthCounterValue,
-                p.timerValue,
-                p.dutyMode,
-                "_",
-                p.sweepDividerPeriod,
-                p.sweepDividerValue,
-                p.sweepShift,
-                p.envelopeDividerValue,
-                p.sweepEnabled
-        )
       }
-      println((nes.apuState.cycles - scycle), p1, p2)
+      val p = apu.pulse1
+//      println(nes.apuState.cycles - scycle, p1, p.sweepDividerPeriod, p.sweepDividerValue, p.sweepNegate, p.sweepShift)
+      println(nes.apuState.cycles - scycle,
+              p1,
+              p.envelopeStart,
+              p.envelopeDecayLevelCounter,
+              p.envelopeDividerValue,
+              p.envelopeDividerPeriod,
+              p.envelopeLoopEnabled
+      )
     }
     pulseTable(p1 + p2) + tndTable(3 * t + 2 * n + d)
   }
