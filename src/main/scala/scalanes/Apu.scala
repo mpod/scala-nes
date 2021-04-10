@@ -2,8 +2,8 @@ package scalanes
 
 import cats._
 import cats.implicits._
-import cats.effect.IO
-import fs2.concurrent.Queue
+
+import scala.collection.mutable.ArrayBuffer
 
 class ApuState(
   var pulse1: PulseState,
@@ -14,10 +14,15 @@ class ApuState(
   var frameCounterReg: UInt8,
   val filter: Filter,
   var cycles: Long,
-  val queue: Queue[IO, Byte]
+  val buffer: ArrayBuffer[Byte]
 ) {
   def frameCounterMode: Int         = (frameCounterReg >> 7) & 0x1
   def interruptInhibitFlag: Boolean = (frameCounterReg >> 6) & 0x1
+  def flush: Array[Byte] = {
+    val array = buffer.toArray
+    buffer.clear()
+    array
+  }
 }
 
 object ApuState {
@@ -29,7 +34,7 @@ object ApuState {
   val frameCounterReg: Setter[ApuState, UInt8]  = (a, s) => s.frameCounterReg = a
   val cycles: Setter[ApuState, Long]            = (a, s) => s.cycles = a
 
-  def apply(queue: Queue[IO, Byte]): ApuState =
+  def apply(): ApuState =
     new ApuState(
       pulse1 = PulseState.channel(),
       pulse2 = PulseState.channel(),
@@ -39,7 +44,7 @@ object ApuState {
       frameCounterReg = 0x00,
       filter = FilterChain.default,
       cycles = 0L,
-      queue = queue
+      buffer = ArrayBuffer.empty
     )
 }
 
@@ -297,7 +302,6 @@ object FilterChain {
 }
 
 object Apu {
-  var scycle: Long              = 0
   val pulseTable: Vector[Float] = (0 to 30).map(i => 95.52f / (8128.0f / i + 100)).toVector
   val tndTable: Vector[Float]   = (0 to 202).map(i => 163.67f / (24329.0f / i + 100)).toVector
 
@@ -468,7 +472,7 @@ object Apu {
     val nes2 = clockTimer(nes1)
     if (nes2.apuState.cycles % 40 == 0) {
       val output = (255 * nes2.apuState.filter.step(mix(nes2))).toByte
-      nes2.apuState.queue.enqueue1(output).unsafeRunSync()
+      nes2.apuState.buffer += output
     }
     incCycles(nes2)
   }
@@ -509,21 +513,6 @@ object Apu {
     val t   = TriangleState.output(apu.triangle)
     val n   = NoiseState.output(apu.noise)
     val d   = DmcState.output(apu.dmc)
-    if ((p1 + p2) > 0) {
-      if (scycle == 0) {
-        scycle = nes.apuState.cycles
-      }
-      val p = apu.pulse1
-//      println(nes.apuState.cycles - scycle, p1, p.sweepDividerPeriod, p.sweepDividerValue, p.sweepNegate, p.sweepShift)
-      println(nes.apuState.cycles - scycle,
-              p1,
-              p.envelopeStart,
-              p.envelopeDecayLevelCounter,
-              p.envelopeDividerValue,
-              p.envelopeDividerPeriod,
-              p.envelopeLoopEnabled
-      )
-    }
     pulseTable(p1 + p2) + tndTable(3 * t + 2 * n + d)
   }
 

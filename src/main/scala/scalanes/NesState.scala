@@ -29,14 +29,14 @@ object NesState {
   val controllerState: Setter[NesState, ControllerState] = (a, s) => s.controllerState = a
   val apuState: Setter[NesState, ApuState]               = (a, s) => s.apuState = a
 
-  def apply(mirroring: Mirroring, cartridge: Cartridge, queue: Queue[IO, Byte]): NesState =
+  def apply(mirroring: Mirroring, cartridge: Cartridge): NesState =
     new NesState(
       ram = Vector.fill(0x800)(0x00),
       cpuState = CpuState(),
       ppuState = PpuState(mirroring),
       cartridge = cartridge,
       controllerState = ControllerState(),
-      apuState = ApuState(queue)
+      apuState = ApuState()
     )
 
   def setButtons(buttons: UInt8)(nes: NesState): NesState = {
@@ -50,8 +50,7 @@ object NesState {
     val cpuCycles = nes.cpuState.cycles
     val nes1      = Cpu.clock(nes)
     var ppuCycles = (nes1.cpuState.cycles - cpuCycles) * 3
-    // TODO: Enable APU when ready
-    var apuCycles = 0 // nes1.cpuState.cycles - cpuCycles
+    var apuCycles = nes1.cpuState.cycles - cpuCycles
     var nes2      = nes1
     while (ppuCycles > 0) {
       nes2 = Ppu.clock(nes2)
@@ -77,7 +76,7 @@ object NesState {
     nes1
   }
 
-  private def iNesDecoder(queue: Queue[IO, Byte]): Decoder[NesState] =
+  private def iNesDecoder: Decoder[NesState] =
     for {
       _           <- ignore(4 * 8)
       prgRomBanks <- uint8
@@ -103,15 +102,15 @@ object NesState {
           Decoder.point[Cartridge](new Mapper001(prgRom, chrMem, prgRamSize))
         else
           Decoder.liftAttempt(Attempt.failure(Err(s"Unsupported mapper $mapperId!")))
-    } yield NesState(mirroring, cartridge, queue)
+    } yield NesState(mirroring, cartridge)
 
-  def fromFile[F[_]: Sync: ContextShift](file: Path, queue: Queue[IO, Byte]): Stream[F, NesState] =
+  def fromFile[F[_]: Sync: ContextShift](file: Path): Stream[F, NesState] =
     Stream
       .resource(Blocker[F])
       .flatMap { blocker =>
         io.file
           .readAll[F](file, blocker, 4096)
-          .through(StreamDecoder.once(iNesDecoder(queue)).toPipeByte)
+          .through(StreamDecoder.once(iNesDecoder).toPipeByte)
       }
 
 }

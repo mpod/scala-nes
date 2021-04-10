@@ -124,7 +124,7 @@ class UI[F[_]](
 
 class Audio[F[_]](
   interrupter: SignallingRef[F, Boolean],
-  queue: Queue[F, Byte]
+  queue: Queue[F, Array[Byte]]
 )(implicit F: Effect[F], c: Concurrent[F]) {
   private def startLine(): Stream[F, SourceDataLine] =
     Stream
@@ -134,15 +134,6 @@ class Audio[F[_]](
         val sdl        = AudioSystem.getSourceDataLine(af)
         sdl.open(af)
         sdl.start()
-        /*
-        var i = 0
-        while (i < 100 * 44100.toFloat / 1000) {
-          val angle = i / (44100.toFloat / 440) * 2.0 * Math.PI
-          val buf   = (Math.sin(angle) * 100).toByte
-          sdl.write(Array.apply(buf), 0, 1)
-          i += 1
-        }
-         */
         sdl
       })(sdl =>
         F.delay {
@@ -156,9 +147,9 @@ class Audio[F[_]](
   def start(): Stream[F, Unit] =
     for {
       line <- startLine()
-      d    <- queue.dequeueChunk(1000)
+      buf  <- queue.dequeue
       _ <- Stream.eval(F.delay {
-        line.write(Array.apply(d), 0, 1)
+        line.write(buf, 0, buf.length)
       })
     } yield ()
 }
@@ -190,13 +181,13 @@ object Console extends IOApp {
     val stream: Stream[IO, Unit] = for {
       buttons     <- Stream.eval(SignallingRef[IO, Int](0))
       interrupter <- Stream.eval(SignallingRef[IO, Boolean](false))
-      queue       <- Stream.eval(Queue.unbounded[IO, Byte])
+      queue       <- Stream.eval(Queue.unbounded[IO, Array[Byte]])
       config      <- Stream.eval(IO.pure(parseArgs(args))).collect { case Some(c) => c }
       ui    = new UI[IO](buttons, interrupter, config)
       audio = new Audio[IO](interrupter, queue)
       updateCanvas <- ui.start()
       game = NesState
-        .fromFile[IO](config.image, queue)
+        .fromFile[IO](config.image)
         .head
         .map(NesState.reset)
         .flatMap { initial =>
@@ -205,6 +196,7 @@ object Console extends IOApp {
               .map(b => NesState.setButtons(b)(nes))
               .map { nes =>
                 updateCanvas(nes.ppuState.canvas)
+                queue.enqueue1(nes.apuState.flush).unsafeRunSync()
                 val next = NesState.executeFrame(nes)
                 Option(next, next)
               }

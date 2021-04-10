@@ -29,9 +29,8 @@ class MutableScalaNesTest extends AnyFlatSpec with Matchers {
   "Mutable ScalaNes" should "pass the nestest test" in {
     val nestestRom = Paths.get(getClass.getResource("/nestest.nes").toURI)
     val nestestLog = Paths.get(getClass.getResource("/nestest.log").toURI)
-    val queue      = Queue.circularBuffer[IO, Byte](1).unsafeRunSync()
 
-    val decodedNesRom = NesState.fromFile[IO](nestestRom, queue).compile.toList.unsafeRunSync()
+    val decodedNesRom = NesState.fromFile[IO](nestestRom).compile.toList.unsafeRunSync()
     decodedNesRom should have size 1
     val initialNesState = {
       val nes1 = decodedNesRom.head
