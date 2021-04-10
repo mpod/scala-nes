@@ -48,6 +48,32 @@ object ApuState {
     )
 }
 
+trait Channel {
+  var lengthCounterEnabled: Boolean
+  var lengthCounterValue: Int
+  def lengthCounterHalt: Boolean
+  def lengthCounterLoad: UInt5
+}
+
+object Channel {
+  val lengthCounterEnabled: Setter[Channel, Boolean] = (a, s) => s.lengthCounterEnabled = a
+  val lengthCounterValue: Setter[Channel, Int]       = (a, s) => s.lengthCounterValue = a
+
+  def disableLengthCounter[T <: Channel](c: T): T = {
+    val c1 = lengthCounterEnabled.set(false)(c)
+    lengthCounterValue.set(0)(c1)
+  }
+
+  def enableLengthCounter[T <: Channel](c: T): T =
+    lengthCounterEnabled.set(true)(c)
+
+  def clockLengthCounter[T <: Channel](c: T): T =
+    if (c.lengthCounterValue > 0 && !c.lengthCounterHalt)
+      lengthCounterValue.set(c.lengthCounterValue - 1)(c)
+    else
+      c
+}
+
 class PulseState(
   var reg0: UInt8,
   var reg1: UInt8,
@@ -59,10 +85,10 @@ class PulseState(
   var sweepReload: Boolean,
   var sweepDividerValue: UInt3,
   var lengthCounterEnabled: Boolean,
-  var lengthCounterValue: UInt4,
+  var lengthCounterValue: Int,
   var timerValue: UInt11,
   var sequenceCounterValue: UInt4
-) {
+) extends Channel {
   def dutyMode: UInt2                = (reg0 >> 6) & 0x03
   def constantVolumeEnabled: Boolean = (reg0 >> 4) & 0x01
   def constantVolume: UInt4          = reg0 & 0x0f
@@ -87,8 +113,6 @@ object PulseState {
   val envelopeDecayLevelCounter: Setter[PulseState, UInt4] = (a, s) => s.envelopeDecayLevelCounter = a
   val sweepReload: Setter[PulseState, Boolean]             = (a, s) => s.sweepReload = a
   val sweepDividerValue: Setter[PulseState, UInt3]         = (a, s) => s.sweepDividerValue = a
-  val lengthCounterEnabled: Setter[PulseState, Boolean]    = (a, s) => s.lengthCounterEnabled = a
-  val lengthCounterValue: Setter[PulseState, UInt4]        = (a, s) => s.lengthCounterValue = a
   val timerValue: Setter[PulseState, UInt11]               = (a, s) => s.timerValue = a
   val sequenceCounterValue: Setter[PulseState, UInt4]      = (a, s) => s.sequenceCounterValue = a
   val timerPeriod: Setter[PulseState, UInt11] = (a, s) => {
@@ -120,14 +144,6 @@ object PulseState {
       timerValue = 0,
       sequenceCounterValue = 0
     )
-
-  def disableLengthCounter(p: PulseState): PulseState = {
-    val p1 = lengthCounterEnabled.set(false)(p)
-    lengthCounterValue.set(0)(p1)
-  }
-
-  def enableLengthCounter(p: PulseState): PulseState =
-    lengthCounterEnabled.set(true)(p)
 
   def clockEnvelope(p: PulseState): PulseState =
     if (p.envelopeStart)
@@ -164,12 +180,6 @@ object PulseState {
       .map(p => if (p.sweepReload) sweepDividerValue.set(p.sweepDividerPeriod)(p) else p)
       .map(p => sweepReload.set(false)(p))
 
-  def clockLengthCounter(p: PulseState): PulseState =
-    if (p.lengthCounterValue > 0 && !p.lengthCounterHalt)
-      lengthCounterValue.set(p.lengthCounterValue - 1)(p)
-    else
-      p
-
   def clockTimer(p: PulseState): PulseState =
     p.pure[Id]
       .map(p => timerValue.set(p.timerValue - 1)(p))
@@ -188,23 +198,80 @@ object PulseState {
 class TriangleState(
   var reg0: UInt8,
   var reg2: UInt8,
-  var reg3: UInt8
-) {
-  def lengthCounterHalt: UInt1    = (reg0 >> 7) & 0x01
-  def linearCounterControl: UInt1 = (reg0 >> 7) & 0x01
-  def linearCounterLoad: UInt7    = reg0 & 0x7f
-  def lengthCounterLoad: UInt5    = (reg3 >> 3) & 0x1f
-  def timerPeriod: UInt11         = ((reg3 & 0x07) << 8) | reg2
+  var reg3: UInt8,
+  var linearCounterReload: Boolean,
+  var linearCounterValue: UInt7,
+  var lengthCounterEnabled: Boolean,
+  var lengthCounterValue: Int,
+  var timerValue: UInt11,
+  var sequenceCounterValue: Int
+) extends Channel {
+  def lengthCounterHalt: Boolean    = (reg0 >> 7) & 0x01
+  def linearCounterControl: Boolean = (reg0 >> 7) & 0x01
+  def linearCounterLoad: UInt7      = reg0 & 0x7f
+  def lengthCounterLoad: UInt5      = (reg3 >> 3) & 0x1f
+  def timerPeriod: UInt11           = ((reg3 & 0x07) << 8) | reg2
 }
 
 object TriangleState {
-  val reg0: Setter[TriangleState, UInt8] = (a, s) => s.reg0 = a
-  val reg2: Setter[TriangleState, UInt8] = (a, s) => s.reg2 = a
-  val reg3: Setter[TriangleState, UInt8] = (a, s) => s.reg3 = a
+  val reg0: Setter[TriangleState, UInt8]                  = (a, s) => s.reg0 = a
+  val reg2: Setter[TriangleState, UInt8]                  = (a, s) => s.reg2 = a
+  val reg3: Setter[TriangleState, UInt8]                  = (a, s) => s.reg3 = a
+  val linearCounterReload: Setter[TriangleState, Boolean] = (a, s) => s.linearCounterReload = a
+  val linearCounterValue: Setter[TriangleState, UInt7]    = (a, s) => s.linearCounterValue = a
+  val timerValue: Setter[TriangleState, UInt11]           = (a, s) => s.timerValue = a
+  val sequenceCounterValue: Setter[TriangleState, Int]    = (a, s) => s.sequenceCounterValue = a
 
-  def apply(): TriangleState = new TriangleState(0x00, 0x00, 0x00)
+  val triangleSequence: Vector[Int] =
+    Vector(
+      // format: off
+      15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+      // format: on
+    )
 
-  def output(t: TriangleState): Int = 0
+  def apply(): TriangleState =
+    new TriangleState(
+      reg0 = 0x00,
+      reg2 = 0x00,
+      reg3 = 0x00,
+      linearCounterReload = false,
+      linearCounterValue = 0,
+      lengthCounterEnabled = false,
+      lengthCounterValue = 0,
+      timerValue = 0,
+      sequenceCounterValue = 0
+    )
+
+  def clockLinearCounter(t: TriangleState): TriangleState =
+    t.pure[Id]
+      .map { t =>
+        val v = if (t.linearCounterReload) t.linearCounterLoad else t.linearCounterValue - 1
+        linearCounterValue.set(v)(t)
+      }
+      .map { t =>
+        if (!t.linearCounterControl) linearCounterReload.set(false)(t)
+        else t
+      }
+
+  def clockTimer(t: TriangleState): TriangleState =
+    t.pure[Id]
+      .map { t =>
+        if (t.timerValue == 0 && t.lengthCounterValue > 0 && t.linearCounterValue > 0)
+          sequenceCounterValue.set((t.sequenceCounterValue + 1) % 32)(t)
+        else
+          t
+      }
+      .map { t =>
+        if (t.timerValue == 0) timerValue.set(t.timerPeriod)(t)
+        else t
+      }
+
+  def output(t: TriangleState): Int =
+    if (!t.lengthCounterEnabled) 0
+    else if (t.lengthCounterValue == 0) 0
+    else if (t.linearCounterValue == 0) 0
+    else triangleSequence(t.sequenceCounterValue)
 }
 
 class NoiseState(
@@ -368,7 +435,7 @@ object Apu {
             .pure[Id]
             .map(p => PulseState.reg3.set(d)(p))
             .map(p => PulseState.envelopeStart.set(true)(p))
-            .map(p => PulseState.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
+            .map(p => Channel.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
             .map(p => PulseState.sequenceCounterValue.set(0)(p))
             .map(p => setPulse1(p)(nes))
         case 0x4004 =>
@@ -385,7 +452,7 @@ object Apu {
             .pure[Id]
             .map(p => PulseState.reg3.set(d)(p))
             .map(p => PulseState.envelopeStart.set(true)(p))
-            .map(p => PulseState.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
+            .map(p => Channel.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
             .map(p => PulseState.sequenceCounterValue.set(0)(p))
             .map(p => setPulse2(p)(nes))
         case 0x4008 =>
@@ -395,7 +462,11 @@ object Apu {
         case 0x400a =>
           setTriangle(TriangleState.reg2.set(d)(nes.apuState.triangle))(nes)
         case 0x400b =>
-          setTriangle(TriangleState.reg3.set(d)(nes.apuState.triangle))(nes)
+          nes.apuState.triangle
+            .pure[Id]
+            .map(t => TriangleState.reg3.set(d)(t))
+            .map(t => TriangleState.linearCounterReload.set(true)(t))
+            .map(t => setTriangle(t)(nes))
         case 0x400c =>
           setNoise(NoiseState.reg0.set(d)(nes.apuState.noise))(nes)
         case 0x400d =>
@@ -413,15 +484,27 @@ object Apu {
         case 0x4013 =>
           setDmc(DmcState.reg3.set(d)(nes.apuState.dmc))(nes)
         case 0x4015 =>
-          val apu = nes.apuState
-          val p1 =
-            if (d & 0x01) PulseState.enableLengthCounter(apu.pulse1)
-            else PulseState.disableLengthCounter(apu.pulse1)
-          val nes1 = setPulse1(p1)(nes)
-          val p2 =
-            if (d & 0x02) PulseState.enableLengthCounter(apu.pulse2)
-            else PulseState.disableLengthCounter(apu.pulse2)
-          setPulse2(p2)(nes1)
+          nes.apuState
+            .pure[Id]
+            .map { apu =>
+              ApuState.pulse1.set(
+                if (d & 0x01) Channel.enableLengthCounter(apu.pulse1)
+                else Channel.disableLengthCounter(apu.pulse1)
+              )(apu)
+            }
+            .map { apu =>
+              ApuState.pulse2.set(
+                if (d & 0x02) Channel.enableLengthCounter(apu.pulse2)
+                else Channel.disableLengthCounter(apu.pulse2)
+              )(apu)
+            }
+            .map { apu =>
+              ApuState.triangle.set(
+                if (d & 0x04) Channel.enableLengthCounter(apu.triangle)
+                else Channel.disableLengthCounter(apu.triangle)
+              )(apu)
+            }
+            .map(apu => NesState.apuState.set(apu)(nes))
         case 0x4017 =>
           setFrameCounterReg(d)(nes)
         case _ => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
@@ -484,19 +567,20 @@ object Apu {
     NesState.apuState.set(apu2)(nes)
   }
 
-  def clockSweep(nes: NesState): NesState = {
-    val apu  = nes.apuState
-    val apu1 = ApuState.pulse1.set(PulseState.clockSweep(-1)(apu.pulse1))(apu)
-    val apu2 = ApuState.pulse2.set(PulseState.clockSweep(0)(apu.pulse2))(apu1)
-    NesState.apuState.set(apu2)(nes)
-  }
+  def clockSweep(nes: NesState): NesState =
+    nes.apuState
+      .pure[Id]
+      .map(apu => ApuState.pulse1.set(PulseState.clockSweep(-1)(apu.pulse1))(apu))
+      .map(apu => ApuState.pulse2.set(PulseState.clockSweep(0)(apu.pulse2))(apu))
+      .map(apu => NesState.apuState.set(apu)(nes))
 
-  def clockLengthCounter(nes: NesState): NesState = {
-    val apu  = nes.apuState
-    val apu1 = ApuState.pulse1.set(PulseState.clockLengthCounter(apu.pulse1))(apu)
-    val apu2 = ApuState.pulse2.set(PulseState.clockLengthCounter(apu.pulse2))(apu1)
-    NesState.apuState.set(apu2)(nes)
-  }
+  def clockLengthCounter(nes: NesState): NesState =
+    nes.apuState
+      .pure[Id]
+      .map(apu => ApuState.pulse1.set(Channel.clockLengthCounter(apu.pulse1))(apu))
+      .map(apu => ApuState.pulse2.set(Channel.clockLengthCounter(apu.pulse2))(apu))
+      .map(apu => ApuState.triangle.set(Channel.clockLengthCounter(apu.triangle))(apu))
+      .map(apu => NesState.apuState.set(apu)(nes))
 
   def clockTimer(nes: NesState): NesState =
     if (nes.cpuState.cycles % 2 == 0) {

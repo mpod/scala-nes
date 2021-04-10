@@ -1,15 +1,14 @@
 package scalanes
 
-import java.nio.file.Path
-import cats.effect.{Blocker, ContextShift, IO, Sync}
+import cats.effect.{Blocker, ContextShift, Sync}
 import fs2.{io, Stream}
-import Mirroring.Mirroring
-import fs2.concurrent.Queue
+import scalanes.Mirroring.Mirroring
 import scalanes.mappers.{Mapper000, Mapper001}
 import scodec.codecs.{conditional, fixedSizeBytes, ignore, uint8, vector}
 import scodec.stream.StreamDecoder
 import scodec.{Attempt, Decoder, Err}
 
+import java.nio.file.Path
 import scala.language.higherKinds
 
 class NesState(
