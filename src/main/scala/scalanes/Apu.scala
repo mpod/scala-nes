@@ -49,20 +49,28 @@ object ApuState {
 }
 
 trait Channel {
+  var reg0: UInt8 = 0
+  var reg1: UInt8 = 0
+  var reg2: UInt8 = 0
+  var reg3: UInt8 = 0
   var lengthCounterEnabled: Boolean
   var lengthCounterValue: Int
   def lengthCounterHalt: Boolean
-  def lengthCounterLoad: UInt5
+  def lengthCounterLoad: UInt5 = (reg3 >> 3) & 0x1f
 }
 
 object Channel {
+  val reg0: Setter[Channel, UInt8]                   = (a, s) => s.reg0 = a
+  val reg1: Setter[Channel, UInt8]                   = (a, s) => s.reg1 = a
+  val reg2: Setter[Channel, UInt8]                   = (a, s) => s.reg2 = a
+  val reg3: Setter[Channel, UInt8]                   = (a, s) => s.reg3 = a
   val lengthCounterEnabled: Setter[Channel, Boolean] = (a, s) => s.lengthCounterEnabled = a
   val lengthCounterValue: Setter[Channel, Int]       = (a, s) => s.lengthCounterValue = a
 
-  def disableLengthCounter[T <: Channel](c: T): T = {
-    val c1 = lengthCounterEnabled.set(false)(c)
-    lengthCounterValue.set(0)(c1)
-  }
+  def disableLengthCounter[T <: Channel](c: T): Id[T] =
+    c.pure[Id]
+      .map(c => lengthCounterEnabled.set(false)(c))
+      .map(c => lengthCounterValue.set(0)(c))
 
   def enableLengthCounter[T <: Channel](c: T): T =
     lengthCounterEnabled.set(true)(c)
@@ -74,47 +82,62 @@ object Channel {
       c
 }
 
+trait Envelope extends Channel {
+  var envelopeStart: Boolean           = 0
+  var envelopeDividerValue: UInt4      = 0
+  var envelopeDecayLevelCounter: UInt4 = 0
+  def constantVolumeEnabled: Boolean   = (reg0 >> 4) & 0x01
+  def constantVolume: UInt4            = reg0 & 0x0f
+  def envelopeDividerPeriod: UInt4     = reg0 & 0x0f
+  def envelopeLoopEnabled: Boolean     = (reg0 >> 5) & 0x01
+}
+
+object Envelope {
+  val envelopeStart: Setter[Envelope, Boolean]           = (a, s) => s.envelopeStart = a
+  val envelopeDividerValue: Setter[Envelope, UInt4]      = (a, s) => s.envelopeDividerValue = a
+  val envelopeDecayLevelCounter: Setter[Envelope, UInt4] = (a, s) => s.envelopeDecayLevelCounter = a
+
+  def clockEnvelope[T <: Envelope](e: T): Id[T] =
+    if (e.envelopeStart)
+      e.pure[Id]
+        .map(p => envelopeStart.set(false)(p))
+        .map(p => envelopeDecayLevelCounter.set(0xf)(p))
+        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
+    else if (e.envelopeDividerValue > 0)
+      envelopeDividerValue.set(e.envelopeDividerValue - 1)(e)
+    else
+      e.pure[Id]
+        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
+        .map { p =>
+          if (p.envelopeDecayLevelCounter || p.envelopeLoopEnabled)
+            envelopeDecayLevelCounter.set((p.envelopeDecayLevelCounter - 1) & 0xff)(p)
+          else
+            p
+        }
+}
+
 class PulseState(
-  var reg0: UInt8,
-  var reg1: UInt8,
-  var reg2: UInt8,
-  var reg3: UInt8,
-  var envelopeStart: Boolean,
-  var envelopeDividerValue: UInt4,
-  var envelopeDecayLevelCounter: UInt4,
   var sweepReload: Boolean,
   var sweepDividerValue: UInt3,
   var lengthCounterEnabled: Boolean,
   var lengthCounterValue: Int,
   var timerValue: UInt11,
   var sequenceCounterValue: UInt4
-) extends Channel {
-  def dutyMode: UInt2                = (reg0 >> 6) & 0x03
-  def constantVolumeEnabled: Boolean = (reg0 >> 4) & 0x01
-  def constantVolume: UInt4          = reg0 & 0x0f
-  def envelopeDividerPeriod: UInt4   = reg0 & 0x0f
-  def envelopeLoopEnabled: Boolean   = (reg0 >> 5) & 0x01
-  def sweepEnabled: Boolean          = (reg1 >> 7) & 0x01
-  def sweepDividerPeriod: UInt3      = ((reg1 >> 4) & 0x07) + 1
-  def sweepNegate: Boolean           = (reg1 >> 3) & 0x01
-  def sweepShift: UInt3              = reg1 & 0x07
-  def lengthCounterHalt: Boolean     = (reg0 >> 5) & 0x01
-  def lengthCounterLoad: UInt5       = (reg3 >> 3) & 0x1f
-  def timerPeriod: UInt11            = ((reg3 & 0x7) << 8) | (reg2 & 0xff)
+) extends Envelope {
+  def dutyMode: UInt2            = (reg0 >> 6) & 0x03
+  def sweepEnabled: Boolean      = (reg1 >> 7) & 0x01
+  def sweepDividerPeriod: UInt3  = ((reg1 >> 4) & 0x07) + 1
+  def sweepNegate: Boolean       = (reg1 >> 3) & 0x01
+  def sweepShift: UInt3          = reg1 & 0x07
+  def lengthCounterHalt: Boolean = (reg0 >> 5) & 0x01
+  def timerPeriod: UInt11        = ((reg3 & 0x7) << 8) | (reg2 & 0xff)
 }
 
 object PulseState {
-  val reg0: Setter[PulseState, UInt8]                      = (a, s) => s.reg0 = a
-  val reg1: Setter[PulseState, UInt8]                      = (a, s) => s.reg1 = a
-  val reg2: Setter[PulseState, UInt8]                      = (a, s) => s.reg2 = a
-  val reg3: Setter[PulseState, UInt8]                      = (a, s) => s.reg3 = a
-  val envelopeStart: Setter[PulseState, Boolean]           = (a, s) => s.envelopeStart = a
-  val envelopeDividerValue: Setter[PulseState, UInt4]      = (a, s) => s.envelopeDividerValue = a
-  val envelopeDecayLevelCounter: Setter[PulseState, UInt4] = (a, s) => s.envelopeDecayLevelCounter = a
-  val sweepReload: Setter[PulseState, Boolean]             = (a, s) => s.sweepReload = a
-  val sweepDividerValue: Setter[PulseState, UInt3]         = (a, s) => s.sweepDividerValue = a
-  val timerValue: Setter[PulseState, UInt11]               = (a, s) => s.timerValue = a
-  val sequenceCounterValue: Setter[PulseState, UInt4]      = (a, s) => s.sequenceCounterValue = a
+  val sweepReload: Setter[PulseState, Boolean]        = (a, s) => s.sweepReload = a
+  val sweepDividerValue: Setter[PulseState, UInt3]    = (a, s) => s.sweepDividerValue = a
+  val timerValue: Setter[PulseState, UInt11]          = (a, s) => s.timerValue = a
+  val sequenceCounterValue: Setter[PulseState, UInt4] = (a, s) => s.sequenceCounterValue = a
   val timerPeriod: Setter[PulseState, UInt11] = (a, s) => {
     s.reg2 = a & 0xff
     s.reg3 = (s.reg3 & ~0x7) | ((a >> 8) & 0x7)
@@ -130,13 +153,6 @@ object PulseState {
 
   def channel(): PulseState =
     new PulseState(
-      reg0 = 0x00,
-      reg1 = 0x00,
-      reg2 = 0x00,
-      reg3 = 0x00,
-      envelopeStart = false,
-      envelopeDividerValue = 0,
-      envelopeDecayLevelCounter = 0,
       sweepReload = false,
       sweepDividerValue = 0,
       lengthCounterEnabled = false,
@@ -144,24 +160,6 @@ object PulseState {
       timerValue = 0,
       sequenceCounterValue = 0
     )
-
-  def clockEnvelope(p: PulseState): PulseState =
-    if (p.envelopeStart)
-      p.pure[Id]
-        .map(p => envelopeStart.set(false)(p))
-        .map(p => envelopeDecayLevelCounter.set(0xf)(p))
-        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
-    else if (p.envelopeDividerValue > 0)
-      envelopeDividerValue.set(p.envelopeDividerValue - 1)(p)
-    else
-      p.pure[Id]
-        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
-        .map { p =>
-          if (p.envelopeDecayLevelCounter || p.envelopeLoopEnabled)
-            envelopeDecayLevelCounter.set((p.envelopeDecayLevelCounter - 1) & 0xff)(p)
-          else
-            p
-        }
 
   def clockSweep(negativeAdjust: Int)(p: PulseState): PulseState =
     p.pure[Id]
@@ -196,9 +194,6 @@ object PulseState {
 }
 
 class TriangleState(
-  var reg0: UInt8,
-  var reg2: UInt8,
-  var reg3: UInt8,
   var linearCounterReload: Boolean,
   var linearCounterValue: UInt7,
   var lengthCounterEnabled: Boolean,
@@ -209,14 +204,10 @@ class TriangleState(
   def lengthCounterHalt: Boolean    = (reg0 >> 7) & 0x01
   def linearCounterControl: Boolean = (reg0 >> 7) & 0x01
   def linearCounterLoad: UInt7      = reg0 & 0x7f
-  def lengthCounterLoad: UInt5      = (reg3 >> 3) & 0x1f
   def timerPeriod: UInt11           = ((reg3 & 0x07) << 8) | reg2
 }
 
 object TriangleState {
-  val reg0: Setter[TriangleState, UInt8]                  = (a, s) => s.reg0 = a
-  val reg2: Setter[TriangleState, UInt8]                  = (a, s) => s.reg2 = a
-  val reg3: Setter[TriangleState, UInt8]                  = (a, s) => s.reg3 = a
   val linearCounterReload: Setter[TriangleState, Boolean] = (a, s) => s.linearCounterReload = a
   val linearCounterValue: Setter[TriangleState, UInt7]    = (a, s) => s.linearCounterValue = a
   val timerValue: Setter[TriangleState, UInt11]           = (a, s) => s.timerValue = a
@@ -232,9 +223,6 @@ object TriangleState {
 
   def apply(): TriangleState =
     new TriangleState(
-      reg0 = 0x00,
-      reg2 = 0x00,
-      reg3 = 0x00,
       linearCounterReload = false,
       linearCounterValue = 0,
       lengthCounterEnabled = false,
@@ -275,26 +263,21 @@ object TriangleState {
 }
 
 class NoiseState(
-  var reg0: UInt8,
-  var reg2: UInt8,
-  var reg3: UInt8
-) {
-  def lengthCounterHalt: UInt1     = (reg0 >> 5) & 0x01
-  def envelopeLoopEnabled: UInt1   = (reg0 >> 5) & 0x01
-  def constantVolumeEnabled: UInt1 = (reg0 >> 4) & 0x01
-  def constantVolume: UInt4        = reg0 & 0x0f
-  def envelopeDividerPeriod: UInt4 = reg0 & 0x0f
-  def loopNoiseEnabled: UInt1      = (reg2 >> 7) & 0x01
-  def noisePeriod: UInt4           = reg2 & 0xf
-  def lengthCounterLoad: UInt5     = (reg3 >> 3) & 0x1f
+  var lengthCounterEnabled: Boolean,
+  var lengthCounterValue: Int
+) extends Envelope {
+  def lengthCounterHalt: Boolean = (reg0 >> 5) & 0x01
+  def loopNoiseEnabled: UInt1    = (reg2 >> 7) & 0x01
+  def noisePeriod: UInt4         = reg2 & 0xf
+  def timerPeriod: UInt11        = ((reg3 & 0x07) << 8) | reg2
 }
 
 object NoiseState {
-  val reg0: Setter[NoiseState, UInt8] = (a, s) => s.reg0 = a
-  val reg2: Setter[NoiseState, UInt8] = (a, s) => s.reg2 = a
-  val reg3: Setter[NoiseState, UInt8] = (a, s) => s.reg3 = a
-
-  def apply(): NoiseState = new NoiseState(0x00, 0x00, 0x00)
+  def apply(): NoiseState =
+    new NoiseState(
+      lengthCounterEnabled = false,
+      lengthCounterValue = 0
+    )
 
   def output(n: NoiseState): Int = 0
 }
@@ -422,59 +405,59 @@ object Apu {
       require((d & 0xff) == d)
       address match {
         case 0x4000 =>
-          setPulse1(PulseState.reg0.set(d)(nes.apuState.pulse1))(nes)
+          setPulse1(Channel.reg0.set(d)(nes.apuState.pulse1))(nes)
         case 0x4001 =>
           nes.apuState.pulse1
             .pure[Id]
             .map(p => PulseState.sweepReload.set(true)(p))
-            .map(p => setPulse1(PulseState.reg1.set(d)(p))(nes))
+            .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
         case 0x4002 =>
-          setPulse1(PulseState.reg2.set(d)(nes.apuState.pulse1))(nes)
+          setPulse1(Channel.reg2.set(d)(nes.apuState.pulse1))(nes)
         case 0x4003 =>
           nes.apuState.pulse1
             .pure[Id]
-            .map(p => PulseState.reg3.set(d)(p))
-            .map(p => PulseState.envelopeStart.set(true)(p))
+            .map(p => Channel.reg3.set(d)(p))
+            .map(p => Envelope.envelopeStart.set(true)(p))
             .map(p => Channel.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
             .map(p => PulseState.sequenceCounterValue.set(0)(p))
             .map(p => setPulse1(p)(nes))
         case 0x4004 =>
-          setPulse2(PulseState.reg0.set(d)(nes.apuState.pulse2))(nes)
+          setPulse2(Channel.reg0.set(d)(nes.apuState.pulse2))(nes)
         case 0x4005 =>
           nes.apuState.pulse2
             .pure[Id]
             .map(p => PulseState.sweepReload.set(true)(p))
-            .map(p => setPulse1(PulseState.reg1.set(d)(p))(nes))
+            .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
         case 0x4006 =>
-          setPulse2(PulseState.reg2.set(d)(nes.apuState.pulse2))(nes)
+          setPulse2(Channel.reg2.set(d)(nes.apuState.pulse2))(nes)
         case 0x4007 =>
           nes.apuState.pulse2
             .pure[Id]
-            .map(p => PulseState.reg3.set(d)(p))
-            .map(p => PulseState.envelopeStart.set(true)(p))
+            .map(p => Channel.reg3.set(d)(p))
+            .map(p => Envelope.envelopeStart.set(true)(p))
             .map(p => Channel.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
             .map(p => PulseState.sequenceCounterValue.set(0)(p))
             .map(p => setPulse2(p)(nes))
         case 0x4008 =>
-          setTriangle(TriangleState.reg0.set(d)(nes.apuState.triangle))(nes)
+          setTriangle(Channel.reg0.set(d)(nes.apuState.triangle))(nes)
         case 0x4009 =>
           nes
         case 0x400a =>
-          setTriangle(TriangleState.reg2.set(d)(nes.apuState.triangle))(nes)
+          setTriangle(Channel.reg2.set(d)(nes.apuState.triangle))(nes)
         case 0x400b =>
           nes.apuState.triangle
             .pure[Id]
-            .map(t => TriangleState.reg3.set(d)(t))
+            .map(t => Channel.reg3.set(d)(t))
             .map(t => TriangleState.linearCounterReload.set(true)(t))
             .map(t => setTriangle(t)(nes))
         case 0x400c =>
-          setNoise(NoiseState.reg0.set(d)(nes.apuState.noise))(nes)
+          setNoise(Channel.reg0.set(d)(nes.apuState.noise))(nes)
         case 0x400d =>
           nes
         case 0x400e =>
-          setNoise(NoiseState.reg2.set(d)(nes.apuState.noise))(nes)
+          setNoise(Channel.reg2.set(d)(nes.apuState.noise))(nes)
         case 0x400f =>
-          setNoise(NoiseState.reg3.set(d)(nes.apuState.noise))(nes)
+          setNoise(Channel.reg3.set(d)(nes.apuState.noise))(nes)
         case 0x4010 =>
           setDmc(DmcState.reg0.set(d)(nes.apuState.dmc))(nes)
         case 0x4011 =>
@@ -562,8 +545,8 @@ object Apu {
 
   def clockEnvelope(nes: NesState): NesState = {
     val apu  = nes.apuState
-    val apu1 = ApuState.pulse1.set(PulseState.clockEnvelope(apu.pulse1))(apu)
-    val apu2 = ApuState.pulse2.set(PulseState.clockEnvelope(apu.pulse2))(apu1)
+    val apu1 = ApuState.pulse1.set(Envelope.clockEnvelope(apu.pulse1))(apu)
+    val apu2 = ApuState.pulse2.set(Envelope.clockEnvelope(apu.pulse2))(apu1)
     NesState.apuState.set(apu2)(nes)
   }
 
