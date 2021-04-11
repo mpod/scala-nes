@@ -10,6 +10,7 @@ package object scalanes {
   type UInt7  = Int
   type UInt8  = Int
   type UInt11 = Int
+  type UInt12 = Int
   type UInt15 = Int
   type UInt16 = Int
 
