@@ -174,7 +174,7 @@ object Console extends IOApp {
           .action((_, c) => c.copy(stats = true))
           .text("prints out frames per second"),
         opt[Unit]("sound")
-          .action((_, c) => c.copy(stats = true))
+          .action((_, c) => c.copy(sound = true))
           .text("enable sound (still work in progress)"),
         help("help").text("prints this usage text"),
         arg[Path]("<image>")
