@@ -15,7 +15,8 @@ import scala.language.higherKinds
 
 case class Config(
   image: Path = Path.of("."),
-  stats: Boolean = false
+  stats: Boolean = false,
+  sound: Boolean = false
 )
 
 class UI[F[_]](
@@ -124,7 +125,8 @@ class UI[F[_]](
 
 class Audio[F[_]](
   interrupter: SignallingRef[F, Boolean],
-  queue: Queue[F, Array[Byte]]
+  queue: Queue[F, Array[Byte]],
+  enabled: Boolean
 )(implicit F: Effect[F], c: Concurrent[F]) {
   private def startLine(): Stream[F, SourceDataLine] =
     Stream
@@ -148,9 +150,12 @@ class Audio[F[_]](
     for {
       line <- startLine()
       buf  <- queue.dequeue
-      _ <- Stream.eval(F.delay {
-        line.write(buf, 0, buf.length)
-      })
+      _ <-
+        if (!enabled) Stream.empty
+        else
+          Stream.eval(F.delay {
+            line.write(buf, 0, buf.length)
+          })
     } yield ()
 }
 
@@ -168,6 +173,9 @@ object Console extends IOApp {
         opt[Unit]("stats")
           .action((_, c) => c.copy(stats = true))
           .text("prints out frames per second"),
+        opt[Unit]("sound")
+          .action((_, c) => c.copy(stats = true))
+          .text("enable sound"),
         help("help").text("prints this usage text"),
         arg[Path]("<image>")
           .action((f, c) => c.copy(image = f))
@@ -184,7 +192,7 @@ object Console extends IOApp {
       queue       <- Stream.eval(Queue.unbounded[IO, Array[Byte]])
       config      <- Stream.eval(IO.pure(parseArgs(args))).collect { case Some(c) => c }
       ui    = new UI[IO](buttons, interrupter, config)
-      audio = new Audio[IO](interrupter, queue)
+      audio = new Audio[IO](interrupter, queue, config.sound)
       updateCanvas <- ui.start()
       game = NesState
         .fromFile[IO](config.image)
