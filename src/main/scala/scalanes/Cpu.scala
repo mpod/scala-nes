@@ -227,29 +227,27 @@ object Cpu extends LazyLogging {
     (nes2, asUInt16(hi, lo))
   }
 
-  def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
+  def cpuWrite(address: UInt16, d: UInt8)(nes: NesState): NesState =
     if (address >= 0x0000 && address < 0x2000) //RAM
-      NesState.ram.set(address, d)
+      NesState.ram.set(address, d)(nes)
     else if (address >= 0x2000 && address < 0x4000) // PPU registers
-      Ppu.cpuWrite(0x2000 + (address & 0x7), d)
+      Ppu.cpuWrite(0x2000 + (address & 0x7), d)(nes)
     else if (address >= 0x4000 && address < 0x4014) // APU registers
-      Apu.cpuWrite(address, d)
-    else if (address == 0x4014) // OAM DMA
-      (nes: NesState) => {
-        val delta = if ((nes.cpuState.cycles + 513) % 2 == 1) 513 + 1 else 513
-        val nes1  = incCycles(delta, nes)
-        Ppu.cpuWrite(address, d)(nes1)
-      }
-    else if (address == 0x4015) // APU registers
-      Apu.cpuWrite(address, d)
+      Apu.cpuWrite(address, d)(nes)
+    else if (address == 0x4014) { // OAM DMA
+      val delta = if ((nes.cpuState.cycles + 513) % 2 == 1) 513 + 1 else 513
+      val nes1  = incCycles(delta, nes)
+      Ppu.cpuWrite(address, d)(nes1)
+    } else if (address == 0x4015) // APU registers
+      Apu.cpuWrite(address, d)(nes)
     else if (address == 0x4016 && (d & 0x01)) // Controller 1
-      (nes: NesState) => Controller.writeController2(Controller.writeController1(nes))
+      Controller.writeController2(Controller.writeController1(nes))
     else if (address == 0x4017 && (d & 0x01)) // APU registers
-      Apu.cpuWrite(address, d)
+      Apu.cpuWrite(address, d)(nes)
     else if (address < 0x6000)
-      identity[NesState]
+      nes
     else if (address >= 0x6000 && address <= 0xffff) // Cartridge
-      Cartridge.cpuWrite(address, d)
+      Cartridge.cpuWrite(address, d)(nes)
     else
       throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
 

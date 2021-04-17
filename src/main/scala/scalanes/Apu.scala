@@ -496,117 +496,116 @@ object Apu {
       .map(apu => ApuState.frameCounterReg.set(d)(apu))
       .map(apu => NesState.apuState.set(apu)(nes))
 
-  def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
-    nes => {
-      require(address >= 0x4000 && address <= 0x4017 && address != 0x4014, f"Invalid address $address%#04x")
-      require((d & 0xff) == d)
-      address match {
-        case 0x4000 =>
-          setPulse1(Channel.reg0.set(d)(nes.apuState.pulse1))(nes)
-        case 0x4001 =>
-          nes.apuState.pulse1
-            .pure[Id]
-            .map(p => PulseState.sweepReload.set(true)(p))
-            .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
-        case 0x4002 =>
-          setPulse1(Channel.reg2.set(d)(nes.apuState.pulse1))(nes)
-        case 0x4003 =>
-          nes.apuState.pulse1
-            .pure[Id]
-            .map(p => Channel.reg3.set(d)(p))
-            .map(p => Envelope.envelopeStart.set(true)(p))
-            .map(p => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
-            .map(p => PulseState.sequenceCounterValue.set(0)(p))
-            .map(p => setPulse1(p)(nes))
-        case 0x4004 =>
-          setPulse2(Channel.reg0.set(d)(nes.apuState.pulse2))(nes)
-        case 0x4005 =>
-          nes.apuState.pulse2
-            .pure[Id]
-            .map(p => PulseState.sweepReload.set(true)(p))
-            .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
-        case 0x4006 =>
-          setPulse2(Channel.reg2.set(d)(nes.apuState.pulse2))(nes)
-        case 0x4007 =>
-          nes.apuState.pulse2
-            .pure[Id]
-            .map(p => Channel.reg3.set(d)(p))
-            .map(p => Envelope.envelopeStart.set(true)(p))
-            .map(p => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
-            .map(p => PulseState.sequenceCounterValue.set(0)(p))
-            .map(p => setPulse2(p)(nes))
-        case 0x4008 =>
-          setTriangle(Channel.reg0.set(d)(nes.apuState.triangle))(nes)
-        case 0x4009 =>
-          nes
-        case 0x400a =>
-          setTriangle(Channel.reg2.set(d)(nes.apuState.triangle))(nes)
-        case 0x400b =>
-          nes.apuState.triangle
-            .pure[Id]
-            .map(t => Channel.reg3.set(d)(t))
-            .map(t => TriangleState.linearCounterReload.set(true)(t))
-            .map(t => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(t))
-            .map(t => setTriangle(t)(nes))
-        case 0x400c =>
-          setNoise(Channel.reg0.set(d)(nes.apuState.noise))(nes)
-        case 0x400d =>
-          nes
-        case 0x400e =>
-          setNoise(Channel.reg2.set(d)(nes.apuState.noise))(nes)
-        case 0x400f =>
-          nes.apuState.noise
-            .pure[Id]
-            .map(n => Envelope.envelopeStart.set(true)(n))
-            .map(n => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(n))
-            .map(n => setNoise(n)(nes))
-        case 0x4010 =>
-          setDmc(Channel.reg0.set(d)(nes.apuState.dmc))(nes)
-        case 0x4011 =>
-          setDmc(Channel.reg1.set(d)(nes.apuState.dmc))(nes)
-        case 0x4012 =>
-          setDmc(Channel.reg2.set(d)(nes.apuState.dmc))(nes)
-        case 0x4013 =>
-          setDmc(Channel.reg3.set(d)(nes.apuState.dmc))(nes)
-        case 0x4015 =>
-          nes.apuState
-            .pure[Id]
-            .map { apu =>
-              ApuState.pulse1.set(
-                if (d & 0x01) LengthCounter.enableLengthCounter(apu.pulse1)
-                else LengthCounter.disableLengthCounter(apu.pulse1)
-              )(apu)
-            }
-            .map { apu =>
-              ApuState.pulse2.set(
-                if (d & 0x02) LengthCounter.enableLengthCounter(apu.pulse2)
-                else LengthCounter.disableLengthCounter(apu.pulse2)
-              )(apu)
-            }
-            .map { apu =>
-              ApuState.triangle.set(
-                if (d & 0x04) LengthCounter.enableLengthCounter(apu.triangle)
-                else LengthCounter.disableLengthCounter(apu.triangle)
-              )(apu)
-            }
-            .map { apu =>
-              ApuState.noise.set(
-                if (d & 0x08) LengthCounter.enableLengthCounter(apu.noise)
-                else LengthCounter.disableLengthCounter(apu.noise)
-              )(apu)
-            }
-            .map { apu =>
-              ApuState.dmc.set(
-                if (d & 0x10) DmcState.enabled.set(true)(apu.dmc)
-                else DmcState.enabled.set(false)(apu.dmc)
-              )(apu)
-            }
-            .map(apu => NesState.apuState.set(apu)(nes))
-        case 0x4017 =>
-          setFrameCounterReg(d)(nes)
-        case _ => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
-      }
+  def cpuWrite(address: UInt16, d: UInt8)(nes: NesState): NesState = {
+    require(address >= 0x4000 && address <= 0x4017 && address != 0x4014, f"Invalid address $address%#04x")
+    require((d & 0xff) == d)
+    address match {
+      case 0x4000 =>
+        setPulse1(Channel.reg0.set(d)(nes.apuState.pulse1))(nes)
+      case 0x4001 =>
+        nes.apuState.pulse1
+          .pure[Id]
+          .map(p => PulseState.sweepReload.set(true)(p))
+          .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
+      case 0x4002 =>
+        setPulse1(Channel.reg2.set(d)(nes.apuState.pulse1))(nes)
+      case 0x4003 =>
+        nes.apuState.pulse1
+          .pure[Id]
+          .map(p => Channel.reg3.set(d)(p))
+          .map(p => Envelope.envelopeStart.set(true)(p))
+          .map(p => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
+          .map(p => PulseState.sequenceCounterValue.set(0)(p))
+          .map(p => setPulse1(p)(nes))
+      case 0x4004 =>
+        setPulse2(Channel.reg0.set(d)(nes.apuState.pulse2))(nes)
+      case 0x4005 =>
+        nes.apuState.pulse2
+          .pure[Id]
+          .map(p => PulseState.sweepReload.set(true)(p))
+          .map(p => setPulse1(Channel.reg1.set(d)(p))(nes))
+      case 0x4006 =>
+        setPulse2(Channel.reg2.set(d)(nes.apuState.pulse2))(nes)
+      case 0x4007 =>
+        nes.apuState.pulse2
+          .pure[Id]
+          .map(p => Channel.reg3.set(d)(p))
+          .map(p => Envelope.envelopeStart.set(true)(p))
+          .map(p => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(p))
+          .map(p => PulseState.sequenceCounterValue.set(0)(p))
+          .map(p => setPulse2(p)(nes))
+      case 0x4008 =>
+        setTriangle(Channel.reg0.set(d)(nes.apuState.triangle))(nes)
+      case 0x4009 =>
+        nes
+      case 0x400a =>
+        setTriangle(Channel.reg2.set(d)(nes.apuState.triangle))(nes)
+      case 0x400b =>
+        nes.apuState.triangle
+          .pure[Id]
+          .map(t => Channel.reg3.set(d)(t))
+          .map(t => TriangleState.linearCounterReload.set(true)(t))
+          .map(t => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(t))
+          .map(t => setTriangle(t)(nes))
+      case 0x400c =>
+        setNoise(Channel.reg0.set(d)(nes.apuState.noise))(nes)
+      case 0x400d =>
+        nes
+      case 0x400e =>
+        setNoise(Channel.reg2.set(d)(nes.apuState.noise))(nes)
+      case 0x400f =>
+        nes.apuState.noise
+          .pure[Id]
+          .map(n => Envelope.envelopeStart.set(true)(n))
+          .map(n => LengthCounter.lengthCounterValue.set(lengthCounterTable((d >> 3) & 0x1f))(n))
+          .map(n => setNoise(n)(nes))
+      case 0x4010 =>
+        setDmc(Channel.reg0.set(d)(nes.apuState.dmc))(nes)
+      case 0x4011 =>
+        setDmc(Channel.reg1.set(d)(nes.apuState.dmc))(nes)
+      case 0x4012 =>
+        setDmc(Channel.reg2.set(d)(nes.apuState.dmc))(nes)
+      case 0x4013 =>
+        setDmc(Channel.reg3.set(d)(nes.apuState.dmc))(nes)
+      case 0x4015 =>
+        nes.apuState
+          .pure[Id]
+          .map { apu =>
+            ApuState.pulse1.set(
+              if (d & 0x01) LengthCounter.enableLengthCounter(apu.pulse1)
+              else LengthCounter.disableLengthCounter(apu.pulse1)
+            )(apu)
+          }
+          .map { apu =>
+            ApuState.pulse2.set(
+              if (d & 0x02) LengthCounter.enableLengthCounter(apu.pulse2)
+              else LengthCounter.disableLengthCounter(apu.pulse2)
+            )(apu)
+          }
+          .map { apu =>
+            ApuState.triangle.set(
+              if (d & 0x04) LengthCounter.enableLengthCounter(apu.triangle)
+              else LengthCounter.disableLengthCounter(apu.triangle)
+            )(apu)
+          }
+          .map { apu =>
+            ApuState.noise.set(
+              if (d & 0x08) LengthCounter.enableLengthCounter(apu.noise)
+              else LengthCounter.disableLengthCounter(apu.noise)
+            )(apu)
+          }
+          .map { apu =>
+            ApuState.dmc.set(
+              if (d & 0x10) DmcState.enabled.set(true)(apu.dmc)
+              else DmcState.enabled.set(false)(apu.dmc)
+            )(apu)
+          }
+          .map(apu => NesState.apuState.set(apu)(nes))
+      case 0x4017 =>
+        setFrameCounterReg(d)(nes)
+      case _ => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
     }
+  }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] =
     nes => {

@@ -450,31 +450,30 @@ object Ppu {
     }
   }
 
-  def cpuWrite(address: UInt16, d: UInt8): NesState => NesState = {
+  def cpuWrite(address: UInt16, d: UInt8)(nes: NesState): NesState = {
     require((address >= 0x2000 && address <= 0x3fff) || address == 0x4014, f"Invalid address $address%#04x")
     require((d & 0xff) == d)
     address match {
-      case 0x2000 => writeCtrl(d)
-      case 0x2001 => writeMask(d)
-      case 0x2003 => writeOamAddress(d)
-      case 0x2004 => writeOamData(d)
-      case 0x2005 => writeScroll(d)
-      case 0x2006 => writeAddr(d)
-      case 0x2007 => writeData(d)
-      case 0x4014 => writeDma(d)
+      case 0x2000 => writeCtrl(d)(nes)
+      case 0x2001 => writeMask(d)(nes)
+      case 0x2003 => writeOamAddress(d)(nes)
+      case 0x2004 => writeOamData(d)(nes)
+      case 0x2005 => writeScroll(d)(nes)
+      case 0x2006 => writeAddr(d)(nes)
+      case 0x2007 => writeData(d)(nes)
+      case 0x4014 => writeDma(d)(nes)
       case _      => throw new RuntimeException(f"Invalid cpu memory write at address $address%#04x")
     }
   }
 
-  def writeCtrl(d: UInt8): NesState => NesState =
-    nes => {
-      // Set nametables select
-      val ppu        = PpuState.ctrl.set(d)(nes.ppuState)
-      val nametables = PpuState.flagNametable(ppu)
-      val t          = (ppu.t & 0xf3ff) | (nametables << 10)
-      val ppu1       = PpuState.t.set(t)(ppu)
-      NesState.ppuState.set(ppu1)(nes)
-    }
+  def writeCtrl(d: UInt8)(nes: NesState): NesState = {
+    // Set nametables select
+    val ppu        = PpuState.ctrl.set(d)(nes.ppuState)
+    val nametables = PpuState.flagNametable(ppu)
+    val t          = (ppu.t & 0xf3ff) | (nametables << 10)
+    val ppu1       = PpuState.t.set(t)(ppu)
+    NesState.ppuState.set(ppu1)(nes)
+  }
 
   def writeMask(d: UInt8): NesState => NesState =
     lift(PpuState.mask.set(d))
@@ -482,68 +481,63 @@ object Ppu {
   def writeOamAddress(d: UInt8): NesState => NesState =
     lift(PpuState.oamAddress.set(d))
 
-  def writeOamData(d: UInt8): NesState => NesState =
-    nes => {
-      val oamAddress = nes.ppuState.oamAddress
-      val ppu1       = PpuState.oamData.set(oamAddress, d)(nes.ppuState)
-      val ppu2       = PpuState.oamAddress.set(oamAddress + 1)(ppu1)
-      NesState.ppuState.set(ppu2)(nes)
-    }
+  def writeOamData(d: UInt8)(nes: NesState): NesState = {
+    val oamAddress = nes.ppuState.oamAddress
+    val ppu1       = PpuState.oamData.set(oamAddress, d)(nes.ppuState)
+    val ppu2       = PpuState.oamAddress.set(oamAddress + 1)(ppu1)
+    NesState.ppuState.set(ppu2)(nes)
+  }
 
-  def writeScroll(d: UInt8): NesState => NesState =
-    nes => {
-      val ppu = nes.ppuState
-      val ppu1 = if (ppu.w) {
-        // Set coarse Y and fine Y
-        val t    = (ppu.t & 0x8c1f) | ((d & 0x07) << 12) | ((d & 0xf8) << 2)
-        val ppu1 = PpuState.t.set(t)(ppu)
-        PpuState.w.set(0)(ppu1)
-      } else {
-        // Set coarse X and fine X
-        val t    = (ppu.t & 0xffe0) | (d >> 3)
-        val x    = d & 0x7
-        val ppu1 = PpuState.t.set(t)(ppu)
-        val ppu2 = PpuState.x.set(x)(ppu1)
-        PpuState.w.set(1)(ppu2)
-      }
-      NesState.ppuState.set(ppu1)(nes)
+  def writeScroll(d: UInt8)(nes: NesState): NesState = {
+    val ppu = nes.ppuState
+    val ppu1 = if (ppu.w) {
+      // Set coarse Y and fine Y
+      val t    = (ppu.t & 0x8c1f) | ((d & 0x07) << 12) | ((d & 0xf8) << 2)
+      val ppu1 = PpuState.t.set(t)(ppu)
+      PpuState.w.set(0)(ppu1)
+    } else {
+      // Set coarse X and fine X
+      val t    = (ppu.t & 0xffe0) | (d >> 3)
+      val x    = d & 0x7
+      val ppu1 = PpuState.t.set(t)(ppu)
+      val ppu2 = PpuState.x.set(x)(ppu1)
+      PpuState.w.set(1)(ppu2)
     }
+    NesState.ppuState.set(ppu1)(nes)
+  }
 
-  def writeAddr(d: UInt8): NesState => NesState =
-    nes => {
-      val ppu = nes.ppuState
-      val ppu1 = if (ppu.w) {
-        // Upper address byte
-        val t    = (ppu.t & 0xff00) | d
-        val ppu1 = PpuState.t.set(t)(ppu)
-        val ppu2 = PpuState.v.set(t)(ppu1)
-        PpuState.w.set(0)(ppu2)
-      } else {
-        // Lower address byte
-        val t    = (ppu.t & 0x80ff) | ((d & 0x3f) << 8)
-        val ppu1 = PpuState.t.set(t)(ppu)
-        PpuState.w.set(1)(ppu1)
-      }
-      NesState.ppuState.set(ppu1)(nes)
+  def writeAddr(d: UInt8)(nes: NesState): NesState = {
+    val ppu = nes.ppuState
+    val ppu1 = if (ppu.w) {
+      // Upper address byte
+      val t    = (ppu.t & 0xff00) | d
+      val ppu1 = PpuState.t.set(t)(ppu)
+      val ppu2 = PpuState.v.set(t)(ppu1)
+      PpuState.w.set(0)(ppu2)
+    } else {
+      // Lower address byte
+      val t    = (ppu.t & 0x80ff) | ((d & 0x3f) << 8)
+      val ppu1 = PpuState.t.set(t)(ppu)
+      PpuState.w.set(1)(ppu1)
     }
+    NesState.ppuState.set(ppu1)(nes)
+  }
 
-  def writeData(d: UInt8): NesState => NesState =
-    nes => {
-      val ppu   = nes.ppuState
-      val delta = PpuState.increments(PpuState.flagIncrement(ppu))
-      val nes1  = ppuWrite(ppu.v, d)(nes)
-      val ppu1  = PpuState.v.set(ppu.v + delta)(ppu)
-      NesState.ppuState.set(ppu1)(nes1)
-    }
+  def writeData(d: UInt8)(nes: NesState): NesState = {
+    val ppu   = nes.ppuState
+    val delta = PpuState.increments(PpuState.flagIncrement(ppu))
+    val nes1  = ppuWrite(ppu.v, d)(nes)
+    val ppu1  = PpuState.v.set(ppu.v + delta)(ppu)
+    NesState.ppuState.set(ppu1)(nes1)
+  }
 
-  def writeDma(d: UInt8): NesState => NesState =
-    nes => {
-      val address = d << 8
-      (0 until 256).foldLeft(nes) { case (nes, i) =>
-        val (nes1, d) = Cpu.cpuRead(address + i)(nes)
-        writeOamData(d)(nes1)
-      }
+  def writeDma(d: UInt8)(nes: NesState): NesState = {
+    val address = d << 8
+    (0 until 256).foldLeft(nes) { case (nes, i) =>
+      val (nes1, d) = Cpu.cpuRead(address + i)(nes)
+      writeOamData(d)(nes1)
     }
+  }
 
   val readStatus: State[NesState, UInt8] =
     nes => {
