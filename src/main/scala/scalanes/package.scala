@@ -13,6 +13,7 @@ package object scalanes {
   type UInt12 = Int
   type UInt15 = Int
   type UInt16 = Int
+  type UInt32 = Int
 
   implicit def intToBoolean(v: Int): Boolean = v != 0
 
