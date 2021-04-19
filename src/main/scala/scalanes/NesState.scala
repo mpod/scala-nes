@@ -12,7 +12,7 @@ import java.nio.file.Path
 import scala.language.higherKinds
 
 class NesState(
-  var ram: Vector[UInt8],
+  var ram: Array[UInt8],
   var cpuState: CpuState,
   var ppuState: PpuState,
   var cartridge: Cartridge,
@@ -21,7 +21,7 @@ class NesState(
 )
 
 object NesState {
-  val ram: IndexSetter[NesState, UInt8]                  = (i, a, s) => s.ram = s.ram.updated(i, a)
+  val ram: IndexSetter[NesState, UInt8]                  = (i, a, s) => s.ram.update(i, a)
   val cpuState: Setter[NesState, CpuState]               = (a, s) => s.cpuState = a
   val ppuState: Setter[NesState, PpuState]               = (a, s) => s.ppuState = a
   val cartridge: Setter[NesState, Cartridge]             = (a, s) => s.cartridge = a
@@ -30,7 +30,7 @@ object NesState {
 
   def apply(mirroring: Mirroring, cartridge: Cartridge): NesState =
     new NesState(
-      ram = Vector.fill(0x800)(0x00),
+      ram = Array.fill(0x800)(0x00),
       cpuState = CpuState(),
       ppuState = PpuState(mirroring),
       cartridge = cartridge,
@@ -87,12 +87,12 @@ object NesState {
       prgRamSize = if (prgRamBanks) prgRamBanks * 0x2000 else 0x2000
       prgRomSize = prgRomBanks * 0x4000
       chrRomSize = chrRomBanks * 0x2000
-      chrRam     = if (chrRomBanks == 0) Vector.fill[UInt8](0x2000)(0x00) else Vector.empty
+      chrRam     = if (chrRomBanks == 0) Array.fill[UInt8](0x2000)(0x00) else Array.empty[UInt8]
       mirroring  = if (flags6 & 0x1) Mirroring.Vertical else Mirroring.Horizontal
       mapperId   = (flags7 & 0xf0) | (flags6 >> 4)
       _      <- conditional(flags6 & 0x04, ignore(512 * 8))
-      prgRom <- fixedSizeBytes(prgRomSize, vector(uint8))
-      chrRom <- fixedSizeBytes(chrRomSize, vector(uint8))
+      prgRom <- fixedSizeBytes(prgRomSize, vector(uint8)).map(_.toArray)
+      chrRom <- fixedSizeBytes(chrRomSize, vector(uint8)).map(_.toArray)
       chrMem = if (chrRom.isEmpty) chrRam else chrRom
       cartridge <-
         if (mapperId == 0)

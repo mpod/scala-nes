@@ -77,6 +77,14 @@ package object scalanes {
     }
   }
 
+  abstract class Incrementer[S, A] {
+    protected def _inc(d: A, s: S): Unit
+    def inc[T <: S](d: A)(s: T): T = {
+      _inc(d, s)
+      s
+    }
+  }
+
   def hex(n: Int, d: Int = 4): String =
     (d - 1 to 0 by -1).map(i => "0123456789ABCDEF" ((n >> (i * 4)) & 0xf)).mkString("")
 }

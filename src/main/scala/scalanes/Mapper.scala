@@ -24,8 +24,8 @@ object BankMap {
 trait Mapper extends Cartridge {
   type Self <: Mapper
 
-  def prgRom: Vector[UInt8]
-  def chrRom: Vector[UInt8]
+  def prgRom: Array[UInt8]
+  def chrRom: Array[UInt8]
   def prgRam: Array[UInt8]
   def prgBankMaps: List[BankMap]
   def chrBankMaps: List[BankMap]

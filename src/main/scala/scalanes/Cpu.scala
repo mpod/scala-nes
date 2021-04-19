@@ -25,13 +25,13 @@ class CpuState(
 }
 
 object CpuState {
-  val a: Setter[CpuState, UInt8]      = (a, s) => s.a = a
-  val x: Setter[CpuState, UInt8]      = (a, s) => s.x = a
-  val y: Setter[CpuState, UInt8]      = (a, s) => s.y = a
-  val stkp: Setter[CpuState, UInt8]   = (a, s) => s.stkp = a
-  val pc: Setter[CpuState, UInt16]    = (a, s) => s.pc = a
-  val status: Setter[CpuState, UInt8] = (a, s) => s.status = a
-  val cycles: Setter[CpuState, Long]  = (a, s) => s.cycles = a
+  val a: Setter[CpuState, UInt8]          = (a, s) => s.a = a
+  val x: Setter[CpuState, UInt8]          = (a, s) => s.x = a
+  val y: Setter[CpuState, UInt8]          = (a, s) => s.y = a
+  val stkp: Setter[CpuState, UInt8]       = (a, s) => s.stkp = a
+  val pc: Setter[CpuState, UInt16]        = (a, s) => s.pc = a
+  val status: Setter[CpuState, UInt8]     = (a, s) => s.status = a
+  val cycles: Incrementer[CpuState, Long] = (d, s) => s.cycles += d
 
   def apply(): CpuState =
     new CpuState(
@@ -127,11 +127,6 @@ object Cpu extends LazyLogging {
 
   def decStkp(nes: NesState): NesState = setStkp((nes.cpuState.stkp - 1) & 0xff)(nes)
 
-  def setCycles(d: Long)(nes: NesState): NesState = {
-    val cpu = CpuState.cycles.set(d)(nes.cpuState)
-    NesState.cpuState.set(cpu)(nes)
-  }
-
   private def statusFlagSetter(pos: Int, d: UInt1): NesState => NesState =
     nes => {
       val status = (nes.cpuState.status & ~(0x01 << pos)) | (d << pos)
@@ -195,7 +190,10 @@ object Cpu extends LazyLogging {
       )
     )(nes)
 
-  def incCycles(d: Int, nes: NesState): NesState = setCycles(nes.cpuState.cycles + d)(nes)
+  def incCycles(d: Int, nes: NesState): NesState = {
+    val cpu = CpuState.cycles.inc(d)(nes.cpuState)
+    NesState.cpuState.set(cpu)(nes)
+  }
 
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xffff) == address)
