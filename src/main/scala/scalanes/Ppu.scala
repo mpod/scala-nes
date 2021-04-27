@@ -295,7 +295,7 @@ object Ppu {
   private val S = Array(1, 2, 4, 8)
 
   // Taken from: https://graphics.stanford.edu/~seander/bithacks.html#InterleaveBMN
-  // Interleave 16 bits of a0 and b0, so the bits of a0 are in the odd positions and bits from b0 in the odd;
+  // Interleave 16 bits of a0 and b0, so the bits of a0 are in the odd positions and bits from b0 in the even
   private def interleaveBits(a0: UInt16, b0: UInt16): UInt32 = {
     val a1 = (a0 | (a0 << S(3))) & B(3)
     val a2 = (a1 | (a1 << S(2))) & B(2)
