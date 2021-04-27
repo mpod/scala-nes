@@ -175,19 +175,21 @@ object Cpu extends LazyLogging {
   def setFlagN(f: Boolean): NesState => NesState =
     if (f) setFlagN else clearFlagN
 
-  @tailrec
-  def chain(setters: List[NesState => NesState])(nes: NesState): NesState =
-    setters match {
-      case Nil            => nes
-      case setter :: tail => chain(tail)(setter(nes))
-    }
+  type FlagSetter = NesState => NesState
+
+  def setFlags(f1: FlagSetter)(nes: NesState): NesState =
+    f1(nes)
+  def setFlags(f1: FlagSetter, f2: FlagSetter)(nes: NesState): NesState =
+    f1(f2(nes))
+  def setFlags(f1: FlagSetter, f2: FlagSetter, f3: FlagSetter)(nes: NesState): NesState =
+    f1(f2(f3(nes)))
+  def setFlags(f1: FlagSetter, f2: FlagSetter, f3: FlagSetter, f4: FlagSetter)(nes: NesState): NesState =
+    f1(f2(f3(f4(nes))))
 
   def setZnFlags(d: UInt8)(nes: NesState): NesState =
-    chain(
-      List(
-        setFlagZ(d == 0x00),
-        setFlagN(d & 0x80)
-      )
+    setFlags(
+      setFlagZ(d == 0x00),
+      setFlagN(d & 0x80)
     )(nes)
 
   def incCycles(d: Int, nes: NesState): NesState = {
@@ -293,10 +295,9 @@ object Cpu extends LazyLogging {
       val pc1        = nes.cpuState.pc
       val pcHi       = (pc1 >> 8) & 0xff
       val pcLo       = pc1 & 0xff
-      val flags      = List(setFlagB(false), setFlagU(true), setFlagI(true))
       val nes1       = push(pcHi)(nes)
       val nes2       = push(pcLo)(nes1)
-      val nes3       = chain(flags)(nes2)
+      val nes3       = setFlags(setFlagB(false), setFlagU(true), setFlagI(true))(nes2)
       val status     = nes1.cpuState.status
       val nes4       = push(status)(nes3)
       val (nes5, lo) = cpuRead(0xfffe)(nes4)
@@ -311,10 +312,9 @@ object Cpu extends LazyLogging {
       val pc1        = nes.cpuState.pc
       val pcHi       = (pc1 >> 8) & 0xff
       val pcLo       = pc1 & 0xff
-      val flags      = List(setFlagB(false), setFlagU(true), setFlagI(true))
       val nes1       = push(pcHi)(nes)
       val nes2       = push(pcLo)(nes1)
-      val nes3       = chain(flags)(nes2)
+      val nes3       = setFlags(setFlagB(false), setFlagU(true), setFlagI(true))(nes2)
       val status     = nes1.cpuState.status
       val nes4       = push(status)(nes3)
       val (nes5, lo) = cpuRead(0xfffa)(nes4)
@@ -461,14 +461,13 @@ object Cpu extends LazyLogging {
       val c         = cpu.flagC
       val lsb       = if (c) 1 else 0
       val temp      = cpu.a + d + lsb
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(temp & 0xff00),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagV((~(cpu.a ^ d) & (cpu.a ^ temp)) & 0x80),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = setA(temp & 0xff)(nes1)
-      chain(flags)(nes2)
+      )(nes1)
+      setA(temp & 0xff)(nes2)
     }
 
   // Logical AND
@@ -485,12 +484,11 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = d << 1
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(temp & 0xff00),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = chain(flags)(nes1)
+      )(nes1)
       au.write(temp & 0xff)(nes2)
     }
 
@@ -521,12 +519,11 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = nes1.cpuState.a & d
-      val flags = List(
+      setFlags(
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagN(d & (1 << 7)),
         setFlagV(d & (1 << 6))
-      )
-      chain(flags)(nes1)
+      )(nes1)
     }
 
   // Branch if minus
@@ -571,12 +568,11 @@ object Cpu extends LazyLogging {
       val (nes1, d1) = au.read(nes)
       val d2         = getter(nes1.cpuState)
       val temp       = d2 - d1
-      val flags = List(
+      setFlags(
         setFlagC(d2 >= d1),
         setFlagZ((temp & 0x00ff) == 0x0000),
         setFlagN(temp & 0x0080)
-      )
-      chain(flags)(nes1)
+      )(nes1)
     }
 
   // Compare
@@ -691,12 +687,11 @@ object Cpu extends LazyLogging {
     rwOp(addressMode) { (nes, au) =>
       val (nes1, d) = au.read(nes)
       val temp      = (d >> 1) & 0xff
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(d & 0x01),
         setFlagZ((temp & 0xff) == 0x00),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = chain(flags)(nes1)
+      )(nes1)
       au.write(temp)(nes2)
     }
 
@@ -724,9 +719,8 @@ object Cpu extends LazyLogging {
   val PHP: Op =
     nes => {
       val status = nes.cpuState.status | (0x01 << 4) | (0x01 << 5)
-      val flags  = List(setFlagB(false), setFlagU(false))
       val nes1   = push(status)(nes)
-      chain(flags)(nes1)
+      setFlags(setFlagB(false), setFlagU(false))(nes1)
     }
 
   // Pull accumulator
@@ -751,12 +745,11 @@ object Cpu extends LazyLogging {
       val (nes1, d) = au.read(nes)
       val lsb       = if (nes1.cpuState.flagC) 1 else 0
       val temp      = (d << 1) | lsb
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(temp & 0xff00),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = chain(flags)(nes1)
+      )(nes1)
       au.write(temp & 0xff)(nes2)
     }
 
@@ -766,12 +759,11 @@ object Cpu extends LazyLogging {
       val (nes1, d) = au.read(nes)
       val msb       = if (nes1.cpuState.flagC) 1 << 7 else 0
       val temp      = (d >> 1) | msb
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(d & 0x01),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = chain(flags)(nes1)
+      )(nes1)
       au.write(temp & 0xff)(nes2)
     }
 
@@ -804,14 +796,13 @@ object Cpu extends LazyLogging {
       val value     = d ^ 0x00ff
       val lsb       = if (nes1.cpuState.flagC) 1 else 0
       val temp      = nes1.cpuState.a + value + lsb
-      val flags = List(
+      val nes2 = setFlags(
         setFlagC(temp & 0xff00),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagV((temp ^ nes1.cpuState.a) & (temp ^ value) & 0x80),
         setFlagN(temp & 0x80)
-      )
-      val nes2 = setA(temp & 0xff)(nes1)
-      chain(flags)(nes2)
+      )(nes1)
+      setA(temp & 0xff)(nes2)
     }
 
   // Set carry flag
@@ -906,12 +897,11 @@ object Cpu extends LazyLogging {
       val (nes3, d2) = au.read(nes2)
       val d3         = nes3.cpuState.a
       val temp       = d3 - d2
-      val flags = List(
+      setFlags(
         setFlagC(d3 >= d2),
         setFlagZ((temp & 0x00ff) == 0x0000),
         setFlagN(temp & 0x0080)
-      )
-      chain(flags)(nes3)
+      )(nes3)
     }
 
   // Equivalent to INC value then SBC value
@@ -923,14 +913,13 @@ object Cpu extends LazyLogging {
       val value      = d2 ^ 0x00ff
       val lsb        = if (nes3.cpuState.flagC) 1 else 0
       val temp       = nes3.cpuState.a + value + lsb
-      val flags = List(
+      val nes4       = setA(temp & 0xff)(nes3)
+      setFlags(
         setFlagC(temp & 0xff00),
         setFlagZ((temp & 0x00ff) == 0x00),
         setFlagV((temp ^ nes3.cpuState.a) & (temp ^ value) & 0x80),
         setFlagN(temp & 0x80)
-      )
-      val nes4 = setA(temp & 0xff)(nes3)
-      chain(flags)(nes4)
+      )(nes4)
     }
 
   // Equivalent to ASL value then ORA value
@@ -982,14 +971,13 @@ object Cpu extends LazyLogging {
       val c          = cpu.flagC
       val lsb        = if (c) 1 else 0
       val temp2      = cpu.a + temp1 + lsb
-      val flags = List(
+      val nes4       = setA(temp2 & 0xff)(nes3)
+      setFlags(
         setFlagC(temp2 & 0xff00),
         setFlagZ((temp2 & 0x00ff) == 0x00),
         setFlagV((~(cpu.a ^ temp1) & (cpu.a ^ temp2)) & 0x80),
         setFlagN(temp2 & 0x80)
-      )
-      val nes4 = setA(temp2 & 0xff)(nes3)
-      chain(flags)(nes4)
+      )(nes4)
     }
 
   def XXX: Op = identity
