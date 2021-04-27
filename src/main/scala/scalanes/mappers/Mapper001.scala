@@ -3,8 +3,8 @@ package scalanes.mappers
 import scalanes._
 
 class Mapper001(
-  override val prgRom: Vector[UInt8],
-  override val chrRom: Vector[UInt8],
+  override val prgRom: Array[UInt8],
+  override val chrRom: Array[UInt8],
   prgRamSize: Int
 ) extends Mapper {
 

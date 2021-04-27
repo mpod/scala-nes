@@ -147,12 +147,12 @@ object PulseState {
     s.reg3 = (s.reg3 & ~0x7) | ((a >> 8) & 0x7)
   }
 
-  val dutySequences: Vector[Vector[Int]] =
-    Vector(
-      Vector(0, 1, 0, 0, 0, 0, 0, 0),
-      Vector(0, 1, 1, 0, 0, 0, 0, 0),
-      Vector(0, 1, 1, 1, 1, 0, 0, 0),
-      Vector(1, 0, 0, 1, 1, 1, 1, 1)
+  val dutySequences: Array[Array[Int]] =
+    Array(
+      Array(0, 1, 0, 0, 0, 0, 0, 0),
+      Array(0, 1, 1, 0, 0, 0, 0, 0),
+      Array(0, 1, 1, 1, 1, 0, 0, 0),
+      Array(1, 0, 0, 1, 1, 1, 1, 1)
     )
 
   def channel(): PulseState =
@@ -213,8 +213,8 @@ object TriangleState {
   val timerValue: Setter[TriangleState, UInt11]           = (a, s) => s.timerValue = a
   val sequenceCounterValue: Setter[TriangleState, Int]    = (a, s) => s.sequenceCounterValue = a
 
-  val triangleSequence: Vector[Int] =
-    Vector(
+  val triangleSequence: Array[Int] =
+    Array(
       // format: off
       15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
@@ -273,7 +273,7 @@ object NoiseState {
   val shiftRegister: Setter[NoiseState, UInt15] = (a, s) => s.shiftRegister = a
   val timerValue: Setter[NoiseState, Int]       = (a, s) => s.timerValue = a
 
-  val timerPeriods: Vector[Int] = Vector(4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068)
+  val timerPeriods: Array[Int] = Array(4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068)
 
   def apply(): NoiseState = new NoiseState(1, 0)
 
@@ -328,7 +328,7 @@ object DmcState {
   val shiftRegister: Setter[DmcState, UInt8]       = (a, s) => s.shiftRegister = a
   val currentAddress: Setter[DmcState, UInt16]     = (a, s) => s.currentAddress = a
 
-  val timerPeriods: Vector[Int] = Vector(
+  val timerPeriods: Array[Int] = Array(
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
   )
 
@@ -449,10 +449,10 @@ object FilterChain {
 }
 
 object Apu {
-  val pulseTable: Vector[Float] = (0 to 30).map(i => 95.52f / (8128.0f / i + 100)).toVector
-  val tndTable: Vector[Float]   = (0 to 202).map(i => 163.67f / (24329.0f / i + 100)).toVector
+  val pulseTable: Array[Float] = (0 to 30).map(i => 95.52f / (8128.0f / i + 100)).toArray
+  val tndTable: Array[Float]   = (0 to 202).map(i => 163.67f / (24329.0f / i + 100)).toArray
 
-  val lengthCounterTable: Vector[UInt8] = Vector(
+  val lengthCounterTable: Array[UInt8] = Array(
     // format: off
     10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30

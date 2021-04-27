@@ -13,8 +13,10 @@ package object scalanes {
   type UInt12 = Int
   type UInt15 = Int
   type UInt16 = Int
+  type UInt32 = Int
 
-  implicit def intToBoolean(v: Int): Boolean = v != 0
+  implicit def intToBoolean(v: Int): Boolean   = v != 0
+  implicit def longToBoolean(v: Long): Boolean = v != 0
 
   type State[S, A] = S => (S, A)
 
@@ -60,7 +62,7 @@ package object scalanes {
     def set[S](s: S): State[S, Unit]              = _ => (s, ())
   }
 
-  abstract class Setter[S, A] {
+  abstract class Setter[S, @specialized(Int, Long) A] {
     protected def _set(a: A, s: S): Unit
     def set[T <: S](a: A)(s: T): T = {
       _set(a, s)
@@ -68,10 +70,18 @@ package object scalanes {
     }
   }
 
-  abstract class IndexSetter[S, A] {
+  abstract class IndexSetter[S, @specialized(Int, Long) A] {
     protected def _set(i: Int, a: A, s: S): Unit
     def set(i: Int, a: A)(s: S): S = {
       _set(i, a, s)
+      s
+    }
+  }
+
+  abstract class Incrementer[S, @specialized(Int, Long) A] {
+    protected def _inc(d: A, s: S): Unit
+    def inc[T <: S](d: A)(s: T): T = {
+      _inc(d, s)
       s
     }
   }

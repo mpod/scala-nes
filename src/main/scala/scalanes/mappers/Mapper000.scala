@@ -3,8 +3,8 @@ package scalanes.mappers
 import scalanes.{BankMap, Mapper, UInt16, UInt8}
 
 class Mapper000(
-  override val prgRom: Vector[UInt8],
-  override val chrRom: Vector[UInt8],
+  override val prgRom: Array[UInt8],
+  override val chrRom: Array[UInt8],
   prgRamSize: Int
 ) extends Mapper {
 
@@ -13,7 +13,7 @@ class Mapper000(
   override val prgRam: Array[UInt8] = Array.fill(prgRamSize)(0x00)
 
   override val prgBankMaps: List[BankMap] =
-    if (prgRom.size > 16 * 1024)
+    if (prgRom.length > 16 * 1024)
       List(BankMap(0, 16), BankMap(16 * 1024, 16))
     else
       List(BankMap(0, 16), BankMap(0, 16))
