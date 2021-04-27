@@ -12,11 +12,11 @@ class Mapper001(
 
   override val prgRam: Array[UInt8] = Array.fill(prgRamSize)(0x00)
 
-  override def prgBankMaps: List[BankMap] = createPrgBankMaps(registers)
-
-  override def chrBankMaps: List[BankMap] = createChrBankMaps(registers)
-
   private val registers: Array[UInt8] = Array(0x0c, 0x00, 0x00, 0x00)
+
+  override val prgBankMaps: List[BankMap] = createPrgBankMaps(registers)
+
+  override val chrBankMaps: List[BankMap] = createChrBankMaps(registers)
 
   private var shiftReg: UInt8 = 0x00
 
