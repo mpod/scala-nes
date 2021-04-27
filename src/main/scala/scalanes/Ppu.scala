@@ -314,7 +314,7 @@ object Ppu {
     nes => {
       val ppu = nes.ppuState
       // Encode 4 8-bit values into a 32-bit value
-      // a1b1c1d1.a2b2c2d2.a3b3c3d3.a4b4c4d4.a5b5c5d5.a6b6c6d6.a7b7c7d7.a8b8c8d8
+      // a8b8c8d8.a7b7c7d7.a6b6c6d6.a5b5c5d5.a4b4c4d4.a3b3c3d3.a2b2c2d2.a1b1c1d1
       // ax - bits from nextTileHi
       // bx - bits from nextTileLo
       // cx - bits from nextTileAttr & 0x02
