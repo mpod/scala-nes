@@ -27,20 +27,19 @@ trait Mapper extends Cartridge {
   def prgRom: Array[UInt8]
   def chrRom: Array[UInt8]
   def prgRam: Array[UInt8]
-  def prgBankMaps: List[BankMap]
-  def chrBankMaps: List[BankMap]
+  def prgBankMaps: Array[BankMap]
+  def chrBankMaps: Array[BankMap]
 
-  protected def mapAddress(address: UInt16, bankMaps: List[BankMap]): UInt16 = {
+  protected def mapAddress(address: UInt16, bankMaps: Array[BankMap]): UInt16 = {
     @tailrec
-    def helper(addr: UInt16, bankMaps: List[BankMap]): UInt16 = bankMaps match {
-      case bankMap :: tail if addr >= bankMap.nextBankMapOffset =>
-        helper(addr - bankMap.sizeInB, tail)
-      case bankMap :: _ =>
+    def helper(addr: UInt16, bankMaps: Array[BankMap], i: Int): UInt16 = {
+      val bankMap = bankMaps(i)
+      if (addr >= bankMap.nextBankMapOffset)
+        helper(addr - bankMap.sizeInB, bankMaps, i + 1)
+      else
         bankMap.offset + addr
-      case Nil =>
-        throw new RuntimeException(f"Invalid cartridge address $address%#04x")
     }
-    helper(address, bankMaps)
+    helper(address, bankMaps, 0)
   }
 
   override def prgRead(address: UInt16): UInt8 =

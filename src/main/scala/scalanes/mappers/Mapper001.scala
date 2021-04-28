@@ -14,9 +14,9 @@ class Mapper001(
 
   private val registers: Array[UInt8] = Array(0x0c, 0x00, 0x00, 0x00)
 
-  override val prgBankMaps: List[BankMap] = createPrgBankMaps(registers)
+  override val prgBankMaps: Array[BankMap] = createPrgBankMaps(registers)
 
-  override val chrBankMaps: List[BankMap] = createChrBankMaps(registers)
+  override val chrBankMaps: Array[BankMap] = createChrBankMaps(registers)
 
   private var shiftReg: UInt8 = 0x00
 
@@ -56,23 +56,23 @@ class Mapper001(
 
   override def reset: Self = this
 
-  private def createPrgBankMaps(registers: Array[UInt8]): List[BankMap] = {
+  private def createPrgBankMaps(registers: Array[UInt8]): Array[BankMap] = {
     val prgMode = (registers(0) >> 2) & 0x03
     // PRG mode 2 (16KB): fix first bank at $8000 and switch 16 KB bank at $C000
     if (prgMode == 2)
-      List(BankMap.map16kB(0), BankMap.map16kB(registers(3) & 0xf))
+      Array(BankMap.map16kB(0), BankMap.map16kB(registers(3) & 0xf))
     // PRG mode 3 (16KB): fix last bank at $C000 and switch 16 KB bank at $8000
     else if (prgMode == 3)
-      List(BankMap.map16kB(registers(3) & 0xf), BankMap.map16kB(0xf))
+      Array(BankMap.map16kB(registers(3) & 0xf), BankMap.map16kB(0xf))
     // PRG mode 0 or 1 (32KB): switch 32 KB at $8000, ignoring low bit of bank number
     else
-      List(BankMap.map32kB((registers(3) & 0xf) >> 1))
+      Array(BankMap.map32kB((registers(3) & 0xf) >> 1))
   }
 
-  private def createChrBankMaps(registers: Array[UInt8]): List[BankMap] =
+  private def createChrBankMaps(registers: Array[UInt8]): Array[BankMap] =
     // 0: switch 8 KB at a time; 1: switch two separate 4 KB banks
     if (registers(0) & 0x10)
-      List(BankMap.map4kB(registers(1) & 0x1f), BankMap.map4kB(registers(2) & 0x1f))
+      Array(BankMap.map4kB(registers(1) & 0x1f), BankMap.map4kB(registers(2) & 0x1f))
     else
-      List(BankMap.map8kB((registers(1) >> 1) & 0xf))
+      Array(BankMap.map8kB((registers(1) >> 1) & 0xf))
 }
