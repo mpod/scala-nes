@@ -1,4 +1,6 @@
 # scala-nes
+[![Scala CI](https://github.com/mpod/scala-nes/actions/workflows/scala.yml/badge.svg)](https://github.com/mpod/scala-nes/actions/workflows/scala.yml)
+
 NES emulator written in Scala.
 
 ## Screenshots
