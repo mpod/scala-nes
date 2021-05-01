@@ -12,8 +12,8 @@ class PpuState(
   var scanline: Int, // 0-261
   var frame: Long,
   // PPU memory
-  var nametables: Vector[UInt8],
-  var palettes: Vector[UInt8],
+  var nametables: Array[UInt8],
+  var palettes: Array[UInt8],
   // PPU registers
   var ctrl: UInt8,
   var mask: UInt8,
@@ -41,8 +41,8 @@ class PpuState(
 )
 
 object PpuState {
-  val nametables: IndexSetter[PpuState, UInt8]          = (i, a, s) => s.nametables = s.nametables.updated(i, a)
-  val palettes: IndexSetter[PpuState, UInt8]            = (i, a, s) => s.palettes = s.palettes.updated(i, a)
+  val nametables: IndexSetter[PpuState, UInt8]          = (i, a, s) => s.nametables.update(i, a)
+  val palettes: IndexSetter[PpuState, UInt8]            = (i, a, s) => s.palettes.update(i, a)
   val ctrl: Setter[PpuState, UInt8]                     = (a, s) => s.ctrl = a
   val mask: Setter[PpuState, UInt8]                     = (a, s) => s.mask = a
   val status: Setter[PpuState, UInt8]                   = (a, s) => s.status = a
@@ -88,8 +88,8 @@ object PpuState {
     cycle = 0,
     scanline = 0,
     frame = 0,
-    nametables = Vector.fill(2 * 1024)(0x00),
-    palettes = Vector.fill(32)(0x00),
+    nametables = Array.fill(2 * 1024)(0x00),
+    palettes = Array.fill(32)(0x00),
     ctrl = 0x00,
     mask = 0x00,
     status = 0x00,
@@ -164,7 +164,7 @@ case class Rgb(r: Int, g: Int, b: Int)
 
 object Rgb {
   // format: off
-  val palette: Vector[Int] = Vector(
+  val palette: Array[Int] = Array(
     Rgb(84, 84, 84),    Rgb(0, 30, 116),    Rgb(8, 16, 144),    Rgb(48, 0, 136),
     Rgb(68, 0, 100),    Rgb(92, 0, 48),     Rgb(84, 4, 0),      Rgb(60, 24, 0),
     Rgb(32, 42, 0),     Rgb(8, 58, 0),      Rgb(0, 64, 0),      Rgb(0, 60, 0),
