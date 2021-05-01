@@ -31,7 +31,7 @@ class PpuState(
   var nextTileHi: UInt8,
   var nextTileAttr: UInt8,
   // Sprite
-  var oamData: Vector[UInt8],
+  var oamData: Array[UInt8],
   var oamAddress: UInt16,
   var spritesInfo: Vector[SpriteInfo],
   // Other
@@ -57,7 +57,7 @@ object PpuState {
   val nextTileHi: Setter[PpuState, UInt8]               = (a, s) => s.nextTileHi = a
   val nextTileAttr: Setter[PpuState, UInt8]             = (a, s) => s.nextTileAttr = a
   val oamAddress: Setter[PpuState, UInt16]              = (a, s) => s.oamAddress = a
-  val oamData: IndexSetter[PpuState, UInt8]             = (i, a, s) => s.oamData = s.oamData.updated(i, a)
+  val oamData: IndexSetter[PpuState, UInt8]             = (i, a, s) => s.oamData.update(i, a)
   val spritesInfo: Setter[PpuState, Vector[SpriteInfo]] = (a, s) => s.spritesInfo = a
   val cycle: Setter[PpuState, Int]                      = (a, s) => s.cycle = a
   val scanline: Setter[PpuState, Int]                   = (a, s) => s.scanline = a
@@ -103,7 +103,7 @@ object PpuState {
     nextTileLo = 0x00,
     nextTileHi = 0x00,
     nextTileAttr = 0x00,
-    oamData = Vector.fill(256)(0x00),
+    oamData = Array.fill(256)(0x00),
     oamAddress = 0x0000,
     spritesInfo = Vector.empty,
     canvas = Array.fill(2 * 256 * 2 * 240)(0),
