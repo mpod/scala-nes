@@ -752,7 +752,7 @@ object Ppu {
       val scanline = nes.ppuState.scanline
       val oamData  = nes.ppuState.oamData
       val (nes1, spritesInfo) = (0 until 64)
-        .foldRight((nes, new ArrayBuffer[SpriteInfo])) { case (i, acc) =>
+        .foldLeft((nes, new ArrayBuffer[SpriteInfo])) { case (acc, i) =>
           val y   = oamData(i * 4 + 0)
           val row = scanline - y
           if (row >= 0 && row < h) {
