@@ -4,6 +4,7 @@ import Mirroring.Mirroring
 import SpritePriority.SpritePriority
 
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 class PpuState(
@@ -33,7 +34,7 @@ class PpuState(
   // Sprite
   var oamData: Array[UInt8],
   var oamAddress: UInt16,
-  var spritesInfo: Vector[SpriteInfo],
+  var spritesInfo: ArrayBuffer[SpriteInfo],
   // Other
   val canvas: Array[Int],
   var nmi: Boolean,
@@ -41,28 +42,28 @@ class PpuState(
 )
 
 object PpuState {
-  val nametables: IndexSetter[PpuState, UInt8]          = (i, a, s) => s.nametables.update(i, a)
-  val palettes: IndexSetter[PpuState, UInt8]            = (i, a, s) => s.palettes.update(i, a)
-  val ctrl: Setter[PpuState, UInt8]                     = (a, s) => s.ctrl = a
-  val mask: Setter[PpuState, UInt8]                     = (a, s) => s.mask = a
-  val status: Setter[PpuState, UInt8]                   = (a, s) => s.status = a
-  val bufferedData: Setter[PpuState, UInt8]             = (a, s) => s.bufferedData = a
-  val v: Setter[PpuState, UInt15]                       = (a, s) => s.v = a
-  val t: Setter[PpuState, UInt15]                       = (a, s) => s.t = a
-  val x: Setter[PpuState, UInt3]                        = (a, s) => s.x = a
-  val w: Setter[PpuState, UInt1]                        = (a, s) => s.w = a
-  val shifter: Setter[PpuState, Long]                   = (a, s) => s.shifter = a
-  val nextTileId: Setter[PpuState, UInt8]               = (a, s) => s.nextTileId = a
-  val nextTileLo: Setter[PpuState, UInt8]               = (a, s) => s.nextTileLo = a
-  val nextTileHi: Setter[PpuState, UInt8]               = (a, s) => s.nextTileHi = a
-  val nextTileAttr: Setter[PpuState, UInt8]             = (a, s) => s.nextTileAttr = a
-  val oamAddress: Setter[PpuState, UInt16]              = (a, s) => s.oamAddress = a
-  val oamData: IndexSetter[PpuState, UInt8]             = (i, a, s) => s.oamData.update(i, a)
-  val spritesInfo: Setter[PpuState, Vector[SpriteInfo]] = (a, s) => s.spritesInfo = a
-  val cycle: Setter[PpuState, Int]                      = (a, s) => s.cycle = a
-  val scanline: Setter[PpuState, Int]                   = (a, s) => s.scanline = a
-  val frame: Setter[PpuState, Long]                     = (a, s) => s.frame = a
-  val nmi: Setter[PpuState, Boolean]                    = (a, s) => s.nmi = a
+  val nametables: IndexSetter[PpuState, UInt8]               = (i, a, s) => s.nametables.update(i, a)
+  val palettes: IndexSetter[PpuState, UInt8]                 = (i, a, s) => s.palettes.update(i, a)
+  val ctrl: Setter[PpuState, UInt8]                          = (a, s) => s.ctrl = a
+  val mask: Setter[PpuState, UInt8]                          = (a, s) => s.mask = a
+  val status: Setter[PpuState, UInt8]                        = (a, s) => s.status = a
+  val bufferedData: Setter[PpuState, UInt8]                  = (a, s) => s.bufferedData = a
+  val v: Setter[PpuState, UInt15]                            = (a, s) => s.v = a
+  val t: Setter[PpuState, UInt15]                            = (a, s) => s.t = a
+  val x: Setter[PpuState, UInt3]                             = (a, s) => s.x = a
+  val w: Setter[PpuState, UInt1]                             = (a, s) => s.w = a
+  val shifter: Setter[PpuState, Long]                        = (a, s) => s.shifter = a
+  val nextTileId: Setter[PpuState, UInt8]                    = (a, s) => s.nextTileId = a
+  val nextTileLo: Setter[PpuState, UInt8]                    = (a, s) => s.nextTileLo = a
+  val nextTileHi: Setter[PpuState, UInt8]                    = (a, s) => s.nextTileHi = a
+  val nextTileAttr: Setter[PpuState, UInt8]                  = (a, s) => s.nextTileAttr = a
+  val oamAddress: Setter[PpuState, UInt16]                   = (a, s) => s.oamAddress = a
+  val oamData: IndexSetter[PpuState, UInt8]                  = (i, a, s) => s.oamData.update(i, a)
+  val spritesInfo: Setter[PpuState, ArrayBuffer[SpriteInfo]] = (a, s) => s.spritesInfo = a
+  val cycle: Setter[PpuState, Int]                           = (a, s) => s.cycle = a
+  val scanline: Setter[PpuState, Int]                        = (a, s) => s.scanline = a
+  val frame: Setter[PpuState, Long]                          = (a, s) => s.frame = a
+  val nmi: Setter[PpuState, Boolean]                         = (a, s) => s.nmi = a
 
   def flagNametable(ppu: PpuState): UInt3        = (ppu.ctrl & (0x3 << 0)) >> 0
   def flagIncrement(ppu: PpuState): UInt1        = (ppu.ctrl & (0x1 << 2)) >> 2
@@ -105,7 +106,7 @@ object PpuState {
     nextTileAttr = 0x00,
     oamData = Array.fill(256)(0x00),
     oamAddress = 0x0000,
-    spritesInfo = Vector.empty,
+    spritesInfo = ArrayBuffer.empty,
     canvas = Array.fill(2 * 256 * 2 * 240)(0),
     nmi = false,
     mirroring = mirroring
@@ -627,7 +628,7 @@ object Ppu {
     }
 
     @tailrec
-    def helper(sprites: Vector[SpriteInfo], i: Int): Int =
+    def helper(sprites: ArrayBuffer[SpriteInfo], i: Int): Int =
       if (i >= sprites.length) -1
       else {
         val s = sprites(i)
@@ -751,13 +752,14 @@ object Ppu {
       val scanline = nes.ppuState.scanline
       val oamData  = nes.ppuState.oamData
       val (nes1, spritesInfo) = (0 until 64)
-        .foldRight((nes, Vector.empty[SpriteInfo])) { case (i, acc) =>
+        .foldRight((nes, new ArrayBuffer[SpriteInfo])) { case (i, acc) =>
           val y   = oamData(i * 4 + 0)
           val row = scanline - y
           if (row >= 0 && row < h) {
             val (nes, spritesInfo) = acc
             val (nes1, spriteInfo) = fetchSpriteInfo(i, nes)
-            (nes1, spriteInfo +: spritesInfo)
+            spritesInfo.append(spriteInfo)
+            (nes1, spritesInfo)
           } else
             acc
         }
@@ -828,7 +830,7 @@ object Ppu {
     val nes3 =
       if (isRendering && cycle == 257)
         if (isVisibleLine) evaluateSprites(nes2)
-        else lift(PpuState.spritesInfo.set(Vector.empty))(nes2)
+        else lift(PpuState.spritesInfo.set(ArrayBuffer.empty))(nes2)
       else nes2
 
     // vblank logic
