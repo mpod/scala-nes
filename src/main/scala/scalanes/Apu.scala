@@ -681,20 +681,15 @@ object Apu {
       .map(apu => NesState.apuState.set(apu)(nes))
 
   def clockTimer(nes: NesState): NesState = {
-    val apu =
-      if (nes.cpuState.cycles % 2 == 0)
-        nes
-          .pure[Id]
-          .map(nes => DmcState.clockTimer(nes))
-          .map(nes => nes.apuState)
-          .map(apu => ApuState.pulse1.set(PulseState.clockTimer(apu.pulse1))(apu))
-          .map(apu => ApuState.pulse2.set(PulseState.clockTimer(apu.pulse2))(apu))
-          .map(apu => ApuState.noise.set(NoiseState.clockTimer(apu.noise))(apu))
-      else
-        nes.apuState.pure[Id]
-    apu
-      .map(apu => ApuState.triangle.set(TriangleState.clockTimer(apu.triangle))(apu))
-      .map(apu => NesState.apuState.set(apu)(nes))
+    val apu1 = nes.apuState
+    val apu2 = if (nes.cpuState.cycles % 2 == 0) {
+      val apu2 = ApuState.pulse1.set(PulseState.clockTimer(apu1.pulse1))(apu1)
+      val apu3 = ApuState.pulse2.set(PulseState.clockTimer(apu2.pulse2))(apu2)
+      ApuState.noise.set(NoiseState.clockTimer(apu3.noise))(apu3)
+    } else apu1
+    val apu3 = ApuState.triangle.set(TriangleState.clockTimer(apu2.triangle))(apu2)
+    val nes1 = NesState.apuState.set(apu3)(nes)
+    if (nes.cpuState.cycles % 2 == 0) DmcState.clockTimer(nes1) else nes1
   }
 
   def mix(nes: NesState): Float = {
