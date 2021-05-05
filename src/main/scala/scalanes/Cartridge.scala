@@ -17,14 +17,20 @@ object Cartridge {
     )
   }
 
+  val cpuReadLookup: Array[State[NesState, UInt8]] =
+    (0x6000 to 0xffff).map(address => State.inspect[NesState, UInt8](_.cartridge.prgRead(address))).toArray
+
+  val ppuReadLookup: Array[State[NesState, UInt8]] =
+    (0x0000 to 0x1fff).map(address => State.inspect[NesState, UInt8](_.cartridge.chrRead(address))).toArray
+
   def cpuRead(address: UInt16): State[NesState, UInt8] =
-    State.inspect(_.cartridge.prgRead(address))
+    cpuReadLookup(address - 0x6000)
 
   def cpuWrite(address: UInt16, d: UInt8): NesState => NesState =
     State.modify[Cartridge](_.prgWrite(address, d)).toNesState.runS
 
   def ppuRead(address: UInt16): State[NesState, UInt8] =
-    State.inspect(_.cartridge.chrRead(address))
+    ppuReadLookup(address)
 
   def ppuWrite(address: UInt16, d: UInt8): NesState => NesState =
     State.modify[Cartridge](_.chrWrite(address, d)).toNesState.runS
