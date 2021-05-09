@@ -18,7 +18,9 @@ class NesState(
   var cartridge: Cartridge,
   var controllerState: ControllerState,
   var apuState: ApuState
-)
+) {
+  def modify(f: NesState => NesState): NesState = f(this)
+}
 
 object NesState {
   val ram: IndexSetter[NesState, UInt8]                  = (i, a, s) => s.ram.update(i, a)
