@@ -79,6 +79,8 @@ object Cpu extends LazyLogging {
     override def write(d: UInt8)(nes: NesState): NesState = setA(d)(nes)
   }
 
+  private val absAddressUnitLookup: Array[AbsAddressUnit] = (0x0000 to 0xffff).map(AbsAddressUnit).toArray
+
   type Op = NesState => NesState
 
   private def rwOp(addressMode: RwAddressMode)(op: (NesState, AddressUnit) => NesState): Op =
@@ -197,10 +199,13 @@ object Cpu extends LazyLogging {
     NesState.cpuState.set(cpu)(nes)
   }
 
+  val ramReadLookup: Array[State[NesState, UInt8]] =
+    (0x0000 to 0x1fff).map(address => State.inspect[NesState, UInt8](_.ram(address % 0x800))).toArray
+
   def cpuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0xffff) == address)
     if (address >= 0x0000 && address <= 0x1fff) // RAM
-      State.inspect(_.ram(address % 0x800))
+      ramReadLookup(address)
     else if (address >= 0x2000 && address <= 0x3fff) // PPU registers
       Ppu.cpuRead(address)
     else if (address == 0x4015) // APU register
@@ -347,7 +352,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val address = nes.cpuState.pc
-        (incPc(1)(nes), AbsAddressUnit(address))
+        (incPc(1)(nes), absAddressUnitLookup(address))
       }
   }
 
@@ -357,7 +362,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
-        (incPc(1)(nes1), AbsAddressUnit(address))
+        (incPc(1)(nes1), absAddressUnitLookup(address))
       }
   }
 
@@ -366,7 +371,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
-        (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xff))
+        (incPc(1)(nes1), absAddressUnitLookup((address + nes1.cpuState.x) & 0xff))
       }
   }
 
@@ -375,7 +380,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead(nes.cpuState.pc)(nes)
-        (incPc(1)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xff))
+        (incPc(1)(nes1), absAddressUnitLookup((address + nes1.cpuState.y) & 0xff))
       }
   }
 
@@ -394,7 +399,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead16(nes.cpuState.pc, nes)
-        (incPc(2)(nes1), AbsAddressUnit(address))
+        (incPc(2)(nes1), absAddressUnitLookup(address))
       }
   }
 
@@ -403,7 +408,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead16(nes.cpuState.pc, nes)
-        (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.x) & 0xffff))
+        (incPc(2)(nes1), absAddressUnitLookup((address + nes1.cpuState.x) & 0xffff))
       }
   }
 
@@ -412,7 +417,7 @@ object Cpu extends LazyLogging {
     override def addressUnit: NesState => (NesState, AbsAddressUnit) =
       nes => {
         val (nes1, address) = cpuRead16(nes.cpuState.pc, nes)
-        (incPc(2)(nes1), AbsAddressUnit((address + nes1.cpuState.y) & 0xffff))
+        (incPc(2)(nes1), absAddressUnitLookup((address + nes1.cpuState.y) & 0xffff))
       }
   }
 
@@ -425,7 +430,7 @@ object Cpu extends LazyLogging {
       nes => {
         val (nes1, ptr)     = cpuRead16(nes.cpuState.pc, nes)
         val (nes2, address) = cpuRead16bug(ptr, nes1)
-        (incPc(2)(nes2), AbsAddressUnit(address))
+        (incPc(2)(nes2), absAddressUnitLookup(address))
       }
   }
 
@@ -435,7 +440,7 @@ object Cpu extends LazyLogging {
       nes => {
         val (nes1, t)       = cpuRead(nes.cpuState.pc)(nes)
         val (nes2, address) = cpuRead16bug((t + nes1.cpuState.x) & 0x00ff, nes1)
-        (incPc(1)(nes2), AbsAddressUnit(address))
+        (incPc(1)(nes2), absAddressUnitLookup(address))
       }
   }
 
@@ -449,7 +454,7 @@ object Cpu extends LazyLogging {
         val c         = if (isPageChange(address, nes1.cpuState.y)) 1 else 0
         val nes3      = incPc(1)(nes2)
         val nes4      = incCycles(c, nes3)
-        (nes4, AbsAddressUnit(address))
+        (nes4, absAddressUnitLookup(address))
       }
   }
 
