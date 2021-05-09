@@ -586,15 +586,21 @@ object Ppu {
       } yield d
     }
 
+  val readNametablesLookup: Array[State[NesState, UInt8]] =
+    (0x2000 to 0x3eff).map(address => (nes: NesState) => (nes, readNametables(address)(nes.ppuState))).toArray
+
+  val readPalettesLookup: Array[State[NesState, UInt8]] =
+    (0x3f00 to 0x3fff).map(address => (nes: NesState) => (nes, readPalettes(address)(nes.ppuState))).toArray
+
   def ppuRead(address: UInt16): State[NesState, UInt8] = {
     require((address & 0x3fff) == address, f"Invalid address $address%#04x")
 
     if (address >= 0x0000 && address <= 0x1fff)
       Cartridge.ppuRead(address) // Patterns
     else if (address >= 0x2000 && address <= 0x3eff)
-      nes => (nes, readNametables(address)(nes.ppuState))
+      readNametablesLookup(address - 0x2000)
     else
-      nes => (nes, readPalettes(address)(nes.ppuState))
+      readPalettesLookup(address - 0x3f00)
   }
 
   def ppuWrite(address: UInt16, d: UInt8): NesState => NesState = {
