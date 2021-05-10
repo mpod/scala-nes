@@ -1,8 +1,5 @@
 package scalanes
 
-import cats._
-import cats.implicits._
-
 import scala.collection.mutable.ArrayBuffer
 
 class ApuState(
@@ -76,10 +73,8 @@ object LengthCounter {
   val lengthCounterEnabled: Setter[LengthCounter, Boolean] = (a, s) => s.lengthCounterEnabled = a
   val lengthCounterValue: Setter[LengthCounter, Int]       = (a, s) => s.lengthCounterValue = a
 
-  def disableLengthCounter[T <: LengthCounter](c: T): Id[T] =
-    c.pure[Id]
-      .map(c => lengthCounterEnabled.set(false)(c))
-      .map(c => lengthCounterValue.set(0)(c))
+  def disableLengthCounter[T <: LengthCounter](c: T): T =
+    c.modify(c => lengthCounterEnabled.set(false)(c)).modify(c => lengthCounterValue.set(0)(c))
 
   def enableLengthCounter[T <: LengthCounter](c: T): T =
     lengthCounterEnabled.set(true)(c)
@@ -106,18 +101,18 @@ object Envelope {
   val envelopeDividerValue: Setter[Envelope, UInt4]      = (a, s) => s.envelopeDividerValue = a
   val envelopeDecayLevelCounter: Setter[Envelope, UInt4] = (a, s) => s.envelopeDecayLevelCounter = a
 
-  def clockEnvelope[T <: Envelope](e: T): Id[T] =
-    if (e.envelopeStart)
-      e.pure[Id]
-        .map(p => envelopeStart.set(false)(p))
-        .map(p => envelopeDecayLevelCounter.set(0xf)(p))
-        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
-    else if (e.envelopeDividerValue > 0)
-      envelopeDividerValue.set(e.envelopeDividerValue - 1)(e)
+  def clockEnvelope[T <: Envelope](envelope: T): T =
+    if (envelope.envelopeStart)
+      envelope
+        .modify(e => envelopeStart.set(false)(e))
+        .modify(e => envelopeDecayLevelCounter.set(0xf)(e))
+        .modify(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
+    else if (envelope.envelopeDividerValue > 0)
+      envelopeDividerValue.set(envelope.envelopeDividerValue - 1)(envelope)
     else
-      e.pure[Id]
-        .map(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
-        .map { p =>
+      envelope
+        .modify(p => envelopeDividerValue.set(p.envelopeDividerPeriod)(p))
+        .modify { p =>
           if (p.envelopeDecayLevelCounter || p.envelopeLoopEnabled)
             envelopeDecayLevelCounter.set((p.envelopeDecayLevelCounter - 1) & 0xff)(p)
           else
@@ -341,8 +336,7 @@ object DmcState {
 
   def clockTimer(nes: NesState): NesState =
     nes
-      .pure[Id]
-      .map { nes =>
+      .modify { nes =>
         val dmc = nes.apuState.dmc
         if (dmc.bytesRemainingCounter > 0 && dmc.bitsRemainingCounter == 0) {
           // TODO: Update CPU cycles
