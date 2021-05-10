@@ -15,7 +15,15 @@ NES emulator written in Scala.
 Make sure to have Java and SBT in your PATH environment variable.
 
     $ sbt assembly
-    $ java -jar target/scala-2.12/scala-nes.jar src/test/resources/nestest.nes
+    $ java -XX:AutoBoxCacheMax=0xffff -jar target/scala-2.12/scala-nes.jar src/test/resources/nestest.nes
+
+To print out frames per second:
+
+    $ java -XX:AutoBoxCacheMax=0xffff -jar target/scala-2.12/scala-nes.jar src/test/resources/nestest.nes --stats
+
+To enable sound (experimental):
+
+    $ java -XX:AutoBoxCacheMax=0xffff -jar target/scala-2.12/scala-nes.jar src/test/resources/nestest.nes --sound
     
 ## Controls
 
